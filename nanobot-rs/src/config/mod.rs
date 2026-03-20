@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct AgentDefaults {
     pub workspace: String,
     pub model: String,
+    pub provider: String,
     pub max_tool_iterations: usize,
 }
 
@@ -16,6 +18,7 @@ impl Default for AgentDefaults {
         Self {
             workspace: default_workspace_path().display().to_string(),
             model: "gpt-4.1-mini".to_string(),
+            provider: "openai".to_string(),
             max_tool_iterations: 20,
         }
     }
@@ -32,21 +35,43 @@ pub struct AgentsConfig {
 pub struct ProviderConfig {
     pub api_key: String,
     pub api_base: String,
+    pub extra_headers: HashMap<String, String>,
 }
 
 impl Default for ProviderConfig {
     fn default() -> Self {
+        Self::with_base("https://api.openai.com/v1")
+    }
+}
+
+impl ProviderConfig {
+    pub fn with_base(api_base: impl Into<String>) -> Self {
         Self {
             api_key: String::new(),
-            api_base: "https://api.openai.com/v1".to_string(),
+            api_base: api_base.into(),
+            extra_headers: HashMap::new(),
         }
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ProvidersConfig {
     pub openai: ProviderConfig,
+    pub custom: ProviderConfig,
+    pub openrouter: ProviderConfig,
+    pub ollama: ProviderConfig,
+}
+
+impl Default for ProvidersConfig {
+    fn default() -> Self {
+        Self {
+            openai: ProviderConfig::with_base("https://api.openai.com/v1"),
+            custom: ProviderConfig::with_base("http://localhost:8000/v1"),
+            openrouter: ProviderConfig::with_base("https://openrouter.ai/api/v1"),
+            ollama: ProviderConfig::with_base("http://localhost:11434/v1"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,11 +125,61 @@ impl Default for ExecToolConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WebSearchToolConfig {
+    pub provider: String,
+    pub api_key: String,
+    pub base_url: String,
+    pub max_results: usize,
+}
+
+impl Default for WebSearchToolConfig {
+    fn default() -> Self {
+        Self {
+            provider: "duckduckgo".to_string(),
+            api_key: String::new(),
+            base_url: String::new(),
+            max_results: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WebFetchToolConfig {
+    pub max_chars: usize,
+}
+
+impl Default for WebFetchToolConfig {
+    fn default() -> Self {
+        Self { max_chars: 20_000 }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WebToolsConfig {
+    pub search: WebSearchToolConfig,
+    pub fetch: WebFetchToolConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ToolsConfig {
     pub exec: ExecToolConfig,
     pub restrict_to_workspace: bool,
+    pub web: WebToolsConfig,
+}
+
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            exec: ExecToolConfig::default(),
+            restrict_to_workspace: false,
+            web: WebToolsConfig::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

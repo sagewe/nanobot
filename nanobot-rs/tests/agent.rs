@@ -5,6 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nanobot_rs::agent::{AgentLoop, SubagentManager};
 use nanobot_rs::bus::MessageBus;
+use nanobot_rs::config::WebToolsConfig;
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use serde_json::json;
 use tempfile::tempdir;
@@ -72,6 +73,7 @@ async fn agent_executes_tool_loop() {
         5,
         10,
         false,
+        WebToolsConfig::default(),
     )
     .await
     .expect("agent");
@@ -112,6 +114,7 @@ async fn agent_suppresses_final_reply_after_message_tool() {
         5,
         10,
         false,
+        WebToolsConfig::default(),
     )
     .await
     .expect("agent");
@@ -166,6 +169,7 @@ async fn agent_returns_iteration_limit_message() {
         1,
         10,
         false,
+        WebToolsConfig::default(),
     )
     .await
     .expect("agent");
@@ -193,6 +197,7 @@ async fn subagent_reports_back_via_bus() {
         5,
         10,
         false,
+        WebToolsConfig::default(),
     );
     let status = manager
         .spawn(

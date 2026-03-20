@@ -1,3 +1,5 @@
+mod web;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,9 +16,12 @@ use walkdir::WalkDir;
 
 use crate::agent::SubagentManager;
 use crate::bus::{MessageBus, OutboundMessage};
+use crate::config::WebToolsConfig;
 use crate::security::network::contains_internal_url;
 
-fn truncate_chars(input: &str, max_chars: usize) -> String {
+pub use web::{WebFetchTool, WebSearchTool};
+
+pub(crate) fn truncate_chars(input: &str, max_chars: usize) -> String {
     input.chars().take(max_chars).collect()
 }
 
@@ -831,6 +836,7 @@ pub async fn build_default_tools(
     timeout: u64,
     restrict_to_workspace: bool,
     subagent_manager: SubagentManager,
+    web: WebToolsConfig,
 ) -> ToolRegistry {
     let registry = ToolRegistry::new();
     registry
@@ -852,6 +858,10 @@ pub async fn build_default_tools(
             restrict_to_workspace,
         ))
         .await;
+    registry
+        .register(WebSearchTool::new(web.search.clone()))
+        .await;
+    registry.register(WebFetchTool::new(web.fetch)).await;
     registry.register(MessageTool::new(bus)).await;
     registry.register(SpawnTool::new(subagent_manager)).await;
     registry

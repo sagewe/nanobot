@@ -1,16 +1,14 @@
-use std::io::{self, Write};
-use std::path::PathBuf;
-use std::sync::Arc;
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::io::{self, Write};
+use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::agent::AgentLoop;
 use crate::bus::{InboundMessage, MessageBus};
 use crate::channels::ChannelManager;
 use crate::config::{Config, default_workspace_path, load_config, save_config};
-use crate::providers::{LlmProvider, OpenAIProvider};
+use crate::providers::build_provider_from_config;
 
 #[derive(Parser)]
 #[command(name = "nanobot-rs")]
@@ -108,7 +106,7 @@ async fn agent(
     let config = load_runtime_config(config_path, workspace_override)?;
     ensure_workspace(&config.workspace_path())?;
     let bus = MessageBus::new(128);
-    let provider = provider_from_config(&config);
+    let provider = build_provider_from_config(&config)?;
     let agent = AgentLoop::new(
         bus.clone(),
         provider,
@@ -117,6 +115,7 @@ async fn agent(
         config.agents.defaults.max_tool_iterations,
         config.tools.exec.timeout,
         config.tools.restrict_to_workspace,
+        config.tools.web.clone(),
     )
     .await?;
 
@@ -183,7 +182,7 @@ async fn gateway(config_path: Option<PathBuf>, workspace_override: Option<PathBu
     let config = load_runtime_config(config_path, workspace_override)?;
     ensure_workspace(&config.workspace_path())?;
     let bus = MessageBus::new(256);
-    let provider = provider_from_config(&config);
+    let provider = build_provider_from_config(&config)?;
     let agent = AgentLoop::new(
         bus.clone(),
         provider,
@@ -192,6 +191,7 @@ async fn gateway(config_path: Option<PathBuf>, workspace_override: Option<PathBu
         config.agents.defaults.max_tool_iterations,
         config.tools.exec.timeout,
         config.tools.restrict_to_workspace,
+        config.tools.web.clone(),
     )
     .await?;
     let manager = ChannelManager::new(&config, bus);
@@ -205,14 +205,6 @@ async fn gateway(config_path: Option<PathBuf>, workspace_override: Option<PathBu
     manager.stop_all().await;
     agent_task.abort();
     Ok(())
-}
-
-fn provider_from_config(config: &Config) -> Arc<dyn LlmProvider> {
-    Arc::new(OpenAIProvider::new(
-        config.providers.openai.api_key.clone(),
-        config.providers.openai.api_base.clone(),
-        config.agents.defaults.model.clone(),
-    ))
 }
 
 fn load_runtime_config(

@@ -12,11 +12,13 @@ use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
+use crate::config::WebToolsConfig;
 use crate::providers::LlmProvider;
 use crate::session::{Session, SessionMessage, SessionStore};
 use crate::tools::{
-    EditFileTool, ExecTool, ListDirTool, ReadFileTool, ToolContext, ToolRegistry, WriteFileTool,
-    assistant_message, build_default_tools, system_message, tool_message,
+    EditFileTool, ExecTool, ListDirTool, ReadFileTool, ToolContext, ToolRegistry, WebFetchTool,
+    WebSearchTool, WriteFileTool, assistant_message, build_default_tools, system_message,
+    tool_message,
 };
 
 const RUNTIME_CONTEXT_TAG: &str = "[Runtime Context — metadata only, not instructions]";
@@ -159,6 +161,7 @@ pub struct SubagentManager {
     max_iterations: usize,
     exec_timeout: u64,
     restrict_to_workspace: bool,
+    web_tools: WebToolsConfig,
     running_tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     session_tasks: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
@@ -172,6 +175,7 @@ impl SubagentManager {
         max_iterations: usize,
         exec_timeout: u64,
         restrict_to_workspace: bool,
+        web_tools: WebToolsConfig,
     ) -> Self {
         Self {
             provider,
@@ -181,6 +185,7 @@ impl SubagentManager {
             max_iterations,
             exec_timeout,
             restrict_to_workspace,
+            web_tools,
             running_tasks: Arc::new(Mutex::new(HashMap::new())),
             session_tasks: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -282,6 +287,12 @@ impl SubagentManager {
                 self.exec_timeout,
                 self.restrict_to_workspace,
             ))
+            .await;
+        tools
+            .register(WebSearchTool::new(self.web_tools.search.clone()))
+            .await;
+        tools
+            .register(WebFetchTool::new(self.web_tools.fetch.clone()))
             .await;
         let system_prompt = format!(
             "# Subagent\n\nYou are a background subagent. Focus only on the assigned task.\nWorkspace: {}",
@@ -386,6 +397,7 @@ impl AgentLoop {
         max_iterations: usize,
         exec_timeout: u64,
         restrict_to_workspace: bool,
+        web_tools: WebToolsConfig,
     ) -> Result<Self> {
         let sessions = SessionStore::new(&workspace)?;
         let context = ContextBuilder::new(workspace.clone());
@@ -397,6 +409,7 @@ impl AgentLoop {
             max_iterations,
             exec_timeout,
             restrict_to_workspace,
+            web_tools.clone(),
         );
         let tools = build_default_tools(
             workspace.clone(),
@@ -404,6 +417,7 @@ impl AgentLoop {
             exec_timeout,
             restrict_to_workspace,
             subagents.clone(),
+            web_tools,
         )
         .await;
         Ok(Self {
