@@ -7,6 +7,7 @@ pub mod providers;
 pub mod security;
 pub mod session;
 pub mod tools;
+pub mod web;
 
 pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()
