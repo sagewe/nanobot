@@ -230,8 +230,10 @@ pub fn render_index_html() -> String {
 
       composer.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const message = messageInput.value;
+        const message = messageInput.value.trim();
         if (!message) {
+          setStatus("Enter a message before sending.", "error");
+          messageInput.focus();
           return;
         }
 
@@ -253,7 +255,7 @@ pub fn render_index_html() -> String {
           messageInput.value = "";
           setStatus("", "idle");
         } catch (error) {
-          setStatus(error.message || "Request failed", "error");
+          setStatus(error?.message || "Request failed", "error");
         } finally {
           setBusy(false);
           messageInput.focus();

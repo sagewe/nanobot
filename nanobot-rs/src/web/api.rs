@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -29,12 +29,16 @@ pub async fn chat(
     State(state): State<AppState>,
     Json(request): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, ApiError> {
+    let message = request.message.trim();
+    if message.is_empty() {
+        return Err(ApiError::bad_request("message must not be empty"));
+    }
     let session_id = request
         .session_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let reply = state
         .chat
-        .chat(&request.message, &session_id)
+        .chat(message, &session_id)
         .await
         .map_err(ApiError::internal)?;
     Ok(Json(ChatResponse { reply, session_id }))
@@ -46,6 +50,13 @@ pub struct ApiError {
 }
 
 impl ApiError {
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
     fn internal(error: anyhow::Error) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

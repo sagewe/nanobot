@@ -91,3 +91,29 @@ async fn chat_endpoint_returns_agent_reply() {
     assert_eq!(response["reply"], "hello from agent");
     assert_eq!(response["sessionId"], "browser-session-1");
 }
+
+#[tokio::test]
+async fn chat_endpoint_rejects_blank_messages() {
+    let app = web::build_router(test_state_with_reply("should not be used"));
+    let addr = spawn_test_server(app).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/api/chat"))
+        .json(&serde_json::json!({
+            "message": "   ",
+            "sessionId": "browser-session-2"
+        }))
+        .send()
+        .await
+        .expect("send blank chat request");
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("blank chat response");
+
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("message must not be empty")
+    );
+}
