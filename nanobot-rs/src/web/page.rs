@@ -96,7 +96,39 @@ pub fn render_index_html() -> String {
         border-radius: 1rem;
         background: rgba(255, 255, 255, 0.48);
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        display: grid;
+        gap: 0.75rem;
+        align-content: start;
+      }
+
+      .message {
+        max-width: min(46rem, 100%);
+        padding: 0.9rem 1rem;
+        border-radius: 1rem;
         white-space: pre-wrap;
+        line-height: 1.55;
+      }
+
+      .message[data-role="user"] {
+        justify-self: end;
+        color: #fff8ef;
+        background: linear-gradient(135deg, #3a5263, #2a3945);
+      }
+
+      .message[data-role="assistant"] {
+        justify-self: start;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(33, 49, 61, 0.1);
+      }
+
+      #status {
+        min-height: 1.4rem;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      #status[data-variant="error"] {
+        color: #9a2f1f;
       }
 
       #composer {
@@ -127,6 +159,11 @@ pub fn render_index_html() -> String {
         cursor: pointer;
       }
 
+      #send-button[disabled] {
+        opacity: 0.65;
+        cursor: wait;
+      }
+
       @media (max-width: 720px) {
         #app {
           width: min(94vw, 40rem);
@@ -148,13 +185,81 @@ pub fn render_index_html() -> String {
         <p class="deck">A minimal browser surface for the Rust agent. Text in, text out, same workspace brain underneath.</p>
       </header>
       <section class="shell">
-        <section id="transcript"></section>
+        <section id="transcript" aria-live="polite">
+          <article class="message" data-role="assistant">Web UI ready. Ask nanobot-rs to inspect the workspace, edit files, or research something.</article>
+        </section>
+        <div id="status" role="status"></div>
         <form id="composer">
           <textarea id="message-input" placeholder="Ask nanobot-rs to inspect, edit, or research."></textarea>
           <button id="send-button" type="submit">Send</button>
         </form>
       </section>
     </main>
+    <script>
+      const SESSION_KEY = "nanobot-rs.sessionId";
+      const composer = document.getElementById("composer");
+      const transcript = document.getElementById("transcript");
+      const messageInput = document.getElementById("message-input");
+      const sendButton = document.getElementById("send-button");
+      const statusNode = document.getElementById("status");
+
+      const existingSessionId = localStorage.getItem(SESSION_KEY);
+      const sessionId = existingSessionId && existingSessionId.trim().length > 0
+        ? existingSessionId
+        : crypto.randomUUID();
+      localStorage.setItem(SESSION_KEY, sessionId);
+
+      function appendMessage(role, content) {
+        const node = document.createElement("article");
+        node.className = "message";
+        node.dataset.role = role;
+        node.textContent = content;
+        transcript.appendChild(node);
+        transcript.scrollTop = transcript.scrollHeight;
+      }
+
+      function setStatus(message, variant = "idle") {
+        statusNode.textContent = message;
+        statusNode.dataset.variant = variant;
+      }
+
+      function setBusy(busy) {
+        sendButton.disabled = busy;
+        sendButton.textContent = busy ? "Working..." : "Send";
+      }
+
+      composer.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const message = messageInput.value;
+        if (!message) {
+          return;
+        }
+
+        appendMessage("user", message);
+        setBusy(true);
+        setStatus("nanobot-rs is working...", "loading");
+
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message, sessionId }),
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.error || "Request failed");
+          }
+          appendMessage("assistant", payload.reply || "");
+          messageInput.value = "";
+          setStatus("", "idle");
+        } catch (error) {
+          setStatus(error.message || "Request failed", "error");
+        } finally {
+          setBusy(false);
+          messageInput.focus();
+        }
+      });
+    </script>
   </body>
 </html>"#
         .to_string()
