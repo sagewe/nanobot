@@ -9,6 +9,7 @@ use crate::bus::{InboundMessage, MessageBus};
 use crate::channels::ChannelManager;
 use crate::config::{Config, default_workspace_path, load_config, save_config};
 use crate::providers::build_provider_from_config;
+use crate::web;
 
 #[derive(Parser)]
 #[command(name = "nanobot-rs")]
@@ -42,6 +43,16 @@ enum Commands {
         #[arg(long)]
         workspace: Option<PathBuf>,
     },
+    Web {
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        #[arg(long, default_value_t = 3000)]
+        port: u16,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
 }
 
 pub async fn run() -> Result<()> {
@@ -55,6 +66,12 @@ pub async fn run() -> Result<()> {
             workspace,
         } => agent(message, session, config, workspace).await,
         Commands::Gateway { config, workspace } => gateway(config, workspace).await,
+        Commands::Web {
+            host,
+            port,
+            config,
+            workspace,
+        } => web_command(host, port, config, workspace).await,
     }
 }
 
@@ -205,6 +222,31 @@ async fn gateway(config_path: Option<PathBuf>, workspace_override: Option<PathBu
     manager.stop_all().await;
     agent_task.abort();
     Ok(())
+}
+
+async fn web_command(
+    host: String,
+    port: u16,
+    config_path: Option<PathBuf>,
+    workspace_override: Option<PathBuf>,
+) -> Result<()> {
+    let config = load_runtime_config(config_path, workspace_override)?;
+    ensure_workspace(&config.workspace_path())?;
+    let bus = MessageBus::new(128);
+    let provider = build_provider_from_config(&config)?;
+    let agent = AgentLoop::new(
+        bus,
+        provider,
+        config.workspace_path(),
+        config.agents.defaults.model.clone(),
+        config.agents.defaults.max_tool_iterations,
+        config.tools.exec.timeout,
+        config.tools.restrict_to_workspace,
+        config.tools.web.clone(),
+    )
+    .await?;
+    println!("Web UI listening on http://{host}:{port}");
+    web::serve(agent, &host, port).await
 }
 
 fn load_runtime_config(
