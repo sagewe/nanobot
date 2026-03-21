@@ -151,10 +151,29 @@ impl RawConfig {
                     .or_else(|| sparse_default_profile.as_ref().map(|defaults| defaults.model.clone()))
                     .ok_or_else(|| anyhow!("agents.defaults.defaultProfile is required"))?;
                 let profile_name = profile_key(&provider, &model);
+                let normalized_provider = registry
+                    .resolve(&provider)
+                    .with_context(|| {
+                        format!(
+                            "agents.defaults.defaultProfile '{profile_name}' uses unknown provider '{provider}'"
+                        )
+                    })?
+                    .name
+                    .to_string();
                 match profiles.entry(profile_name.clone()) {
                     std::collections::hash_map::Entry::Occupied(entry) => {
                         let existing = entry.get();
-                        if existing.provider != provider || existing.model != model {
+                        let existing_provider = registry
+                            .resolve(&existing.provider)
+                            .with_context(|| {
+                                format!(
+                                    "agents.profiles.{profile_name}.provider '{}' is not a known provider",
+                                    existing.provider
+                                )
+                            })?
+                            .name
+                            .to_string();
+                        if existing_provider != normalized_provider || existing.model != model {
                             bail!(
                                 "agents.profiles.{profile_name} must match legacy defaults.provider/model"
                             );

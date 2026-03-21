@@ -356,6 +356,45 @@ fn legacy_synthesis_rejects_colliding_profile_with_mismatched_identity() {
 }
 
 #[test]
+fn legacy_synthesis_accepts_case_insensitive_matching_provider_identity() {
+    let value = load_config_from_json(
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "maxToolIterations": 20
+    },
+    "profiles": {
+      "openai:gpt-4.1-mini": {
+        "provider": " OpenAI ",
+        "model": "gpt-4.1-mini",
+        "request": {
+          "temperature": 0.4
+        }
+      }
+    }
+  }
+}"#,
+    )
+    .expect("case-insensitive provider identity should be accepted");
+
+    assert_eq!(
+        value
+            .pointer("/agents/defaults/defaultProfile")
+            .and_then(Value::as_str),
+        Some("openai:gpt-4.1-mini")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/request/temperature")
+            .and_then(Value::as_f64),
+        Some(0.4)
+    );
+}
+
+#[test]
 fn provider_only_config_still_inherits_the_default_profile() {
     let value = load_config_from_json(
         r#"{
