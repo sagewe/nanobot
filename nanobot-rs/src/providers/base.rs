@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone)]
 pub struct ToolCall {
@@ -22,6 +22,27 @@ impl ToolCall {
                 "arguments": self.arguments.to_string(),
             }
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProviderRequestDescriptor {
+    pub provider_name: String,
+    pub model_name: String,
+    pub request_extras: Map<String, Value>,
+}
+
+impl ProviderRequestDescriptor {
+    pub fn new(
+        provider_name: impl Into<String>,
+        model_name: impl Into<String>,
+        request_extras: Map<String, Value>,
+    ) -> Self {
+        Self {
+            provider_name: provider_name.into(),
+            model_name: model_name.into(),
+            request_extras,
+        }
     }
 }
 

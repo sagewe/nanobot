@@ -30,10 +30,31 @@ fn onboard_generates_config_with_provider_and_web_defaults() {
 
     assert_eq!(
         value
-            .pointer("/agents/defaults/provider")
+            .pointer("/agents/defaults/defaultProfile")
+            .and_then(Value::as_str),
+        Some("openai:gpt-4.1-mini")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/provider")
             .and_then(Value::as_str),
         Some("openai")
     );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/model")
+            .and_then(Value::as_str),
+        Some("gpt-4.1-mini")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/request")
+            .and_then(Value::as_object)
+            .map(|request| request.len()),
+        Some(0)
+    );
+    assert!(value.pointer("/agents/defaults/provider").is_none());
+    assert!(value.pointer("/agents/defaults/model").is_none());
     assert_eq!(
         value
             .pointer("/providers/custom/apiBase")

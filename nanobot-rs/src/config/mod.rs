@@ -1,33 +1,257 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use anyhow::{Context, Result, anyhow, bail};
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
+use serde_json::{Map, Value};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+use crate::providers::ProviderRegistry;
+
+#[derive(Debug, Clone)]
 pub struct AgentDefaults {
     pub workspace: String,
-    pub model: String,
-    pub provider: String,
+    pub default_profile: String,
     pub max_tool_iterations: usize,
+    pub provider: String,
+    pub model: String,
 }
 
 impl Default for AgentDefaults {
     fn default() -> Self {
+        let provider = "openai".to_string();
+        let model = "gpt-4.1-mini".to_string();
         Self {
             workspace: default_workspace_path().display().to_string(),
-            model: "gpt-4.1-mini".to_string(),
-            provider: "openai".to_string(),
+            default_profile: profile_key(&provider, &model),
             max_tool_iterations: 20,
+            provider,
+            model,
         }
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct AgentsConfig {
     pub defaults: AgentDefaults,
+    pub profiles: HashMap<String, AgentProfileConfig>,
+}
+
+impl Default for AgentsConfig {
+    fn default() -> Self {
+        let defaults = AgentDefaults::default();
+        let mut profiles = HashMap::new();
+        profiles.insert(
+            defaults.default_profile.clone(),
+            AgentProfileConfig {
+                provider: defaults.provider.clone(),
+                model: defaults.model.clone(),
+                request: Map::new(),
+            },
+        );
+        Self { defaults, profiles }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfileConfig {
+    pub provider: String,
+    pub model: String,
+    #[serde(default, deserialize_with = "deserialize_request_map")]
+    pub request: Map<String, Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub agents: AgentsConfig,
+    pub providers: ProvidersConfig,
+    pub channels: ChannelsConfig,
+    pub tools: ToolsConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RawAgentDefaults {
+    pub workspace: String,
+    pub max_tool_iterations: usize,
+    pub default_profile: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+}
+
+impl Default for RawAgentDefaults {
+    fn default() -> Self {
+        Self {
+            workspace: default_workspace_path().display().to_string(),
+            max_tool_iterations: 20,
+            default_profile: None,
+            provider: None,
+            model: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RawAgentsConfig {
+    pub defaults: RawAgentDefaults,
+    pub profiles: HashMap<String, AgentProfileConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RawConfig {
+    pub agents: RawAgentsConfig,
+    pub providers: ProvidersConfig,
+    pub channels: ChannelsConfig,
+    pub tools: ToolsConfig,
+}
+
+impl RawConfig {
+    fn into_config(self) -> Result<Config> {
+        let RawConfig {
+            agents,
+            providers,
+            channels,
+            tools,
+        } = self;
+        let RawAgentsConfig { defaults, profiles } = agents;
+        let RawAgentDefaults {
+            workspace,
+            max_tool_iterations,
+            default_profile,
+            provider,
+            model,
+        } = defaults;
+        let registry = ProviderRegistry::default();
+        let mut profiles = profiles;
+
+        let default_profile = match default_profile {
+            Some(default_profile) => {
+                if !profiles.contains_key(&default_profile) {
+                    bail!(
+                        "agents.defaults.defaultProfile '{}' does not match any configured profile",
+                        default_profile
+                    );
+                }
+                default_profile
+            }
+            None => {
+                let provider = provider
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| anyhow!("agents.defaults.defaultProfile is required"))?;
+                let model = model
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| anyhow!("agents.defaults.defaultProfile is required"))?;
+                if !profiles.is_empty() {
+                    bail!("agents.defaults.defaultProfile is required when agents.profiles is set");
+                }
+                let profile_name = profile_key(&provider, &model);
+                profiles.insert(
+                    profile_name.clone(),
+                    AgentProfileConfig {
+                        provider,
+                        model,
+                        request: Map::new(),
+                    },
+                );
+                profile_name
+            }
+        };
+
+        for (profile_name, profile) in &profiles {
+            registry.resolve(&profile.provider).with_context(|| {
+                format!(
+                    "agents.profiles.{profile_name}.provider '{}' is not a known provider",
+                    profile.provider
+                )
+            })?;
+        }
+
+        let default_profile_config = profiles.get(&default_profile).with_context(|| {
+            format!(
+                "agents.defaults.defaultProfile '{default_profile}' does not match any configured profile"
+            )
+        })?;
+
+        let workspace = if workspace.trim().is_empty() {
+            default_workspace_path().display().to_string()
+        } else {
+            workspace
+        };
+
+        Ok(Config {
+            agents: AgentsConfig {
+                defaults: AgentDefaults {
+                    workspace,
+                    default_profile,
+                    max_tool_iterations,
+                    provider: default_profile_config.provider.clone(),
+                    model: default_profile_config.model.clone(),
+                },
+                profiles,
+            },
+            providers,
+            channels,
+            tools,
+        })
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            agents: AgentsConfig::default(),
+            providers: ProvidersConfig::default(),
+            channels: ChannelsConfig::default(),
+            tools: ToolsConfig::default(),
+        }
+    }
+}
+
+impl Serialize for Config {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("Config", 4)?;
+        state.serialize_field(
+            "agents",
+            &SerializableAgentsConfig {
+                defaults: SerializableAgentDefaults::from(&self.agents.defaults),
+                profiles: &self.agents.profiles,
+            },
+        )?;
+        state.serialize_field("providers", &self.providers)?;
+        state.serialize_field("channels", &self.channels)?;
+        state.serialize_field("tools", &self.tools)?;
+        state.end()
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SerializableAgentsConfig<'a> {
+    defaults: SerializableAgentDefaults<'a>,
+    profiles: &'a HashMap<String, AgentProfileConfig>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SerializableAgentDefaults<'a> {
+    workspace: &'a str,
+    default_profile: &'a str,
+    max_tool_iterations: usize,
+}
+
+impl<'a> From<&'a AgentDefaults> for SerializableAgentDefaults<'a> {
+    fn from(defaults: &'a AgentDefaults) -> Self {
+        Self {
+            workspace: &defaults.workspace,
+            default_profile: &defaults.default_profile,
+            max_tool_iterations: defaults.max_tool_iterations,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,15 +431,6 @@ impl Default for ToolsConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Config {
-    pub agents: AgentsConfig,
-    pub providers: ProvidersConfig,
-    pub channels: ChannelsConfig,
-    pub tools: ToolsConfig,
-}
-
 impl Config {
     pub fn workspace_path(&self) -> PathBuf {
         expand_tilde(Path::new(&self.agents.defaults.workspace))
@@ -262,9 +477,11 @@ pub fn load_config(path: Option<&Path>) -> Result<Config> {
     }
     let raw = std::fs::read_to_string(&config_path)
         .with_context(|| format!("failed to read config {}", config_path.display()))?;
-    let config = serde_json::from_str(&raw)
-        .with_context(|| format!("failed to parse config {}", config_path.display()))?;
-    Ok(config)
+    let raw_config: RawConfig = serde_json::from_str(&raw)
+        .map_err(|err| anyhow!("failed to parse config {}: {err}", config_path.display()))?;
+    raw_config
+        .into_config()
+        .map_err(|err| anyhow!("failed to validate config {}: {err}", config_path.display()))
 }
 
 pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
@@ -285,4 +502,21 @@ fn default_telegram_api_base() -> String {
 
 fn default_wecom_ws_base() -> String {
     "wss://openws.work.weixin.qq.com".to_string()
+}
+
+fn profile_key(provider: &str, model: &str) -> String {
+    format!("{provider}:{model}")
+}
+
+fn deserialize_request_map<'de, D>(deserializer: D) -> std::result::Result<Map<String, Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::Object(map) => Ok(map),
+        other => Err(serde::de::Error::custom(format!(
+            "agents.profiles[*].request must be a JSON object, got {other}"
+        ))),
+    }
 }

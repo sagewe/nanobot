@@ -8,7 +8,7 @@ use anyhow::Result;
 
 use crate::config::Config;
 
-pub use base::{LlmProvider, LlmResponse, ProviderError, ToolCall, should_retry};
+pub use base::{LlmProvider, LlmResponse, ProviderError, ProviderRequestDescriptor, ToolCall, should_retry};
 pub use openai_compatible::OpenAICompatibleProvider;
 pub use registry::{ProviderKind, ProviderRegistry, ProviderSpec, ResolvedProviderConfig};
 

@@ -2,12 +2,41 @@ use std::collections::HashMap;
 
 use nanobot_rs::config::Config;
 use nanobot_rs::providers::{ProviderKind, ProviderRegistry};
+use serde_json::Value;
 
 #[test]
-fn config_defaults_include_explicit_provider_and_web_settings() {
+fn config_defaults_expose_the_new_default_profile_shape() {
     let config = Config::default();
+    let value = serde_json::to_value(&config).expect("serialize default config");
 
-    assert_eq!(config.agents.defaults.provider, "openai");
+    assert_eq!(
+        value
+            .pointer("/agents/defaults/defaultProfile")
+            .and_then(Value::as_str),
+        Some("openai:gpt-4.1-mini")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/provider")
+            .and_then(Value::as_str),
+        Some("openai")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/model")
+            .and_then(Value::as_str),
+        Some("gpt-4.1-mini")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/request")
+            .and_then(Value::as_object)
+            .map(|request| request.len()),
+        Some(0)
+    );
+    assert!(value.pointer("/agents/defaults/provider").is_none());
+    assert!(value.pointer("/agents/defaults/model").is_none());
+
     assert_eq!(
         config.providers.openai.api_base,
         "https://api.openai.com/v1"
