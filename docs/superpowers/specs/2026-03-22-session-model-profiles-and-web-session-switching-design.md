@@ -166,6 +166,12 @@ Rules:
 - `tool_call_id`
 - `name`
 
+Compatibility rules:
+
+- `extra` must deserialize with an empty default when absent so existing session records remain loadable.
+- `active_profile` must default to `agents.defaults.defaultProfile` when absent in persisted session metadata.
+- `extra` is only persisted for roles where unknown provider fields matter for replay, specifically `assistant` and `tool`. Other roles may leave it empty.
+
 During `to_llm_message()`, `extra` is merged back into the outgoing provider message object without overwriting modeled fields.
 
 This is the protocol-preservation mechanism for fields such as `reasoning_content`.
@@ -191,6 +197,7 @@ Command behavior:
   - persists session immediately
   - returns confirmation
 - `/new`
+  - mutates the current session in place; it does not allocate a new session ID
   - clears messages
   - resets `active_profile` to default profile
   - persists session
@@ -264,6 +271,16 @@ This slice does not add a dedicated model dropdown. Users switch models with `/m
 - clear error if profile not found
 
 No session state is mutated on failure.
+
+### Config compatibility
+
+This slice keeps compatibility with existing configs during migration:
+
+- if `agents.defaults.defaultProfile` and `agents.profiles` are present, they are authoritative
+- if the new fields are absent but legacy `agents.defaults.provider` and `agents.defaults.model` are present, config loading synthesizes a single profile entry using the key `<provider>:<model>` and uses it as the default profile
+- writing a fresh config or onboarding output uses only the new shape
+
+This keeps current installations bootable while letting the implementation move the system toward the profile-based configuration surface.
 
 ### Bad config
 
