@@ -14,7 +14,7 @@ use tracing::{error, info};
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::config::{AgentProfileConfig, Config, WebToolsConfig};
 use crate::providers::{LlmProvider, ProviderRequestDescriptor};
-use crate::session::{Session, SessionMessage, SessionStore};
+use crate::session::{Session, SessionMessage, SessionStore, SessionSummary};
 use crate::tools::{
     EditFileTool, ExecTool, ListDirTool, ReadFileTool, ToolContext, ToolRegistry, WebFetchTool,
     WebSearchTool, WriteFileTool, assistant_message_with_extra, build_default_tools,
@@ -687,6 +687,42 @@ impl AgentLoop {
             lines.push(format!("{marker} {profile}"));
         }
         lines.join("\n")
+    }
+
+    pub fn default_profile(&self) -> &str {
+        &self.default_profile
+    }
+
+    pub fn has_profile(&self, key: &str) -> bool {
+        self.profiles.contains_key(key)
+    }
+
+    pub fn current_profile_for_session(&self, session_key: &str) -> Result<String> {
+        let mut session = self
+            .sessions
+            .get_or_create_with_default_profile(session_key, &self.default_profile)?;
+        Ok(self.normalize_session_profile(&mut session).to_string())
+    }
+
+    pub fn list_sessions_in_namespace(&self, namespace: &str) -> Result<Vec<SessionSummary>> {
+        self.sessions.list_sessions_in_namespace(namespace)
+    }
+
+    pub fn load_session(&self, session_key: &str) -> Result<Option<Session>> {
+        let Some(mut session) = self.sessions.load(session_key)? else {
+            return Ok(None);
+        };
+        self.normalize_session_profile(&mut session);
+        Ok(Some(session))
+    }
+
+    pub fn create_session(&self, session_key: &str) -> Result<Session> {
+        let mut session = self
+            .sessions
+            .get_or_create_with_default_profile(session_key, &self.default_profile)?;
+        self.normalize_session_profile(&mut session);
+        self.sessions.save(&session)?;
+        Ok(session)
     }
 
     pub async fn process_direct(

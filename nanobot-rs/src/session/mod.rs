@@ -300,11 +300,23 @@ impl Session {
 }
 
 fn message_preview(message: &SessionMessage) -> Option<String> {
-    match &message.content {
-        Value::String(text) if !text.trim().is_empty() => Some(text.clone()),
-        Value::Null => None,
-        other => Some(other.to_string()),
+    if !matches!(message.role.as_str(), "user" | "assistant") {
+        return None;
     }
+    match &message.content {
+        Value::String(text) if !text.trim().is_empty() => Some(truncate_preview(text, 120)),
+        Value::Null => None,
+        other => Some(truncate_preview(&other.to_string(), 120)),
+    }
+}
+
+fn truncate_preview(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    let chars = trimmed.chars().collect::<Vec<_>>();
+    if chars.len() <= max_chars {
+        return trimmed.to_string();
+    }
+    format!("{}…", chars[..max_chars].iter().collect::<String>())
 }
 
 fn namespace_prefix(namespace: &str) -> String {

@@ -124,7 +124,7 @@ async fn web_chat_logs_agent_execution_progress() {
         .chat("inspect the workspace", "browser-session")
         .await;
 
-    assert_eq!(reply.expect("reply"), "done");
+    assert_eq!(reply.expect("reply").reply, "done");
     let logs = String::from_utf8(writer.buffer.lock().expect("buffer").clone()).expect("utf8");
     assert!(logs.contains("web session browser-session started"));
     assert!(logs.contains("checking workspace"));

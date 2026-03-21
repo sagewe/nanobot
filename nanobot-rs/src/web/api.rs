@@ -1,11 +1,11 @@
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::AppState;
+use super::{AppState, WebSessionDetail, WebSessionSummary};
 use crate::presentation::render_web_html;
 
 #[derive(Debug, Deserialize)]
@@ -22,10 +22,53 @@ pub struct ChatResponse {
     pub reply_html: String,
     #[serde(rename = "sessionId")]
     pub session_id: String,
+    #[serde(rename = "activeProfile")]
+    pub active_profile: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionListResponse {
+    pub sessions: Vec<WebSessionSummary>,
 }
 
 pub async fn healthz() -> &'static str {
     "ok"
+}
+
+pub async fn list_sessions(
+    State(state): State<AppState>,
+) -> Result<Json<SessionListResponse>, ApiError> {
+    let sessions = state
+        .chat
+        .list_sessions()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(SessionListResponse { sessions }))
+}
+
+pub async fn get_session(
+    Path(session_id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<WebSessionDetail>, ApiError> {
+    let session_id = validate_session_id(&session_id)?;
+    let session = state
+        .chat
+        .get_session(session_id)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("session not found"))?;
+    Ok(Json(session))
+}
+
+pub async fn create_session(
+    State(state): State<AppState>,
+) -> Result<Json<WebSessionSummary>, ApiError> {
+    let session = state
+        .chat
+        .create_session()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(session))
 }
 
 pub async fn chat(
@@ -36,19 +79,28 @@ pub async fn chat(
     if message.is_empty() {
         return Err(ApiError::bad_request("message must not be empty"));
     }
-    let session_id = request
-        .session_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let reply = state
+    let session_id = match request.session_id {
+        Some(session_id) => validate_session_id(&session_id)?.to_string(),
+        None => {
+            state
+                .chat
+                .create_session()
+                .await
+                .map_err(ApiError::internal)?
+                .session_id
+        }
+    };
+    let chat = state
         .chat
         .chat(message, &session_id)
         .await
         .map_err(ApiError::internal)?;
-    let reply_html = render_web_html(&reply);
+    let reply_html = render_web_html(&chat.reply);
     Ok(Json(ChatResponse {
-        reply,
+        reply: chat.reply,
         reply_html,
         session_id,
+        active_profile: chat.active_profile,
     }))
 }
 
@@ -61,6 +113,13 @@ impl ApiError {
     fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
             message: message.into(),
         }
     }
@@ -83,4 +142,16 @@ impl IntoResponse for ApiError {
         )
             .into_response()
     }
+}
+
+fn validate_session_id(session_id: &str) -> Result<&str, ApiError> {
+    let trimmed = session_id.trim();
+    if trimmed.is_empty()
+        || !trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        return Err(ApiError::bad_request("invalid session id"));
+    }
+    Ok(trimmed)
 }
