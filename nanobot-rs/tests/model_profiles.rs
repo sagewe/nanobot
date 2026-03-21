@@ -328,6 +328,34 @@ fn legacy_synthesis_preserves_existing_profile_at_the_same_key() {
 }
 
 #[test]
+fn legacy_synthesis_rejects_colliding_profile_with_mismatched_identity() {
+    let err = load_config_from_json(
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "provider": "ollama",
+      "model": "llama3.2",
+      "maxToolIterations": 20
+    },
+    "profiles": {
+      "ollama:llama3.2": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "request": {
+          "temperature": 0.7
+        }
+      }
+    }
+  }
+}"#,
+    )
+    .expect_err("mismatched colliding profile should be rejected");
+
+    assert!(err.to_string().contains("ollama:llama3.2"));
+}
+
+#[test]
 fn provider_only_config_still_inherits_the_default_profile() {
     let value = load_config_from_json(
         r#"{

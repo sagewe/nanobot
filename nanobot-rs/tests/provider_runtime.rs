@@ -86,7 +86,7 @@ async fn provider_retries_transient_errors_only() {
 }
 
 #[tokio::test]
-async fn provider_does_not_retry_auth_errors_and_surfaces_body() {
+async fn provider_propagates_auth_errors_from_chat_with_retry() {
     let calls = Arc::new(AtomicUsize::new(0));
     let addr = start_server(ProviderState {
         calls: calls.clone(),
@@ -99,18 +99,13 @@ async fn provider_does_not_retry_auth_errors_and_surfaces_body() {
         "demo-model".to_string(),
     );
 
-    let response = provider
+    let err = provider
         .chat_with_retry(vec![], vec![], "demo-model")
         .await
-        .expect("chat_with_retry");
+        .expect_err("chat_with_retry");
 
-    assert_eq!(response.finish_reason, "error");
     assert!(
-        response
-            .content
-            .as_deref()
-            .unwrap_or_default()
-            .contains("invalid api key")
+        err.to_string().contains("invalid api key")
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }

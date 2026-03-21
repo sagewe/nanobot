@@ -126,7 +126,7 @@ pub trait LlmProvider: Send + Sync {
                 Ok(response) => return Ok(response),
                 Err(error) => {
                     if !should_retry(&error) || attempt >= delays.len() {
-                        return Ok(LlmResponse::error(error.to_string()));
+                        return Err(error);
                     }
                     tokio::time::sleep(Duration::from_secs(delays[attempt])).await;
                     attempt += 1;

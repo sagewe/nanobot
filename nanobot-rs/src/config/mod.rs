@@ -151,11 +151,23 @@ impl RawConfig {
                     .or_else(|| sparse_default_profile.as_ref().map(|defaults| defaults.model.clone()))
                     .ok_or_else(|| anyhow!("agents.defaults.defaultProfile is required"))?;
                 let profile_name = profile_key(&provider, &model);
-                profiles.entry(profile_name.clone()).or_insert(AgentProfileConfig {
-                    provider,
-                    model,
-                    request: Map::new(),
-                });
+                match profiles.entry(profile_name.clone()) {
+                    std::collections::hash_map::Entry::Occupied(entry) => {
+                        let existing = entry.get();
+                        if existing.provider != provider || existing.model != model {
+                            bail!(
+                                "agents.profiles.{profile_name} must match legacy defaults.provider/model"
+                            );
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(AgentProfileConfig {
+                            provider,
+                            model,
+                            request: Map::new(),
+                        });
+                    }
+                }
                 profile_name
             }
         };

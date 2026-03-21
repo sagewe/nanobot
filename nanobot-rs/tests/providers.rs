@@ -1,8 +1,12 @@
 use std::fs;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+use anyhow::Result;
+use async_trait::async_trait;
 use nanobot_rs::config::Config;
 use nanobot_rs::config::load_config;
-use nanobot_rs::providers::{ProviderKind, ProviderRegistry};
+use nanobot_rs::providers::{LlmProvider, LlmResponse, ProviderError, ProviderKind, ProviderRegistry};
 use serde_json::Value;
 use tempfile::tempdir;
 
@@ -250,4 +254,71 @@ fn provider_registry_uses_the_selected_default_profile_from_the_new_shape() {
 
     assert_eq!(built.kind, ProviderKind::Ollama);
     assert_eq!(built.default_model, "llama3.2");
+}
+
+#[derive(Clone)]
+struct RetryStubProvider {
+    calls: Arc<AtomicUsize>,
+    mode: RetryMode,
+}
+
+#[derive(Clone, Copy)]
+enum RetryMode {
+    Fatal,
+    AlwaysRetryable,
+}
+
+#[async_trait]
+impl LlmProvider for RetryStubProvider {
+    fn default_model(&self) -> &str {
+        "stub-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<Value>,
+        _tools: Vec<Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        match self.mode {
+            RetryMode::Fatal => Err(ProviderError::fatal("fatal stub failure").into()),
+            RetryMode::AlwaysRetryable => {
+                Err(ProviderError::retryable("transient stub failure").into())
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn chat_with_retry_propagates_fatal_errors() {
+    let provider = RetryStubProvider {
+        calls: Arc::new(AtomicUsize::new(0)),
+        mode: RetryMode::Fatal,
+    };
+
+    let err = provider
+        .chat_with_retry(vec![], vec![], "stub-model")
+        .await
+        .expect_err("fatal failures should remain errors");
+
+    assert!(err.to_string().contains("fatal stub failure"));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn chat_with_retry_propagates_exhausted_retryable_errors() {
+    let provider = RetryStubProvider {
+        calls: Arc::new(AtomicUsize::new(0)),
+        mode: RetryMode::AlwaysRetryable,
+    };
+    let calls = provider.calls.clone();
+
+    let err = provider
+        .chat_with_retry(vec![], vec![], "stub-model")
+        .await
+        .expect_err("exhausted retries should remain errors");
+
+    assert!(err.to_string().contains("transient stub failure"));
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
 }
