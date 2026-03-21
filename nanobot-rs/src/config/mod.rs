@@ -143,9 +143,6 @@ impl RawConfig {
                 let model = model
                     .filter(|value| !value.trim().is_empty())
                     .ok_or_else(|| anyhow!("agents.defaults.defaultProfile is required"))?;
-                if !profiles.is_empty() {
-                    bail!("agents.defaults.defaultProfile is required when agents.profiles is set");
-                }
                 let profile_name = profile_key(&provider, &model);
                 profiles.insert(
                     profile_name.clone(),

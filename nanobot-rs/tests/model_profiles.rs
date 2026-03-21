@@ -201,6 +201,57 @@ fn legacy_provider_and_model_synthesize_one_default_profile() {
 }
 
 #[test]
+fn legacy_provider_and_model_synthesize_default_profile_even_with_other_profiles() {
+    let value = load_config_from_json(
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "provider": "ollama",
+      "model": "llama3.2",
+      "maxToolIterations": 20
+    },
+    "profiles": {
+      "openai:gpt-4.1-mini": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "request": {
+          "temperature": 0.4
+        }
+      }
+    }
+  }
+}"#,
+    )
+    .expect("load mixed legacy/new config");
+
+    assert_eq!(
+        value
+            .pointer("/agents/defaults/defaultProfile")
+            .and_then(Value::as_str),
+        Some("ollama:llama3.2")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/ollama:llama3.2/provider")
+            .and_then(Value::as_str),
+        Some("ollama")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/provider")
+            .and_then(Value::as_str),
+        Some("openai")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/request/temperature")
+            .and_then(Value::as_f64),
+        Some(0.4)
+    );
+}
+
+#[test]
 fn missing_default_profile_without_legacy_shape_is_rejected() {
     let err = load_config_from_json(
         r#"{
