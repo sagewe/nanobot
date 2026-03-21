@@ -413,7 +413,9 @@ pub struct AgentLoop {
     workspace: PathBuf,
     model: String,
     max_iterations: usize,
-    tools: ToolRegistry,
+    exec_timeout: u64,
+    restrict_to_workspace: bool,
+    web_tools: WebToolsConfig,
     sessions: SessionStore,
     context: ContextBuilder,
     subagents: SubagentManager,
@@ -445,22 +447,15 @@ impl AgentLoop {
             restrict_to_workspace,
             web_tools.clone(),
         );
-        let tools = build_default_tools(
-            workspace.clone(),
-            bus.clone(),
-            exec_timeout,
-            restrict_to_workspace,
-            subagents.clone(),
-            web_tools,
-        )
-        .await;
         Ok(Self {
             bus,
             provider,
             workspace,
             model,
             max_iterations,
-            tools,
+            exec_timeout,
+            restrict_to_workspace,
+            web_tools,
             sessions,
             context,
             subagents,
@@ -498,7 +493,8 @@ impl AgentLoop {
 
     async fn dispatch(&self, msg: InboundMessage) -> Result<()> {
         let _guard = self.processing_lock.lock().await;
-        if let Some(outbound) = self.process_message(msg).await? {
+        let tools = self.build_tools().await;
+        if let Some(outbound) = self.process_message(msg, &tools).await? {
             self.bus.publish_outbound(outbound).await?;
         }
         Ok(())
@@ -582,15 +578,20 @@ impl AgentLoop {
             metadata,
             session_key_override: Some(session_key.to_string()),
         };
-        let outbound = self.process_message(msg).await?;
+        let tools = self.build_tools().await;
+        let outbound = self.process_message(msg, &tools).await?;
         if let Some(outbound) = outbound {
             return Ok(outbound.content);
         }
-        let direct_replies = self.tools.take_direct_replies().await;
+        let direct_replies = tools.take_direct_replies().await;
         Ok(direct_replies.join("\n\n"))
     }
 
-    async fn process_message(&self, msg: InboundMessage) -> Result<Option<OutboundMessage>> {
+    async fn process_message(
+        &self,
+        msg: InboundMessage,
+        tools: &ToolRegistry,
+    ) -> Result<Option<OutboundMessage>> {
         if msg.channel == "system" {
             let (channel, chat_id) = msg
                 .chat_id
@@ -600,7 +601,7 @@ impl AgentLoop {
             let mut session = self
                 .sessions
                 .get_or_create(&format!("{channel}:{chat_id}"))?;
-            self.tools
+            tools
                 .set_context(ToolContext {
                     channel: channel.clone(),
                     chat_id: chat_id.clone(),
@@ -620,7 +621,7 @@ impl AgentLoop {
                 Some(&channel),
                 Some(&chat_id),
             );
-            let (final_content, all_messages) = self.run_agent_loop(messages, None).await?;
+            let (final_content, all_messages) = self.run_agent_loop(messages, None, tools).await?;
             self.save_turn(&mut session, all_messages, 1)?;
             self.sessions.save(&session)?;
             return Ok(Some(OutboundMessage {
@@ -655,7 +656,7 @@ impl AgentLoop {
             _ => {}
         }
 
-        self.tools
+        tools
             .set_context(ToolContext {
                 channel: msg.channel.clone(),
                 chat_id: msg.chat_id.clone(),
@@ -671,7 +672,7 @@ impl AgentLoop {
                     .unwrap_or(false),
             })
             .await;
-        self.tools.start_turn().await;
+        tools.start_turn().await;
 
         let history = session.get_history(0);
         let messages = self.context.build_messages(
@@ -707,11 +708,11 @@ impl AgentLoop {
                 metadata: msg.metadata.clone(),
             }))
         };
-        let (final_content, all_messages) = self.run_agent_loop(messages, reporter).await?;
+        let (final_content, all_messages) = self.run_agent_loop(messages, reporter, tools).await?;
         self.save_turn(&mut session, all_messages, 1 + history.len())?;
         self.sessions.save(&session)?;
 
-        if self.tools.sent_message_this_turn().await {
+        if tools.sent_message_this_turn().await {
             return Ok(None);
         }
 
@@ -729,11 +730,12 @@ impl AgentLoop {
         &self,
         initial_messages: Vec<Value>,
         reporter: Option<Arc<dyn ProgressReporter>>,
+        tools: &ToolRegistry,
     ) -> Result<(Option<String>, Vec<Value>)> {
         let mut messages = initial_messages;
         let mut final_content = None;
         for _ in 0..self.max_iterations {
-            let defs = self.tools.definitions().await;
+            let defs = tools.definitions().await;
             let response = self
                 .provider
                 .chat_with_retry(messages.clone(), defs, &self.model)
@@ -760,10 +762,7 @@ impl AgentLoop {
                     .collect::<Vec<_>>();
                 messages.push(assistant_message(response.content.clone(), tool_calls));
                 for tool_call in response.tool_calls {
-                    let result = self
-                        .tools
-                        .execute(&tool_call.name, tool_call.arguments)
-                        .await;
+                    let result = tools.execute(&tool_call.name, tool_call.arguments).await;
                     messages.push(tool_message(&tool_call.id, &tool_call.name, &result));
                 }
             } else {
@@ -779,6 +778,18 @@ impl AgentLoop {
             ));
         }
         Ok((final_content, messages))
+    }
+
+    async fn build_tools(&self) -> ToolRegistry {
+        build_default_tools(
+            self.workspace.clone(),
+            self.bus.clone(),
+            self.exec_timeout,
+            self.restrict_to_workspace,
+            self.subagents.clone(),
+            self.web_tools.clone(),
+        )
+        .await
     }
 
     fn save_turn(&self, session: &mut Session, messages: Vec<Value>, skip: usize) -> Result<()> {
@@ -814,7 +825,9 @@ impl Clone for AgentLoop {
             workspace: self.workspace.clone(),
             model: self.model.clone(),
             max_iterations: self.max_iterations,
-            tools: self.tools.clone(),
+            exec_timeout: self.exec_timeout,
+            restrict_to_workspace: self.restrict_to_workspace,
+            web_tools: self.web_tools.clone(),
             sessions: self.sessions.clone(),
             context: self.context.clone(),
             subagents: self.subagents.clone(),
