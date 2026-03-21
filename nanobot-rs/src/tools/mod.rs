@@ -17,6 +17,7 @@ use walkdir::WalkDir;
 use crate::agent::SubagentManager;
 use crate::bus::{MessageBus, OutboundMessage};
 use crate::config::WebToolsConfig;
+use crate::providers::ProviderRequestDescriptor;
 use crate::security::network::contains_internal_url;
 
 pub use web::{WebFetchTool, WebSearchTool};
@@ -37,6 +38,7 @@ pub struct ToolContext {
     pub chat_id: String,
     pub message_id: Option<String>,
     pub reply_to_caller: bool,
+    pub provider_request: Option<ProviderRequestDescriptor>,
 }
 
 #[async_trait]
@@ -847,14 +849,26 @@ impl Tool for SpawnTool {
         let task = args.get("task").and_then(Value::as_str).unwrap_or_default();
         let label = args.get("label").and_then(Value::as_str);
         let context = self.context.lock().await.clone();
-        self.manager
-            .spawn(
-                task.to_string(),
-                label.map(str::to_string),
-                context.channel,
-                context.chat_id,
-            )
-            .await
+        if let Some(request) = context.provider_request {
+            self.manager
+                .spawn_with_request(
+                    task.to_string(),
+                    label.map(str::to_string),
+                    context.channel,
+                    context.chat_id,
+                    request,
+                )
+                .await
+        } else {
+            self.manager
+                .spawn(
+                    task.to_string(),
+                    label.map(str::to_string),
+                    context.channel,
+                    context.chat_id,
+                )
+                .await
+        }
     }
 
     async fn set_context(&self, context: ToolContext) {
@@ -900,12 +914,27 @@ pub async fn build_default_tools(
 }
 
 pub fn assistant_message(content: Option<String>, tool_calls: Vec<Value>) -> Value {
-    json!({
-        "role": "assistant",
-        "content": content,
-        "tool_calls": if tool_calls.is_empty() { Value::Null } else { Value::Array(tool_calls) },
-        "timestamp": Utc::now(),
-    })
+    assistant_message_with_extra(content, tool_calls, serde_json::Map::new())
+}
+
+pub fn assistant_message_with_extra(
+    content: Option<String>,
+    tool_calls: Vec<Value>,
+    extra: serde_json::Map<String, Value>,
+) -> Value {
+    let mut message = extra;
+    message.insert("role".to_string(), json!("assistant"));
+    message.insert("content".to_string(), json!(content));
+    message.insert(
+        "tool_calls".to_string(),
+        if tool_calls.is_empty() {
+            Value::Null
+        } else {
+            Value::Array(tool_calls)
+        },
+    );
+    message.insert("timestamp".to_string(), json!(Utc::now()));
+    Value::Object(message)
 }
 
 pub fn tool_message(tool_call_id: &str, name: &str, content: &str) -> Value {

@@ -12,7 +12,7 @@ use nanobot_rs::bus::MessageBus;
 use nanobot_rs::config::{WebSearchToolConfig, WebToolsConfig};
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use nanobot_rs::tools::build_default_tools;
-use serde_json::json;
+use serde_json::{Map, json};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -135,11 +135,13 @@ async fn subagent_can_execute_web_search_tool() {
                 arguments: json!({"query": "example query"}),
             }],
             finish_reason: "tool_calls".to_string(),
+            extra: Map::new(),
         },
         LlmResponse {
             content: Some("background done".to_string()),
             tool_calls: Vec::new(),
             finish_reason: "stop".to_string(),
+            extra: Map::new(),
         },
     ]);
     let bus = MessageBus::new(32);
@@ -185,11 +187,13 @@ async fn agent_can_execute_web_search_tool() {
                 arguments: json!({"query": "example query"}),
             }],
             finish_reason: "tool_calls".to_string(),
+            extra: Map::new(),
         },
         LlmResponse {
             content: Some("done".to_string()),
             tool_calls: Vec::new(),
             finish_reason: "stop".to_string(),
+            extra: Map::new(),
         },
     ]);
     let bus = MessageBus::new(32);

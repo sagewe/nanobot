@@ -3,9 +3,12 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
-use super::{LlmProvider, LlmResponse, ProviderError, ResolvedProviderConfig, ToolCall};
+use super::{
+    LlmProvider, LlmResponse, ProviderError, ProviderRequestDescriptor, ResolvedProviderConfig,
+    ToolCall,
+};
 
 #[derive(Clone)]
 pub struct OpenAICompatibleProvider {
@@ -50,18 +53,33 @@ impl LlmProvider for OpenAICompatibleProvider {
         tools: Vec<Value>,
         model: &str,
     ) -> Result<LlmResponse> {
-        let body = json!({
-            "model": model,
-            "messages": messages,
-            "tools": if tools.is_empty() { Value::Null } else { Value::Array(tools) },
-            "temperature": 0.1,
-        });
+        let request = ProviderRequestDescriptor::new("openai", model, Map::new());
+        self.chat_with_request(messages, tools, &request).await
+    }
+
+    async fn chat_with_request(
+        &self,
+        messages: Vec<Value>,
+        tools: Vec<Value>,
+        request: &ProviderRequestDescriptor,
+    ) -> Result<LlmResponse> {
+        let mut body = request.request_extras.clone();
+        body.insert("model".to_string(), json!(request.model_name));
+        body.insert("messages".to_string(), Value::Array(messages));
+        body.insert(
+            "tools".to_string(),
+            if tools.is_empty() {
+                Value::Null
+            } else {
+                Value::Array(tools)
+            },
+        );
         let url = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
         let mut request = self
             .client
             .post(url)
             .headers(self.extra_headers.clone())
-            .json(&body);
+            .json(&Value::Object(body));
         if !self.api_key.is_empty() {
             request = request.bearer_auth(&self.api_key);
         }
@@ -101,6 +119,10 @@ impl LlmProvider for OpenAICompatibleProvider {
             .get("message")
             .and_then(Value::as_object)
             .ok_or_else(|| anyhow::anyhow!("provider returned no message"))?;
+        let mut extra = message.clone();
+        extra.remove("role");
+        extra.remove("content");
+        extra.remove("tool_calls");
         let content = message.get("content").and_then(normalize_content);
         let tool_calls = message
             .get("tool_calls")
@@ -133,6 +155,7 @@ impl LlmProvider for OpenAICompatibleProvider {
             content,
             tool_calls,
             finish_reason,
+            extra,
         })
     }
 }

@@ -223,7 +223,11 @@ impl SessionStore {
                 sessions.push(session.into_summary());
             }
         }
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| a.key.cmp(&b.key)));
+        sessions.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| a.key.cmp(&b.key))
+        });
         Ok(sessions)
     }
 

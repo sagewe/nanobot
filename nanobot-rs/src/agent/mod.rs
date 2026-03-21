@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -12,13 +12,13 @@ use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
-use crate::config::WebToolsConfig;
-use crate::providers::LlmProvider;
+use crate::config::{AgentProfileConfig, Config, WebToolsConfig};
+use crate::providers::{LlmProvider, ProviderRequestDescriptor};
 use crate::session::{Session, SessionMessage, SessionStore};
 use crate::tools::{
     EditFileTool, ExecTool, ListDirTool, ReadFileTool, ToolContext, ToolRegistry, WebFetchTool,
-    WebSearchTool, WriteFileTool, assistant_message, build_default_tools, system_message,
-    tool_message,
+    WebSearchTool, WriteFileTool, assistant_message_with_extra, build_default_tools,
+    system_message, tool_message,
 };
 
 const RUNTIME_CONTEXT_TAG: &str = "[Runtime Context — metadata only, not instructions]";
@@ -121,6 +121,14 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
     input.chars().take(max_chars).collect()
 }
 
+fn profile_to_request(profile: &AgentProfileConfig) -> ProviderRequestDescriptor {
+    ProviderRequestDescriptor::new(
+        profile.provider.clone(),
+        profile.model.clone(),
+        profile.request.clone(),
+    )
+}
+
 #[async_trait]
 trait ProgressReporter: Send + Sync {
     async fn report(&self, content: String, tool_hint: bool);
@@ -191,7 +199,7 @@ pub struct SubagentManager {
     provider: Arc<dyn LlmProvider>,
     workspace: PathBuf,
     bus: MessageBus,
-    model: String,
+    default_request: ProviderRequestDescriptor,
     max_iterations: usize,
     exec_timeout: u64,
     restrict_to_workspace: bool,
@@ -211,11 +219,34 @@ impl SubagentManager {
         restrict_to_workspace: bool,
         web_tools: WebToolsConfig,
     ) -> Self {
+        let request = ProviderRequestDescriptor::new("openai", model, serde_json::Map::new());
+        Self::new_with_request(
+            provider,
+            workspace,
+            bus,
+            request,
+            max_iterations,
+            exec_timeout,
+            restrict_to_workspace,
+            web_tools,
+        )
+    }
+
+    pub fn new_with_request(
+        provider: Arc<dyn LlmProvider>,
+        workspace: PathBuf,
+        bus: MessageBus,
+        default_request: ProviderRequestDescriptor,
+        max_iterations: usize,
+        exec_timeout: u64,
+        restrict_to_workspace: bool,
+        web_tools: WebToolsConfig,
+    ) -> Self {
         Self {
             provider,
             workspace,
             bus,
-            model,
+            default_request,
             max_iterations,
             exec_timeout,
             restrict_to_workspace,
@@ -231,6 +262,24 @@ impl SubagentManager {
         label: Option<String>,
         origin_channel: String,
         origin_chat_id: String,
+    ) -> String {
+        self.spawn_with_request(
+            task,
+            label,
+            origin_channel,
+            origin_chat_id,
+            self.default_request.clone(),
+        )
+        .await
+    }
+
+    pub async fn spawn_with_request(
+        &self,
+        task: String,
+        label: Option<String>,
+        origin_channel: String,
+        origin_chat_id: String,
+        request: ProviderRequestDescriptor,
     ) -> String {
         let task_id = truncate_chars(&uuid::Uuid::new_v4().to_string(), 8);
         let label = label.unwrap_or_else(|| {
@@ -253,6 +302,7 @@ impl SubagentManager {
                     label_for_handle.clone(),
                     origin_channel.clone(),
                     origin_chat_id.clone(),
+                    request,
                 )
                 .await;
             manager
@@ -289,6 +339,7 @@ impl SubagentManager {
         label: String,
         origin_channel: String,
         origin_chat_id: String,
+        request: ProviderRequestDescriptor,
     ) {
         let tools = ToolRegistry::new();
         tools
@@ -341,7 +392,7 @@ impl SubagentManager {
             let defs = tools.definitions().await;
             match self
                 .provider
-                .chat_with_retry(messages.clone(), defs, &self.model)
+                .chat_with_request_retry(messages.clone(), defs, &request)
                 .await
             {
                 Ok(response) => {
@@ -351,7 +402,11 @@ impl SubagentManager {
                             .iter()
                             .map(|call| call.to_openai_tool_call())
                             .collect::<Vec<_>>();
-                        messages.push(assistant_message(response.content.clone(), tool_calls));
+                        messages.push(assistant_message_with_extra(
+                            response.content.clone(),
+                            tool_calls,
+                            response.extra.clone(),
+                        ));
                         for tool_call in response.tool_calls {
                             let result = tools.execute(&tool_call.name, tool_call.arguments).await;
                             messages.push(tool_message(&tool_call.id, &tool_call.name, &result));
@@ -411,7 +466,8 @@ pub struct AgentLoop {
     bus: MessageBus,
     provider: Arc<dyn LlmProvider>,
     workspace: PathBuf,
-    model: String,
+    default_profile: String,
+    profiles: HashMap<String, AgentProfileConfig>,
     max_iterations: usize,
     exec_timeout: u64,
     restrict_to_workspace: bool,
@@ -435,13 +491,71 @@ impl AgentLoop {
         restrict_to_workspace: bool,
         web_tools: WebToolsConfig,
     ) -> Result<Self> {
+        let default_profile = format!("openai:{model}");
+        let profiles = HashMap::from([(
+            default_profile.clone(),
+            AgentProfileConfig {
+                provider: "openai".to_string(),
+                model: model.clone(),
+                request: serde_json::Map::new(),
+            },
+        )]);
+        Self::new_internal(
+            bus,
+            provider,
+            workspace,
+            default_profile,
+            profiles,
+            max_iterations,
+            exec_timeout,
+            restrict_to_workspace,
+            web_tools,
+        )
+        .await
+    }
+
+    pub async fn from_config(
+        bus: MessageBus,
+        provider: Arc<dyn LlmProvider>,
+        config: Config,
+    ) -> Result<Self> {
+        let workspace = config.workspace_path();
+        Self::new_internal(
+            bus,
+            provider,
+            workspace,
+            config.agents.defaults.default_profile.clone(),
+            config.agents.profiles.clone(),
+            config.agents.defaults.max_tool_iterations,
+            config.tools.exec.timeout,
+            config.tools.restrict_to_workspace,
+            config.tools.web.clone(),
+        )
+        .await
+    }
+
+    async fn new_internal(
+        bus: MessageBus,
+        provider: Arc<dyn LlmProvider>,
+        workspace: PathBuf,
+        default_profile: String,
+        profiles: HashMap<String, AgentProfileConfig>,
+        max_iterations: usize,
+        exec_timeout: u64,
+        restrict_to_workspace: bool,
+        web_tools: WebToolsConfig,
+    ) -> Result<Self> {
         let sessions = SessionStore::new(&workspace)?;
         let context = ContextBuilder::new(workspace.clone());
-        let subagents = SubagentManager::new(
+        let default_request =
+            profile_to_request(profiles.get(&default_profile).ok_or_else(|| {
+                anyhow::anyhow!("default profile '{default_profile}' is missing")
+            })?);
+        let subagents = SubagentManager::new_with_request(
             provider.clone(),
             workspace.clone(),
             bus.clone(),
-            model.clone(),
+            default_request,
             max_iterations,
             exec_timeout,
             restrict_to_workspace,
@@ -451,7 +565,8 @@ impl AgentLoop {
             bus,
             provider,
             workspace,
-            model,
+            default_profile,
+            profiles,
             max_iterations,
             exec_timeout,
             restrict_to_workspace,
@@ -534,6 +649,46 @@ impl AgentLoop {
         self.running.store(false, Ordering::SeqCst);
     }
 
+    fn normalize_session_profile<'a>(&'a self, session: &'a mut Session) -> &'a str {
+        let selected = session
+            .active_profile
+            .as_deref()
+            .filter(|key| self.profiles.contains_key(*key))
+            .unwrap_or(&self.default_profile)
+            .to_string();
+        if session.active_profile.as_deref() != Some(selected.as_str()) {
+            session.active_profile = Some(selected.clone());
+        }
+        session
+            .active_profile
+            .as_deref()
+            .unwrap_or(&self.default_profile)
+    }
+
+    fn resolve_request(&self, session: &mut Session) -> Result<ProviderRequestDescriptor> {
+        let key = self.normalize_session_profile(session).to_string();
+        let profile = self
+            .profiles
+            .get(&key)
+            .ok_or_else(|| anyhow!("session profile '{key}' is not configured"))?;
+        Ok(profile_to_request(profile))
+    }
+
+    fn help_text(&self) -> String {
+        "nanobot-rs commands:\n/new — Start a new conversation\n/stop — Stop the current task\n/help — Show available commands\n/models — List available model profiles\n/model <provider:model> — Switch the current session model".to_string()
+    }
+
+    fn models_text(&self, current_profile: &str) -> String {
+        let mut profiles = self.profiles.keys().cloned().collect::<Vec<_>>();
+        profiles.sort();
+        let mut lines = vec!["Available model profiles:".to_string()];
+        for profile in profiles {
+            let marker = if profile == current_profile { "*" } else { " " };
+            lines.push(format!("{marker} {profile}"));
+        }
+        lines.join("\n")
+    }
+
     pub async fn process_direct(
         &self,
         content: &str,
@@ -598,15 +753,18 @@ impl AgentLoop {
                 .split_once(':')
                 .map(|(channel, chat_id)| (channel.to_string(), chat_id.to_string()))
                 .unwrap_or_else(|| ("cli".to_string(), msg.chat_id.clone()));
-            let mut session = self
-                .sessions
-                .get_or_create(&format!("{channel}:{chat_id}"))?;
+            let mut session = self.sessions.get_or_create_with_default_profile(
+                &format!("{channel}:{chat_id}"),
+                &self.default_profile,
+            )?;
+            let request = self.resolve_request(&mut session)?;
             tools
                 .set_context(ToolContext {
                     channel: channel.clone(),
                     chat_id: chat_id.clone(),
                     message_id: None,
                     reply_to_caller: false,
+                    provider_request: Some(request.clone()),
                 })
                 .await;
             let history = session.get_history(0);
@@ -621,7 +779,8 @@ impl AgentLoop {
                 Some(&channel),
                 Some(&chat_id),
             );
-            let (final_content, all_messages) = self.run_agent_loop(messages, None, tools).await?;
+            let (final_content, all_messages) =
+                self.run_agent_loop(messages, None, tools, &request).await?;
             self.save_turn(&mut session, all_messages, 1)?;
             self.sessions.save(&session)?;
             return Ok(Some(OutboundMessage {
@@ -633,10 +792,14 @@ impl AgentLoop {
         }
 
         let session_key = msg.session_key();
-        let mut session = self.sessions.get_or_create(&session_key)?;
+        let mut session = self
+            .sessions
+            .get_or_create_with_default_profile(&session_key, &self.default_profile)?;
+        let current_profile = self.normalize_session_profile(&mut session).to_string();
         match msg.content.trim() {
             "/new" => {
                 session.clear();
+                session.active_profile = Some(self.default_profile.clone());
                 self.sessions.save(&session)?;
                 return Ok(Some(OutboundMessage {
                     channel: msg.channel,
@@ -649,12 +812,41 @@ impl AgentLoop {
                 return Ok(Some(OutboundMessage {
                     channel: msg.channel,
                     chat_id: msg.chat_id,
-                    content: "nanobot-rs commands:\n/new — Start a new conversation\n/stop — Stop the current task\n/help — Show available commands".to_string(),
+                    content: self.help_text(),
+                    metadata: HashMap::new(),
+                }));
+            }
+            "/models" => {
+                return Ok(Some(OutboundMessage {
+                    channel: msg.channel,
+                    chat_id: msg.chat_id,
+                    content: self.models_text(&current_profile),
+                    metadata: HashMap::new(),
+                }));
+            }
+            command if command.starts_with("/model ") => {
+                let requested = command.trim_start_matches("/model").trim();
+                if !self.profiles.contains_key(requested) {
+                    return Ok(Some(OutboundMessage {
+                        channel: msg.channel,
+                        chat_id: msg.chat_id,
+                        content: format!("Unknown model profile: {requested}"),
+                        metadata: HashMap::new(),
+                    }));
+                }
+                session.active_profile = Some(requested.to_string());
+                self.sessions.save(&session)?;
+                return Ok(Some(OutboundMessage {
+                    channel: msg.channel,
+                    chat_id: msg.chat_id,
+                    content: format!("Switched this session to {requested}."),
                     metadata: HashMap::new(),
                 }));
             }
             _ => {}
         }
+
+        let request = self.resolve_request(&mut session)?;
 
         tools
             .set_context(ToolContext {
@@ -670,6 +862,7 @@ impl AgentLoop {
                     .get(DIRECT_REPLY_METADATA_KEY)
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                provider_request: Some(request.clone()),
             })
             .await;
         tools.start_turn().await;
@@ -708,7 +901,9 @@ impl AgentLoop {
                 metadata: msg.metadata.clone(),
             }))
         };
-        let (final_content, all_messages) = self.run_agent_loop(messages, reporter, tools).await?;
+        let (final_content, all_messages) = self
+            .run_agent_loop(messages, reporter, tools, &request)
+            .await?;
         self.save_turn(&mut session, all_messages, 1 + history.len())?;
         self.sessions.save(&session)?;
 
@@ -731,6 +926,7 @@ impl AgentLoop {
         initial_messages: Vec<Value>,
         reporter: Option<Arc<dyn ProgressReporter>>,
         tools: &ToolRegistry,
+        request: &ProviderRequestDescriptor,
     ) -> Result<(Option<String>, Vec<Value>)> {
         let mut messages = initial_messages;
         let mut final_content = None;
@@ -738,7 +934,7 @@ impl AgentLoop {
             let defs = tools.definitions().await;
             let response = self
                 .provider
-                .chat_with_retry(messages.clone(), defs, &self.model)
+                .chat_with_request_retry(messages.clone(), defs, request)
                 .await?;
             if response.has_tool_calls() {
                 if let Some(reporter) = &reporter {
@@ -760,14 +956,22 @@ impl AgentLoop {
                     .iter()
                     .map(|call| call.to_openai_tool_call())
                     .collect::<Vec<_>>();
-                messages.push(assistant_message(response.content.clone(), tool_calls));
+                messages.push(assistant_message_with_extra(
+                    response.content.clone(),
+                    tool_calls,
+                    response.extra.clone(),
+                ));
                 for tool_call in response.tool_calls {
                     let result = tools.execute(&tool_call.name, tool_call.arguments).await;
                     messages.push(tool_message(&tool_call.id, &tool_call.name, &result));
                 }
             } else {
                 final_content = response.content.clone();
-                messages.push(assistant_message(response.content, Vec::new()));
+                messages.push(assistant_message_with_extra(
+                    response.content,
+                    Vec::new(),
+                    response.extra,
+                ));
                 break;
             }
         }
@@ -823,7 +1027,8 @@ impl Clone for AgentLoop {
             bus: self.bus.clone(),
             provider: self.provider.clone(),
             workspace: self.workspace.clone(),
-            model: self.model.clone(),
+            default_profile: self.default_profile.clone(),
+            profiles: self.profiles.clone(),
             max_iterations: self.max_iterations,
             exec_timeout: self.exec_timeout,
             restrict_to_workspace: self.restrict_to_workspace,

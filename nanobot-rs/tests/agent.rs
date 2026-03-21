@@ -7,9 +7,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nanobot_rs::agent::{AgentLoop, SubagentManager};
 use nanobot_rs::bus::{InboundMessage, MessageBus};
-use nanobot_rs::config::WebToolsConfig;
-use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
-use serde_json::json;
+use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig};
+use nanobot_rs::providers::{LlmProvider, LlmResponse, ProviderRequestDescriptor, ToolCall};
+use serde_json::{Map, Value, json};
 use tempfile::tempdir;
 use tokio::sync::{Mutex, Notify};
 
@@ -93,6 +93,7 @@ impl LlmProvider for ConcurrentProvider {
                 content: Some("plain final".to_string()),
                 tool_calls: Vec::new(),
                 finish_reason: "stop".to_string(),
+                extra: Map::new(),
             });
         }
 
@@ -105,6 +106,7 @@ impl LlmProvider for ConcurrentProvider {
                     arguments: json!({"content": "tool reply"}),
                 }],
                 finish_reason: "tool_calls".to_string(),
+                extra: Map::new(),
             });
         }
 
@@ -118,6 +120,7 @@ impl LlmProvider for ConcurrentProvider {
                 content: Some("tool final".to_string()),
                 tool_calls: Vec::new(),
                 finish_reason: "stop".to_string(),
+                extra: Map::new(),
             });
         }
 
@@ -125,6 +128,157 @@ impl LlmProvider for ConcurrentProvider {
             "unexpected request shape for concurrent provider"
         ))
     }
+}
+
+#[derive(Debug, Clone)]
+struct RecordedRequest {
+    provider: String,
+    model: String,
+    extras: Map<String, Value>,
+}
+
+#[derive(Clone)]
+struct RequestRecordingProvider {
+    records: Arc<Mutex<Vec<RecordedRequest>>>,
+}
+
+#[async_trait]
+impl LlmProvider for RequestRecordingProvider {
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        Err(anyhow::anyhow!(
+            "chat() should not be used for profile-aware tests"
+        ))
+    }
+
+    async fn chat_with_request(
+        &self,
+        _messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        request: &ProviderRequestDescriptor,
+    ) -> Result<LlmResponse> {
+        self.records.lock().await.push(RecordedRequest {
+            provider: request.provider_name.clone(),
+            model: request.model_name.clone(),
+            extras: request.request_extras.clone(),
+        });
+        Ok(LlmResponse {
+            content: Some("ok".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            extra: Map::new(),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct ReplayAwareProvider {
+    call_count: Arc<Mutex<usize>>,
+}
+
+#[async_trait]
+impl LlmProvider for ReplayAwareProvider {
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        Err(anyhow::anyhow!(
+            "chat() should not be used for replay-aware tests"
+        ))
+    }
+
+    async fn chat_with_request(
+        &self,
+        messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _request: &ProviderRequestDescriptor,
+    ) -> Result<LlmResponse> {
+        let mut call_count = self.call_count.lock().await;
+        match *call_count {
+            0 => {
+                *call_count += 1;
+                let mut extra = Map::new();
+                extra.insert("reasoning_content".to_string(), json!("chain"));
+                Ok(LlmResponse {
+                    content: Some("thinking".to_string()),
+                    tool_calls: vec![ToolCall {
+                        id: "call_1".to_string(),
+                        name: "list_dir".to_string(),
+                        arguments: json!({"path": "."}),
+                    }],
+                    finish_reason: "tool_calls".to_string(),
+                    extra,
+                })
+            }
+            1 => {
+                let saw_reasoning = messages.iter().any(|message| {
+                    message.get("role").and_then(Value::as_str) == Some("assistant")
+                        && message.get("reasoning_content").and_then(Value::as_str) == Some("chain")
+                });
+                if !saw_reasoning {
+                    return Err(anyhow::anyhow!(
+                        "missing reasoning_content in replayed assistant message"
+                    ));
+                }
+                *call_count += 1;
+                Ok(LlmResponse {
+                    content: Some("done".to_string()),
+                    tool_calls: Vec::new(),
+                    finish_reason: "stop".to_string(),
+                    extra: Map::new(),
+                })
+            }
+            _ => Err(anyhow::anyhow!("unexpected extra call")),
+        }
+    }
+}
+
+fn multi_profile_config(workspace: &std::path::Path) -> Config {
+    let mut config = Config::default();
+    config.agents.defaults.workspace = workspace.display().to_string();
+    config.agents.defaults.default_profile = "openai:gpt-4.1-mini".to_string();
+    config.agents.profiles = [
+        (
+            "openai:gpt-4.1-mini".to_string(),
+            AgentProfileConfig {
+                provider: "openai".to_string(),
+                model: "gpt-4.1-mini".to_string(),
+                request: [("temperature".to_string(), json!(0.3))]
+                    .into_iter()
+                    .collect(),
+            },
+        ),
+        (
+            "openrouter:deepseek-r1".to_string(),
+            AgentProfileConfig {
+                provider: "openrouter".to_string(),
+                model: "deepseek/deepseek-r1".to_string(),
+                request: [
+                    ("temperature".to_string(), json!(0.1)),
+                    ("reasoning".to_string(), json!({"enabled": true})),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        ),
+    ]
+    .into_iter()
+    .collect();
+    config
 }
 
 #[tokio::test]
@@ -140,11 +294,13 @@ async fn agent_executes_tool_loop() {
                 arguments: json!({"path": "note.txt"}),
             }],
             finish_reason: "tool_calls".to_string(),
+            extra: Map::new(),
         },
         LlmResponse {
             content: Some("done".to_string()),
             tool_calls: Vec::new(),
             finish_reason: "stop".to_string(),
+            extra: Map::new(),
         },
     ]);
     let bus = MessageBus::new(32);
@@ -181,11 +337,13 @@ async fn agent_process_direct_returns_message_tool_reply() {
                 arguments: json!({"content": long_chinese}),
             }],
             finish_reason: "tool_calls".to_string(),
+            extra: Map::new(),
         },
         LlmResponse {
             content: Some("done".to_string()),
             tool_calls: Vec::new(),
             finish_reason: "stop".to_string(),
+            extra: Map::new(),
         },
     ]);
     let bus = MessageBus::new(32);
@@ -230,11 +388,13 @@ async fn agent_bus_mode_suppresses_duplicate_final_reply_after_message_tool() {
                 arguments: json!({"content": long_chinese}),
             }],
             finish_reason: "tool_calls".to_string(),
+            extra: Map::new(),
         },
         LlmResponse {
             content: Some("done".to_string()),
             tool_calls: Vec::new(),
             finish_reason: "stop".to_string(),
+            extra: Map::new(),
         },
     ]);
     let bus = MessageBus::new(32);
@@ -303,6 +463,7 @@ async fn agent_returns_iteration_limit_message() {
                 arguments: json!({"path": "."}),
             }],
             finish_reason: "tool_calls".to_string(),
+            extra: Map::new(),
         },
         LlmResponse {
             content: None,
@@ -312,6 +473,7 @@ async fn agent_returns_iteration_limit_message() {
                 arguments: json!({"path": "."}),
             }],
             finish_reason: "tool_calls".to_string(),
+            extra: Map::new(),
         },
     ]);
     let bus = MessageBus::new(32);
@@ -341,6 +503,7 @@ async fn subagent_reports_back_via_bus() {
         content: Some("background result".to_string()),
         tool_calls: Vec::new(),
         finish_reason: "stop".to_string(),
+        extra: Map::new(),
     }]);
     let bus = MessageBus::new(32);
     let manager = SubagentManager::new(
@@ -421,4 +584,179 @@ async fn concurrent_direct_requests_do_not_share_tool_state() {
 
     assert_eq!(plain_result, "plain final");
     assert_eq!(tool_result, "tool reply");
+}
+
+#[tokio::test]
+async fn help_lists_model_commands() {
+    let dir = tempdir().expect("tempdir");
+    let bus = MessageBus::new(32);
+    let provider = mock_provider(Vec::new());
+    let agent = AgentLoop::from_config(bus, provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+
+    let result = agent
+        .process_direct("/help", "cli:test", "cli", "test")
+        .await
+        .expect("help");
+
+    assert!(result.contains("/models"));
+    assert!(result.contains("/model <provider:model>"));
+}
+
+#[tokio::test]
+async fn models_command_lists_profiles_and_marks_current_one() {
+    let dir = tempdir().expect("tempdir");
+    let bus = MessageBus::new(32);
+    let provider = mock_provider(Vec::new());
+    let agent = AgentLoop::from_config(bus, provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+
+    let result = agent
+        .process_direct("/models", "cli:test", "cli", "test")
+        .await
+        .expect("models");
+
+    assert!(result.contains("* openai:gpt-4.1-mini"));
+    assert!(result.contains("openrouter:deepseek-r1"));
+}
+
+#[tokio::test]
+async fn model_command_switches_only_the_current_session() {
+    let dir = tempdir().expect("tempdir");
+    let records = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn LlmProvider> = Arc::new(RequestRecordingProvider {
+        records: records.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus, provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+
+    let switched = agent
+        .process_direct("/model openrouter:deepseek-r1", "cli:one", "cli", "one")
+        .await
+        .expect("switch");
+    assert!(switched.contains("openrouter:deepseek-r1"));
+
+    agent
+        .process_direct("hello", "cli:one", "cli", "one")
+        .await
+        .expect("session one");
+    agent
+        .process_direct("hello", "cli:two", "cli", "two")
+        .await
+        .expect("session two");
+
+    let records = records.lock().await;
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].provider, "openrouter");
+    assert_eq!(records[0].model, "deepseek/deepseek-r1");
+    assert_eq!(records[0].extras.get("temperature"), Some(&json!(0.1)));
+    assert_eq!(
+        records[0].extras.get("reasoning"),
+        Some(&json!({"enabled": true}))
+    );
+    assert_eq!(records[1].provider, "openai");
+    assert_eq!(records[1].model, "gpt-4.1-mini");
+    assert_eq!(records[1].extras.get("temperature"), Some(&json!(0.3)));
+}
+
+#[tokio::test]
+async fn new_resets_the_session_profile_to_default() {
+    let dir = tempdir().expect("tempdir");
+    let records = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn LlmProvider> = Arc::new(RequestRecordingProvider {
+        records: records.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus, provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+
+    agent
+        .process_direct("/model openrouter:deepseek-r1", "cli:one", "cli", "one")
+        .await
+        .expect("switch");
+    agent
+        .process_direct("/new", "cli:one", "cli", "one")
+        .await
+        .expect("new");
+    agent
+        .process_direct("hello", "cli:one", "cli", "one")
+        .await
+        .expect("message");
+
+    let records = records.lock().await;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].provider, "openai");
+    assert_eq!(records[0].model, "gpt-4.1-mini");
+}
+
+#[tokio::test]
+async fn system_turn_uses_the_target_sessions_active_profile() {
+    let dir = tempdir().expect("tempdir");
+    let records = Arc::new(Mutex::new(Vec::new()));
+    let provider: Arc<dyn LlmProvider> = Arc::new(RequestRecordingProvider {
+        records: records.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    agent
+        .process_direct("/model openrouter:deepseek-r1", "cli:one", "cli", "one")
+        .await
+        .expect("switch");
+
+    bus.publish_inbound(InboundMessage {
+        channel: "system".to_string(),
+        sender_id: "subagent".to_string(),
+        chat_id: "cli:one".to_string(),
+        content: "background".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: None,
+    })
+    .await
+    .expect("publish");
+
+    let outbound = tokio::time::timeout(Duration::from_secs(2), bus.consume_outbound())
+        .await
+        .expect("timely")
+        .expect("outbound");
+    assert_eq!(outbound.content, "ok");
+
+    let records = records.lock().await;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].provider, "openrouter");
+    assert_eq!(records[0].model, "deepseek/deepseek-r1");
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn agent_preserves_assistant_extra_fields_across_tool_continuation() {
+    let dir = tempdir().expect("tempdir");
+    let bus = MessageBus::new(32);
+    let provider: Arc<dyn LlmProvider> = Arc::new(ReplayAwareProvider {
+        call_count: Arc::new(Mutex::new(0)),
+    });
+    let agent = AgentLoop::from_config(bus, provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+
+    let result = agent
+        .process_direct("inspect", "cli:test", "cli", "test")
+        .await
+        .expect("process");
+
+    assert_eq!(result, "done");
 }

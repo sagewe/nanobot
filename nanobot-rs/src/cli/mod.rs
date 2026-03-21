@@ -124,17 +124,7 @@ async fn agent(
     ensure_workspace(&config.workspace_path())?;
     let bus = MessageBus::new(128);
     let provider = build_provider_from_config(&config)?;
-    let agent = AgentLoop::new(
-        bus.clone(),
-        provider,
-        config.workspace_path(),
-        config.agents.defaults.model.clone(),
-        config.agents.defaults.max_tool_iterations,
-        config.tools.exec.timeout,
-        config.tools.restrict_to_workspace,
-        config.tools.web.clone(),
-    )
-    .await?;
+    let agent = AgentLoop::from_config(bus.clone(), provider, config.clone()).await?;
 
     if let Some(message) = message {
         let (channel, chat_id) = parse_session(&session);
@@ -200,17 +190,7 @@ async fn gateway(config_path: Option<PathBuf>, workspace_override: Option<PathBu
     ensure_workspace(&config.workspace_path())?;
     let bus = MessageBus::new(256);
     let provider = build_provider_from_config(&config)?;
-    let agent = AgentLoop::new(
-        bus.clone(),
-        provider,
-        config.workspace_path(),
-        config.agents.defaults.model.clone(),
-        config.agents.defaults.max_tool_iterations,
-        config.tools.exec.timeout,
-        config.tools.restrict_to_workspace,
-        config.tools.web.clone(),
-    )
-    .await?;
+    let agent = AgentLoop::from_config(bus.clone(), provider, config.clone()).await?;
     let manager = ChannelManager::new(&config, bus);
     let agent_task = {
         let agent = agent.clone();
@@ -234,17 +214,7 @@ async fn web_command(
     ensure_workspace(&config.workspace_path())?;
     let bus = MessageBus::new(128);
     let provider = build_provider_from_config(&config)?;
-    let agent = AgentLoop::new(
-        bus,
-        provider,
-        config.workspace_path(),
-        config.agents.defaults.model.clone(),
-        config.agents.defaults.max_tool_iterations,
-        config.tools.exec.timeout,
-        config.tools.restrict_to_workspace,
-        config.tools.web.clone(),
-    )
-    .await?;
+    let agent = AgentLoop::from_config(bus, provider, config.clone()).await?;
     println!("Web UI listening on http://{host}:{port}");
     web::serve(agent, &host, port).await
 }

@@ -9,7 +9,7 @@ use nanobot_rs::bus::MessageBus;
 use nanobot_rs::config::WebToolsConfig;
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use nanobot_rs::web::{self, AgentChatService, AppState, ChatService};
-use serde_json::json;
+use serde_json::{Map, json};
 use std::collections::VecDeque;
 use tempfile::tempdir;
 use tokio::net::TcpListener;
@@ -179,11 +179,13 @@ async fn chat_endpoint_returns_message_tool_reply() {
                 }),
             }],
             finish_reason: "tool_calls".to_string(),
+            extra: Map::new(),
         },
         LlmResponse {
             content: Some("done".to_string()),
             tool_calls: Vec::new(),
             finish_reason: "stop".to_string(),
+            extra: Map::new(),
         },
     ]);
     let bus = MessageBus::new(32);

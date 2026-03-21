@@ -51,6 +51,7 @@ pub struct LlmResponse {
     pub content: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub finish_reason: String,
+    pub extra: Map<String, Value>,
 }
 
 impl LlmResponse {
@@ -63,6 +64,7 @@ impl LlmResponse {
             content: Some(message.into()),
             tool_calls: Vec::new(),
             finish_reason: "error".to_string(),
+            extra: Map::new(),
         }
     }
 }
@@ -112,6 +114,15 @@ pub trait LlmProvider: Send + Sync {
         model: &str,
     ) -> Result<LlmResponse>;
 
+    async fn chat_with_request(
+        &self,
+        messages: Vec<Value>,
+        tools: Vec<Value>,
+        request: &ProviderRequestDescriptor,
+    ) -> Result<LlmResponse> {
+        self.chat(messages, tools, &request.model_name).await
+    }
+
     async fn chat_with_retry(
         &self,
         messages: Vec<Value>,
@@ -123,6 +134,32 @@ pub trait LlmProvider: Send + Sync {
 
         loop {
             match self.chat(messages.clone(), tools.clone(), model).await {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    if !should_retry(&error) || attempt >= delays.len() {
+                        return Err(error);
+                    }
+                    tokio::time::sleep(Duration::from_secs(delays[attempt])).await;
+                    attempt += 1;
+                }
+            }
+        }
+    }
+
+    async fn chat_with_request_retry(
+        &self,
+        messages: Vec<Value>,
+        tools: Vec<Value>,
+        request: &ProviderRequestDescriptor,
+    ) -> Result<LlmResponse> {
+        let delays = [1u64, 2, 4];
+        let mut attempt = 0usize;
+
+        loop {
+            match self
+                .chat_with_request(messages.clone(), tools.clone(), request)
+                .await
+            {
                 Ok(response) => return Ok(response),
                 Err(error) => {
                     if !should_retry(&error) || attempt >= delays.len() {

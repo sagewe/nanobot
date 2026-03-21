@@ -6,7 +6,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nanobot_rs::config::Config;
 use nanobot_rs::config::load_config;
-use nanobot_rs::providers::{LlmProvider, LlmResponse, ProviderError, ProviderKind, ProviderRegistry};
+use nanobot_rs::providers::{
+    LlmProvider, LlmResponse, ProviderError, ProviderKind, ProviderRegistry,
+};
 use serde_json::Value;
 use tempfile::tempdir;
 

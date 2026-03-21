@@ -79,7 +79,16 @@ impl ProviderRegistry {
                 "agents.defaults.defaultProfile '{profile_name}' does not match any configured profile"
             )
         })?;
-        let spec = self.resolve(&profile.provider)?;
+        self.build_config_for_provider(config, &profile.provider, &profile.model)
+    }
+
+    pub fn build_config_for_provider(
+        &self,
+        config: &Config,
+        provider_name: &str,
+        model_name: &str,
+    ) -> Result<ResolvedProviderConfig> {
+        let spec = self.resolve(provider_name)?;
         let provider_config = select_provider_config(config, spec.kind);
         let api_base = if provider_config.api_base.trim().is_empty() {
             spec.default_api_base.to_string()
@@ -96,7 +105,7 @@ impl ProviderRegistry {
             name: spec.name.to_string(),
             api_key: provider_config.api_key.clone(),
             api_base,
-            default_model: profile.model.clone(),
+            default_model: model_name.to_string(),
             extra_headers,
         })
     }

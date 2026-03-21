@@ -144,11 +144,19 @@ impl RawConfig {
             None => {
                 let provider = provider
                     .filter(|value| !value.trim().is_empty())
-                    .or_else(|| sparse_default_profile.as_ref().map(|defaults| defaults.provider.clone()))
+                    .or_else(|| {
+                        sparse_default_profile
+                            .as_ref()
+                            .map(|defaults| defaults.provider.clone())
+                    })
                     .ok_or_else(|| anyhow!("agents.defaults.defaultProfile is required"))?;
                 let model = model
                     .filter(|value| !value.trim().is_empty())
-                    .or_else(|| sparse_default_profile.as_ref().map(|defaults| defaults.model.clone()))
+                    .or_else(|| {
+                        sparse_default_profile
+                            .as_ref()
+                            .map(|defaults| defaults.model.clone())
+                    })
                     .ok_or_else(|| anyhow!("agents.defaults.defaultProfile is required"))?;
                 let profile_name = profile_key(&provider, &model);
                 let normalized_provider = registry
@@ -540,7 +548,9 @@ fn profile_key(provider: &str, model: &str) -> String {
     format!("{provider}:{model}")
 }
 
-fn deserialize_request_map<'de, D>(deserializer: D) -> std::result::Result<Map<String, Value>, D::Error>
+fn deserialize_request_map<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Map<String, Value>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

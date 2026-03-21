@@ -191,7 +191,10 @@ fn assistant_and_tool_messages_round_trip_extra_fields() {
     }))
     .expect("tool message");
 
-    assert_eq!(assistant.extra.get("reasoning_content"), Some(&json!("thinking")));
+    assert_eq!(
+        assistant.extra.get("reasoning_content"),
+        Some(&json!("thinking"))
+    );
     assert_eq!(tool.extra.get("web_search"), Some(&json!(true)));
 
     let assistant_out = assistant.to_llm_message();
@@ -272,10 +275,15 @@ fn session_store_helpers_expose_namespaced_sessions() {
     });
     store.save(&cli_session).expect("save cli session");
 
-    let sessions = store.list_sessions_in_namespace("web").expect("list sessions");
+    let sessions = store
+        .list_sessions_in_namespace("web")
+        .expect("list sessions");
     assert_eq!(sessions.len(), 2);
     assert_eq!(sessions[0].key, "web:two");
-    assert_eq!(sessions[0].active_profile.as_deref(), Some("second-profile"));
+    assert_eq!(
+        sessions[0].active_profile.as_deref(),
+        Some("second-profile")
+    );
     assert_eq!(sessions[1].key, "web:one");
 
     let summary = store

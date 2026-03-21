@@ -10,7 +10,7 @@ use nanobot_rs::bus::MessageBus;
 use nanobot_rs::config::WebToolsConfig;
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use nanobot_rs::web::{AgentChatService, ChatService};
-use serde_json::json;
+use serde_json::{Map, json};
 use tempfile::tempdir;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -89,11 +89,13 @@ async fn web_chat_logs_agent_execution_progress() {
                 arguments: json!({"path": "."}),
             }],
             finish_reason: "tool_calls".to_string(),
+            extra: Map::new(),
         },
         LlmResponse {
             content: Some("done".to_string()),
             tool_calls: Vec::new(),
             finish_reason: "stop".to_string(),
+            extra: Map::new(),
         },
     ]);
     let agent = AgentLoop::new(
