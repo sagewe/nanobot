@@ -13,7 +13,11 @@ use tracing::{error, info, warn};
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::config::{Config, TelegramConfig};
-pub use wecom::WecomBotChannel;
+pub use wecom::{
+    ParsedWecomTextCallback, WecomBotChannel, build_wecom_ping_request,
+    build_wecom_stream_reply_request, build_wecom_subscribe_request,
+    parse_wecom_text_callback,
+};
 
 #[async_trait]
 pub trait Channel: Send + Sync {
