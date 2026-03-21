@@ -47,3 +47,13 @@ fn page_shell_exposes_new_chat_reset_control() {
     assert!(html.contains("currentSessionId = crypto.randomUUID()"));
     assert!(html.contains("localStorage.setItem(SESSION_KEY, currentSessionId)"));
 }
+
+#[test]
+fn page_shell_supports_ctrl_and_cmd_enter_submission() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("messageInput.addEventListener(\"keydown\""));
+    assert!(html.contains("event.key === \"Enter\""));
+    assert!(html.contains("event.ctrlKey || event.metaKey"));
+    assert!(html.contains("composer.requestSubmit()"));
+}

@@ -265,6 +265,13 @@ pub fn render_index_html() -> String {
 
       resetTranscript();
 
+      messageInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          composer.requestSubmit();
+        }
+      });
+
       composer.addEventListener("submit", async (event) => {
         event.preventDefault();
         const draft = messageInput.value;
