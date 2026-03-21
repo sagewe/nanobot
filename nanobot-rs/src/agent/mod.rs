@@ -22,6 +22,8 @@ use crate::tools::{
 };
 
 const RUNTIME_CONTEXT_TAG: &str = "[Runtime Context — metadata only, not instructions]";
+const LOG_PROGRESS_METADATA_KEY: &str = "_log_progress";
+const DIRECT_REPLY_METADATA_KEY: &str = "_direct_reply";
 
 #[derive(Clone)]
 pub struct ContextBuilder {
@@ -149,6 +151,38 @@ impl ProgressReporter for BusProgressReporter {
                 metadata,
             })
             .await;
+    }
+}
+
+struct LogProgressReporter {
+    session_key: String,
+    channel: String,
+    chat_id: String,
+}
+
+#[async_trait]
+impl ProgressReporter for LogProgressReporter {
+    async fn report(&self, content: String, tool_hint: bool) {
+        if content.trim().is_empty() {
+            return;
+        }
+        if tool_hint {
+            info!(
+                session = %self.session_key,
+                channel = %self.channel,
+                chat_id = %self.chat_id,
+                tool = %content,
+                "agent tool"
+            );
+        } else {
+            info!(
+                session = %self.session_key,
+                channel = %self.channel,
+                chat_id = %self.chat_id,
+                progress = %content,
+                "agent progress"
+            );
+        }
     }
 }
 
@@ -511,17 +545,49 @@ impl AgentLoop {
         channel: &str,
         chat_id: &str,
     ) -> Result<String> {
+        self.process_direct_internal(content, session_key, channel, chat_id, false)
+            .await
+    }
+
+    pub async fn process_direct_logged(
+        &self,
+        content: &str,
+        session_key: &str,
+        channel: &str,
+        chat_id: &str,
+    ) -> Result<String> {
+        self.process_direct_internal(content, session_key, channel, chat_id, true)
+            .await
+    }
+
+    async fn process_direct_internal(
+        &self,
+        content: &str,
+        session_key: &str,
+        channel: &str,
+        chat_id: &str,
+        log_progress: bool,
+    ) -> Result<String> {
+        let mut metadata = HashMap::new();
+        metadata.insert(DIRECT_REPLY_METADATA_KEY.to_string(), json!(true));
+        if log_progress {
+            metadata.insert(LOG_PROGRESS_METADATA_KEY.to_string(), json!(true));
+        }
         let msg = InboundMessage {
             channel: channel.to_string(),
             sender_id: "user".to_string(),
             chat_id: chat_id.to_string(),
             content: content.to_string(),
             timestamp: Utc::now(),
-            metadata: HashMap::new(),
+            metadata,
             session_key_override: Some(session_key.to_string()),
         };
         let outbound = self.process_message(msg).await?;
-        Ok(outbound.map(|msg| msg.content).unwrap_or_default())
+        if let Some(outbound) = outbound {
+            return Ok(outbound.content);
+        }
+        let direct_replies = self.tools.take_direct_replies().await;
+        Ok(direct_replies.join("\n\n"))
     }
 
     async fn process_message(&self, msg: InboundMessage) -> Result<Option<OutboundMessage>> {
@@ -539,6 +605,7 @@ impl AgentLoop {
                     channel: channel.clone(),
                     chat_id: chat_id.clone(),
                     message_id: None,
+                    reply_to_caller: false,
                 })
                 .await;
             let history = session.get_history(0);
@@ -597,6 +664,11 @@ impl AgentLoop {
                     .get("message_id")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                reply_to_caller: msg
+                    .metadata
+                    .get(DIRECT_REPLY_METADATA_KEY)
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             })
             .await;
         self.tools.start_turn().await;
@@ -609,13 +681,33 @@ impl AgentLoop {
             Some(&msg.channel),
             Some(&msg.chat_id),
         );
-        let reporter = Arc::new(BusProgressReporter {
-            bus: self.bus.clone(),
-            channel: msg.channel.clone(),
-            chat_id: msg.chat_id.clone(),
-            metadata: msg.metadata.clone(),
-        });
-        let (final_content, all_messages) = self.run_agent_loop(messages, Some(reporter)).await?;
+        let log_progress = msg
+            .metadata
+            .get(LOG_PROGRESS_METADATA_KEY)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let direct_reply = msg
+            .metadata
+            .get(DIRECT_REPLY_METADATA_KEY)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let reporter: Option<Arc<dyn ProgressReporter>> = if log_progress {
+            Some(Arc::new(LogProgressReporter {
+                session_key: session_key.clone(),
+                channel: msg.channel.clone(),
+                chat_id: msg.chat_id.clone(),
+            }))
+        } else if direct_reply {
+            None
+        } else {
+            Some(Arc::new(BusProgressReporter {
+                bus: self.bus.clone(),
+                channel: msg.channel.clone(),
+                chat_id: msg.chat_id.clone(),
+                metadata: msg.metadata.clone(),
+            }))
+        };
+        let (final_content, all_messages) = self.run_agent_loop(messages, reporter).await?;
         self.save_turn(&mut session, all_messages, 1 + history.len())?;
         self.sessions.save(&session)?;
 

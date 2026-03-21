@@ -4,8 +4,16 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use axum::Router;
-use nanobot_rs::web::{self, AppState, ChatService};
+use nanobot_rs::agent::AgentLoop;
+use nanobot_rs::bus::MessageBus;
+use nanobot_rs::config::WebToolsConfig;
+use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
+use nanobot_rs::web::{self, AgentChatService, AppState, ChatService};
+use serde_json::json;
+use std::collections::VecDeque;
+use tempfile::tempdir;
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 
 #[derive(Clone, Default)]
 struct StaticChatService;
@@ -37,6 +45,39 @@ fn test_state_with_reply(reply: &str) -> AppState {
     AppState::new(Arc::new(ReplyChatService {
         reply: reply.to_string(),
     }))
+}
+
+#[derive(Clone)]
+struct MockProvider {
+    model: String,
+    responses: Arc<Mutex<VecDeque<LlmResponse>>>,
+}
+
+#[async_trait]
+impl LlmProvider for MockProvider {
+    fn default_model(&self) -> &str {
+        &self.model
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        self.responses
+            .lock()
+            .await
+            .pop_front()
+            .ok_or_else(|| anyhow::anyhow!("no more responses"))
+    }
+}
+
+fn mock_provider(responses: Vec<LlmResponse>) -> Arc<dyn LlmProvider> {
+    Arc::new(MockProvider {
+        model: "mock-model".to_string(),
+        responses: Arc::new(Mutex::new(responses.into())),
+    })
 }
 
 async fn spawn_test_server(app: Router) -> SocketAddr {
@@ -116,4 +157,57 @@ async fn chat_endpoint_rejects_blank_messages() {
             .unwrap_or_default()
             .contains("message must not be empty")
     );
+}
+
+#[tokio::test]
+async fn chat_endpoint_returns_message_tool_reply() {
+    let dir = tempdir().expect("tempdir");
+    let provider = mock_provider(vec![
+        LlmResponse {
+            content: Some("sending".to_string()),
+            tool_calls: vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "message".to_string(),
+                arguments: json!({
+                    "content": "Hi from the message tool"
+                }),
+            }],
+            finish_reason: "tool_calls".to_string(),
+        },
+        LlmResponse {
+            content: Some("done".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+        },
+    ]);
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::new(
+        bus,
+        provider,
+        dir.path().to_path_buf(),
+        "mock-model".to_string(),
+        5,
+        10,
+        false,
+        WebToolsConfig::default(),
+    )
+    .await
+    .expect("agent");
+    let app = web::build_router(AppState::new(Arc::new(AgentChatService::new(agent))));
+    let addr = spawn_test_server(app).await;
+
+    let response: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/api/chat"))
+        .json(&serde_json::json!({
+            "message": "hi",
+            "sessionId": "browser-session-message"
+        }))
+        .send()
+        .await
+        .expect("send chat request")
+        .json()
+        .await
+        .expect("chat response body");
+
+    assert_eq!(response["reply"], "Hi from the message tool");
 }

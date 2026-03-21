@@ -26,3 +26,24 @@ fn page_shell_trims_message_before_submit() {
     assert!(html.contains("messageInput.value.trim()"));
     assert!(html.contains("id=\"status\""));
 }
+
+#[test]
+fn page_shell_clears_input_before_network_round_trip() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    let clear_index = html
+        .find("messageInput.value = \"\";")
+        .expect("clear input statement");
+    let fetch_index = html.find("await fetch(\"/api/chat\"").expect("fetch call");
+
+    assert!(clear_index < fetch_index);
+}
+
+#[test]
+fn page_shell_exposes_new_chat_reset_control() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("id=\"new-chat-button\""));
+    assert!(html.contains("currentSessionId = crypto.randomUUID()"));
+    assert!(html.contains("localStorage.setItem(SESSION_KEY, currentSessionId)"));
+}

@@ -136,6 +136,12 @@ pub fn render_index_html() -> String {
         gap: 0.8rem;
       }
 
+      .composer-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+
       #message-input {
         min-height: 8rem;
         resize: vertical;
@@ -156,6 +162,17 @@ pub fn render_index_html() -> String {
         font-size: 0.92rem;
         color: #fff8ef;
         background: linear-gradient(135deg, #c9622f, #a4461f);
+        cursor: pointer;
+      }
+
+      #new-chat-button {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0.85rem 1.15rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.92rem;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.72);
         cursor: pointer;
       }
 
@@ -186,28 +203,32 @@ pub fn render_index_html() -> String {
       </header>
       <section class="shell">
         <section id="transcript" aria-live="polite">
-          <article class="message" data-role="assistant">Web UI ready. Ask nanobot-rs to inspect the workspace, edit files, or research something.</article>
         </section>
         <div id="status" role="status"></div>
         <form id="composer">
           <textarea id="message-input" placeholder="Ask nanobot-rs to inspect, edit, or research."></textarea>
-          <button id="send-button" type="submit">Send</button>
+          <div class="composer-actions">
+            <button id="send-button" type="submit">Send</button>
+            <button id="new-chat-button" type="button">New chat</button>
+          </div>
         </form>
       </section>
     </main>
     <script>
+      const INITIAL_ASSISTANT_MESSAGE = "Web UI ready. Ask nanobot-rs to inspect the workspace, edit files, or research something.";
       const SESSION_KEY = "nanobot-rs.sessionId";
       const composer = document.getElementById("composer");
       const transcript = document.getElementById("transcript");
       const messageInput = document.getElementById("message-input");
       const sendButton = document.getElementById("send-button");
+      const newChatButton = document.getElementById("new-chat-button");
       const statusNode = document.getElementById("status");
 
       const existingSessionId = localStorage.getItem(SESSION_KEY);
-      const sessionId = existingSessionId && existingSessionId.trim().length > 0
+      let currentSessionId = existingSessionId && existingSessionId.trim().length > 0
         ? existingSessionId
         : crypto.randomUUID();
-      localStorage.setItem(SESSION_KEY, sessionId);
+      localStorage.setItem(SESSION_KEY, currentSessionId);
 
       function appendMessage(role, content) {
         const node = document.createElement("article");
@@ -225,12 +246,29 @@ pub fn render_index_html() -> String {
 
       function setBusy(busy) {
         sendButton.disabled = busy;
+        newChatButton.disabled = busy;
         sendButton.textContent = busy ? "Working..." : "Send";
       }
 
+      function resetTranscript() {
+        transcript.innerHTML = "";
+        appendMessage("assistant", INITIAL_ASSISTANT_MESSAGE);
+      }
+
+      newChatButton.addEventListener("click", () => {
+        currentSessionId = crypto.randomUUID();
+        localStorage.setItem(SESSION_KEY, currentSessionId);
+        resetTranscript();
+        setStatus("New session started.", "idle");
+        messageInput.focus();
+      });
+
+      resetTranscript();
+
       composer.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const message = messageInput.value.trim();
+        const draft = messageInput.value;
+        const message = draft.trim();
         if (!message) {
           setStatus("Enter a message before sending.", "error");
           messageInput.focus();
@@ -238,6 +276,7 @@ pub fn render_index_html() -> String {
         }
 
         appendMessage("user", message);
+        messageInput.value = "";
         setBusy(true);
         setStatus("nanobot-rs is working...", "loading");
 
@@ -245,16 +284,18 @@ pub fn render_index_html() -> String {
           const response = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message, sessionId }),
+            body: JSON.stringify({ message, sessionId: currentSessionId }),
           });
           const payload = await response.json();
           if (!response.ok) {
             throw new Error(payload.error || "Request failed");
           }
           appendMessage("assistant", payload.reply || "");
-          messageInput.value = "";
           setStatus("", "idle");
         } catch (error) {
+          if (!messageInput.value.trim()) {
+            messageInput.value = draft;
+          }
           setStatus(error?.message || "Request failed", "error");
         } finally {
           setBusy(false);

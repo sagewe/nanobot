@@ -36,6 +36,7 @@ pub struct ToolContext {
     pub channel: String,
     pub chat_id: String,
     pub message_id: Option<String>,
+    pub reply_to_caller: bool,
 }
 
 #[async_trait]
@@ -48,6 +49,9 @@ pub trait Tool: Send + Sync {
 
     async fn set_context(&self, _context: ToolContext) {}
     async fn start_turn(&self) {}
+    async fn take_direct_replies(&self) -> Vec<String> {
+        Vec::new()
+    }
     fn sent_in_turn(&self) -> bool {
         false
     }
@@ -129,6 +133,21 @@ impl ToolRegistry {
             .await
             .values()
             .any(|tool| tool.sent_in_turn())
+    }
+
+    pub async fn take_direct_replies(&self) -> Vec<String> {
+        let tools = self
+            .tools
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut replies = Vec::new();
+        for tool in tools {
+            replies.extend(tool.take_direct_replies().await);
+        }
+        replies
     }
 }
 
@@ -699,6 +718,7 @@ pub struct MessageTool {
     bus: MessageBus,
     context: Arc<Mutex<ToolContext>>,
     sent_in_turn: Arc<AtomicBool>,
+    direct_replies: Arc<Mutex<Vec<String>>>,
 }
 
 impl MessageTool {
@@ -707,6 +727,7 @@ impl MessageTool {
             bus,
             context: Arc::new(Mutex::new(ToolContext::default())),
             sent_in_turn: Arc::new(AtomicBool::new(false)),
+            direct_replies: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -746,6 +767,11 @@ impl Tool for MessageTool {
         if context.channel.is_empty() || context.chat_id.is_empty() {
             return "Error: No target channel/chat specified".to_string();
         }
+        if context.reply_to_caller {
+            self.sent_in_turn.store(true, Ordering::SeqCst);
+            self.direct_replies.lock().await.push(content.to_string());
+            return "Message returned directly to caller".to_string();
+        }
         let mut metadata = HashMap::new();
         if let Some(message_id) = context.message_id.clone() {
             metadata.insert("message_id".to_string(), json!(message_id));
@@ -771,6 +797,12 @@ impl Tool for MessageTool {
 
     async fn start_turn(&self) {
         self.sent_in_turn.store(false, Ordering::SeqCst);
+        self.direct_replies.lock().await.clear();
+    }
+
+    async fn take_direct_replies(&self) -> Vec<String> {
+        let mut replies = self.direct_replies.lock().await;
+        std::mem::take(&mut *replies)
     }
 
     fn sent_in_turn(&self) -> bool {

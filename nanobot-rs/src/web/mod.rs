@@ -10,6 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use tokio::net::TcpListener;
+use tracing::{error, info};
 
 use crate::agent::AgentLoop;
 
@@ -51,9 +52,32 @@ impl AgentChatService {
 #[async_trait]
 impl ChatService for AgentChatService {
     async fn chat(&self, message: &str, session_id: &str) -> Result<String> {
-        self.agent
-            .process_direct(message, &format!("web:{session_id}"), "web", session_id)
-            .await
+        info!(
+            session = %session_id,
+            preview = %preview(message),
+            "web session {session_id} started"
+        );
+        let result = self
+            .agent
+            .process_direct_logged(message, &format!("web:{session_id}"), "web", session_id)
+            .await;
+        match &result {
+            Ok(reply) => {
+                info!(
+                    session = %session_id,
+                    preview = %preview(reply),
+                    "web session {session_id} completed"
+                );
+            }
+            Err(error) => {
+                error!(
+                    session = %session_id,
+                    error = %error,
+                    "web session {session_id} failed"
+                );
+            }
+        }
+        result
     }
 }
 
@@ -62,4 +86,14 @@ pub async fn serve(agent: AgentLoop, host: &str, port: u16) -> Result<()> {
     let listener = TcpListener::bind(format!("{host}:{port}")).await?;
     axum::serve(listener, build_router(state)).await?;
     Ok(())
+}
+
+fn preview(text: &str) -> String {
+    const LIMIT: usize = 80;
+    let trimmed = text.trim();
+    let chars = trimmed.chars().collect::<Vec<_>>();
+    if chars.len() <= LIMIT {
+        return trimmed.to_string();
+    }
+    format!("{}…", chars[..LIMIT].iter().collect::<String>())
 }

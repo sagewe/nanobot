@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use nanobot_rs::agent::{AgentLoop, SubagentManager};
-use nanobot_rs::bus::MessageBus;
+use nanobot_rs::bus::{InboundMessage, MessageBus};
 use nanobot_rs::config::WebToolsConfig;
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use serde_json::json;
@@ -85,7 +85,7 @@ async fn agent_executes_tool_loop() {
 }
 
 #[tokio::test]
-async fn agent_suppresses_final_reply_after_message_tool() {
+async fn agent_process_direct_returns_message_tool_reply() {
     let dir = tempdir().expect("tempdir");
     let long_chinese =
         "请问您想查询哪个城市的天气？请提供城市名称或位置信息，这样我才能帮您查询天气情况。";
@@ -122,7 +122,68 @@ async fn agent_suppresses_final_reply_after_message_tool() {
         .process_direct("say hi", "cli:test", "cli", "test")
         .await
         .expect("process");
-    assert!(result.is_empty());
+    assert_eq!(result, long_chinese);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            bus.consume_outbound()
+        )
+        .await
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn agent_bus_mode_suppresses_duplicate_final_reply_after_message_tool() {
+    let dir = tempdir().expect("tempdir");
+    let long_chinese =
+        "请问您想查询哪个城市的天气？请提供城市名称或位置信息，这样我才能帮您查询天气情况。";
+    let provider = mock_provider(vec![
+        LlmResponse {
+            content: Some("sending".to_string()),
+            tool_calls: vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "message".to_string(),
+                arguments: json!({"content": long_chinese}),
+            }],
+            finish_reason: "tool_calls".to_string(),
+        },
+        LlmResponse {
+            content: Some("done".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+        },
+    ]);
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::new(
+        bus.clone(),
+        provider,
+        dir.path().to_path_buf(),
+        "mock-model".to_string(),
+        5,
+        10,
+        false,
+        WebToolsConfig::default(),
+    )
+    .await
+    .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move {
+            agent.run().await;
+        })
+    };
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "test".to_string(),
+        content: "say hi".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:test".to_string()),
+    })
+    .await
+    .expect("publish inbound");
     let outbound = loop {
         let outbound = bus.consume_outbound().await.expect("message tool outbound");
         let is_progress = outbound
@@ -135,6 +196,16 @@ async fn agent_suppresses_final_reply_after_message_tool() {
         }
     };
     assert_eq!(outbound.content, long_chinese);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            bus.consume_outbound()
+        )
+        .await
+        .is_err()
+    );
+    agent.stop();
+    runner.abort();
 }
 
 #[tokio::test]
