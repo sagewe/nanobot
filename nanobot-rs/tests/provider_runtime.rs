@@ -111,7 +111,7 @@ async fn provider_propagates_auth_errors_from_chat_with_retry() {
 }
 
 #[tokio::test]
-async fn provider_turns_empty_choices_into_error_response() {
+async fn provider_propagates_empty_choices_from_chat_with_retry() {
     let calls = Arc::new(AtomicUsize::new(0));
     let addr = start_server(ProviderState {
         calls: calls.clone(),
@@ -124,18 +124,13 @@ async fn provider_turns_empty_choices_into_error_response() {
         "demo-model".to_string(),
     );
 
-    let response = provider
+    let err = provider
         .chat_with_retry(vec![], vec![], "demo-model")
         .await
-        .expect("chat_with_retry");
+        .expect_err("chat_with_retry");
 
-    assert_eq!(response.finish_reason, "error");
     assert!(
-        response
-            .content
-            .as_deref()
-            .unwrap_or_default()
-            .contains("provider returned no choices")
+        err.to_string().contains("provider returned no choices")
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
