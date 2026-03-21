@@ -1,8 +1,11 @@
 use std::collections::HashMap;
+use std::fs;
 
 use nanobot_rs::config::Config;
+use nanobot_rs::config::load_config;
 use nanobot_rs::providers::{ProviderKind, ProviderRegistry};
 use serde_json::Value;
+use tempfile::tempdir;
 
 #[test]
 fn config_defaults_expose_the_new_default_profile_shape() {
@@ -117,4 +120,49 @@ fn provider_registry_preserves_custom_extra_headers() {
     assert_eq!(built.api_key, "secret");
     assert_eq!(built.extra_headers["X-Trace"], "abc123");
     assert_eq!(built.extra_headers["HTTP-Referer"], "https://example.test");
+}
+
+#[test]
+fn provider_registry_uses_the_selected_default_profile_from_the_new_shape() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("config.json");
+    fs::write(
+        &path,
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "defaultProfile": "ollama:llama3.2",
+      "maxToolIterations": 20
+    },
+    "profiles": {
+      "ollama:llama3.2": {
+        "provider": "ollama",
+        "model": "llama3.2",
+        "request": {
+          "temperature": 0.3
+        }
+      },
+      "openai:gpt-4.1-mini": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "request": {
+          "temperature": 0.2
+        }
+      }
+    }
+  }
+}"#,
+    )
+    .expect("write config");
+
+    let config = load_config(Some(&path)).expect("load config");
+    assert_eq!(config.agents.defaults.default_profile, "ollama:llama3.2");
+    assert_eq!(config.agents.defaults.provider, "ollama");
+    assert_eq!(config.agents.defaults.model, "llama3.2");
+    let registry = ProviderRegistry::default();
+    let built = registry.build_config(&config).expect("build config");
+
+    assert_eq!(built.kind, ProviderKind::Ollama);
+    assert_eq!(built.default_model, "llama3.2");
 }

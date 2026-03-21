@@ -125,6 +125,11 @@ impl RawConfig {
         } = defaults;
         let registry = ProviderRegistry::default();
         let mut profiles = profiles;
+        let sparse_default_profile = if profiles.is_empty() {
+            Some(AgentDefaults::default())
+        } else {
+            None
+        };
 
         let default_profile = match default_profile {
             Some(default_profile) => {
@@ -139,9 +144,11 @@ impl RawConfig {
             None => {
                 let provider = provider
                     .filter(|value| !value.trim().is_empty())
+                    .or_else(|| sparse_default_profile.as_ref().map(|defaults| defaults.provider.clone()))
                     .ok_or_else(|| anyhow!("agents.defaults.defaultProfile is required"))?;
                 let model = model
                     .filter(|value| !value.trim().is_empty())
+                    .or_else(|| sparse_default_profile.as_ref().map(|defaults| defaults.model.clone()))
                     .ok_or_else(|| anyhow!("agents.defaults.defaultProfile is required"))?;
                 let profile_name = profile_key(&provider, &model);
                 profiles.entry(profile_name.clone()).or_insert(AgentProfileConfig {

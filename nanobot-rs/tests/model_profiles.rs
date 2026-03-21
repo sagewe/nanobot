@@ -93,6 +93,30 @@ fn request_defaults_to_an_empty_object_when_omitted() {
 }
 
 #[test]
+fn empty_config_still_inherits_the_default_profile() {
+    let value = load_config_from_json("{}").expect("load sparse config");
+
+    assert_eq!(
+        value
+            .pointer("/agents/defaults/defaultProfile")
+            .and_then(Value::as_str),
+        Some("openai:gpt-4.1-mini")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/provider")
+            .and_then(Value::as_str),
+        Some("openai")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/openai:gpt-4.1-mini/model")
+            .and_then(Value::as_str),
+        Some("gpt-4.1-mini")
+    );
+}
+
+#[test]
 fn non_object_request_is_rejected() {
     let err = load_config_from_json(
         r#"{
@@ -304,18 +328,28 @@ fn legacy_synthesis_preserves_existing_profile_at_the_same_key() {
 }
 
 #[test]
-fn missing_default_profile_without_legacy_shape_is_rejected() {
-    let err = load_config_from_json(
+fn provider_only_config_still_inherits_the_default_profile() {
+    let value = load_config_from_json(
         r#"{
-  "agents": {
-    "defaults": {
-      "workspace": "/tmp/nanobot",
-      "maxToolIterations": 20
+  "providers": {
+    "custom": {
+      "apiBase": "https://models.example.test/v1"
     }
   }
 }"#,
     )
-    .expect_err("missing default profile should fail clearly");
+    .expect("load provider-only config");
 
-    assert!(err.to_string().contains("defaultProfile"));
+    assert_eq!(
+        value
+            .pointer("/agents/defaults/defaultProfile")
+            .and_then(Value::as_str),
+        Some("openai:gpt-4.1-mini")
+    );
+    assert_eq!(
+        value
+            .pointer("/providers/custom/apiBase")
+            .and_then(Value::as_str),
+        Some("https://models.example.test/v1")
+    );
 }
