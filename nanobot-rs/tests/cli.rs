@@ -64,4 +64,16 @@ fn onboard_generates_config_with_provider_and_web_defaults() {
             .and_then(Value::as_u64),
         Some(20_000)
     );
+    assert_eq!(
+        value
+            .pointer("/channels/wecom/enabled")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        value
+            .pointer("/channels/wecom/wsBase")
+            .and_then(Value::as_str),
+        Some("wss://openws.work.weixin.qq.com")
+    );
 }

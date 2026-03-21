@@ -55,6 +55,17 @@ async fn channel_manager_only_enables_configured_channels() {
 }
 
 #[tokio::test]
+async fn channel_manager_registers_wecom_when_enabled() {
+    let mut config = Config::default();
+    config.channels.wecom.enabled = true;
+    config.channels.wecom.bot_id = "bot".to_string();
+    config.channels.wecom.secret = "secret".to_string();
+
+    let manager = ChannelManager::new(&config, MessageBus::new(32));
+    assert!(manager.enabled_channels().contains(&"wecom".to_string()));
+}
+
+#[tokio::test]
 async fn telegram_channel_receives_allowed_text_messages() {
     let state = TelegramState {
         updates: Arc::new(Mutex::new(vec![json!({

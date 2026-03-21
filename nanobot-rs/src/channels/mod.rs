@@ -1,3 +1,5 @@
+mod wecom;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +13,7 @@ use tracing::{error, info, warn};
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::config::{Config, TelegramConfig};
+pub use wecom::WecomBotChannel;
 
 #[async_trait]
 pub trait Channel: Send + Sync {
@@ -229,6 +232,15 @@ impl ChannelManager {
                 "telegram".to_string(),
                 Arc::new(TelegramChannel::new(
                     config.channels.telegram.clone(),
+                    bus.clone(),
+                )),
+            );
+        }
+        if config.channels.wecom.enabled {
+            channels.insert(
+                "wecom".to_string(),
+                Arc::new(WecomBotChannel::new(
+                    config.channels.wecom.clone(),
                     bus.clone(),
                 )),
             );

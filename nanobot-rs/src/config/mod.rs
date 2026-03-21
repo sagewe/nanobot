@@ -97,10 +97,34 @@ impl Default for TelegramConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
+pub struct WecomConfig {
+    pub enabled: bool,
+    pub bot_id: String,
+    pub secret: String,
+    #[serde(default = "default_wecom_ws_base")]
+    pub ws_base: String,
+    pub allow_from: Vec<String>,
+}
+
+impl Default for WecomConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bot_id: String::new(),
+            secret: String::new(),
+            ws_base: default_wecom_ws_base(),
+            allow_from: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct ChannelsConfig {
     pub send_progress: bool,
     pub send_tool_hints: bool,
     pub telegram: TelegramConfig,
+    pub wecom: WecomConfig,
 }
 
 impl Default for ChannelsConfig {
@@ -109,6 +133,7 @@ impl Default for ChannelsConfig {
             send_progress: true,
             send_tool_hints: false,
             telegram: TelegramConfig::default(),
+            wecom: WecomConfig::default(),
         }
     }
 }
@@ -256,4 +281,8 @@ pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
 
 fn default_telegram_api_base() -> String {
     "https://api.telegram.org".to_string()
+}
+
+fn default_wecom_ws_base() -> String {
+    "wss://openws.work.weixin.qq.com".to_string()
 }
