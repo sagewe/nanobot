@@ -4,6 +4,7 @@ pub mod channels;
 pub mod cli;
 pub mod config;
 pub mod providers;
+pub mod presentation;
 pub mod security;
 pub mod session;
 pub mod tools;
