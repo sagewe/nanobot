@@ -9,7 +9,7 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::time::MissedTickBehavior;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
@@ -107,9 +107,11 @@ impl WecomBotChannel {
     }
 
     async fn run_session(&self) -> Result<()> {
+        info!("wecom connecting to {}", self.config.ws_base);
         let (stream, _) = connect_async(self.config.ws_base.as_str())
             .await
             .with_context(|| format!("failed to connect to {}", self.config.ws_base))?;
+        info!("wecom websocket connected");
         let (mut writer, mut reader) = stream.split();
 
         let subscribe_req_id = Uuid::new_v4().to_string();
@@ -143,6 +145,7 @@ impl WecomBotChannel {
                 .and_then(Value::as_str)
                 .unwrap_or("unknown error")
         );
+        info!("wecom subscribe acknowledged");
 
         let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
         *self.writer.lock().await = Some(tx);
@@ -200,6 +203,7 @@ impl WecomBotChannel {
 
         if payload.get("cmd").and_then(Value::as_str) == Some("pong") {
             *last_pong = Instant::now();
+            debug!("wecom pong received");
             return Ok(());
         }
 
@@ -212,11 +216,20 @@ impl WecomBotChannel {
                 return Ok(());
             }
 
+            info!(
+                "wecom text callback sender={} chat={}",
+                parsed.sender_id, parsed.chat_id
+            );
+
             self.reply_contexts.lock().await.insert(
                 parsed.chat_id.clone(),
                 ReplyContext {
                     req_id: parsed.req_id.clone(),
                 },
+            );
+            debug!(
+                "wecom reply context updated chat={} req_id={}",
+                parsed.chat_id, parsed.req_id
             );
 
             let mut metadata = HashMap::new();
@@ -339,6 +352,10 @@ impl Channel for WecomBotChannel {
             if !self.running.load(Ordering::SeqCst) {
                 break;
             }
+            info!(
+                "wecom reconnecting in {:?} after: previous session ended",
+                self.timing.reconnect_delay
+            );
             tokio::time::sleep(self.timing.reconnect_delay).await;
         }
         Ok(())
@@ -347,6 +364,7 @@ impl Channel for WecomBotChannel {
     async fn stop(&self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
         self.clear_connection_state().await;
+        info!("wecom channel stopped");
         Ok(())
     }
 
@@ -374,6 +392,7 @@ impl Channel for WecomBotChannel {
                 true,
             ))
             .map_err(|_| anyhow!("wecom writer is closed"))?;
+        info!("wecom reply sent chat={}", msg.chat_id);
         Ok(())
     }
 }

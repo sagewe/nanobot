@@ -1,6 +1,8 @@
+use std::io;
+use std::io::Write;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -15,6 +17,36 @@ use nanobot_rs::channels::{
     build_wecom_stream_reply_request, build_wecom_subscribe_request, parse_wecom_text_callback,
 };
 use nanobot_rs::config::WecomConfig;
+
+#[derive(Clone, Default)]
+struct SharedWriter {
+    buffer: Arc<StdMutex<Vec<u8>>>,
+}
+
+struct SharedWriterHandle {
+    buffer: Arc<StdMutex<Vec<u8>>>,
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedWriter {
+    type Writer = SharedWriterHandle;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        SharedWriterHandle {
+            buffer: self.buffer.clone(),
+        }
+    }
+}
+
+impl Write for SharedWriterHandle {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.buffer.lock().expect("buffer").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 #[test]
 fn subscribe_request_contains_bot_credentials() {
@@ -294,7 +326,202 @@ async fn wecom_channel_publishes_text_callback_and_replies() {
     assert_eq!(reply["body"]["stream"]["content"], "reply body");
 
     channel.stop().await.expect("stop");
+    tokio::time::timeout(Duration::from_secs(1), start_task)
+        .await
+        .expect("channel stopped in time")
+        .expect("join");
+}
+
+#[tokio::test]
+async fn wecom_logs_connection_lifecycle() {
+    let server = MockWecomServer::start().await;
+    let bus = MessageBus::new(32);
+    let channel = Arc::new(WecomBotChannel::new_with_timing(
+        runtime_config(server.ws_base()),
+        bus.clone(),
+        WecomTiming::for_tests(),
+    ));
+
+    let writer = SharedWriter::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_ansi(false)
+        .without_time()
+        .with_writer(writer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let start_task = tokio::spawn({
+        let channel = channel.clone();
+        async move { channel.start().await.expect("start") }
+    });
+
+    server.send_callback(json!({
+        "cmd": "aibot_msg_callback",
+        "headers": { "req_id": "reply-log-1" },
+        "body": {
+            "msgid": "msg-log-1",
+            "aibotid": "bot-id",
+            "chatid": "chat-log-1",
+            "chattype": "group",
+            "from": { "userid": "alice" },
+            "msgtype": "text",
+            "text": { "content": "hello from wecom logs" }
+        }
+    }));
+
+    let inbound = tokio::time::timeout(Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("inbound");
+    assert_eq!(inbound.chat_id, "chat-log-1");
+
+    channel
+        .send(OutboundMessage {
+            channel: "wecom".to_string(),
+            chat_id: "chat-log-1".to_string(),
+            content: "reply body".to_string(),
+            metadata: Default::default(),
+        })
+        .await
+        .expect("send reply");
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let received = server.received.lock().await.clone();
+            if received
+                .iter()
+                .any(|payload| payload["cmd"] == "aibot_respond_msg")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("reply observed");
+
+    server.close_connection();
+    tokio::time::timeout(Duration::from_secs(2), server.second_connection.notified())
+        .await
+        .expect("reconnected");
+
+    channel.stop().await.expect("stop");
     start_task.abort();
+
+    let logs = String::from_utf8(writer.buffer.lock().expect("buffer").clone()).expect("utf8");
+    assert!(logs.contains("wecom connecting to"), "{logs}");
+    assert!(logs.contains("wecom websocket connected"), "{logs}");
+    assert!(logs.contains("wecom subscribe acknowledged"), "{logs}");
+    assert!(
+        logs.contains("wecom text callback sender=alice chat=chat-log-1"),
+        "{logs}"
+    );
+    assert!(logs.contains("wecom reply sent chat=chat-log-1"), "{logs}");
+    assert!(logs.contains("wecom reconnecting in"), "{logs}");
+    assert!(logs.contains("wecom channel stopped"), "{logs}");
+}
+
+#[tokio::test]
+async fn wecom_logs_debug_diagnostics() {
+    let server = MockWecomServer::start().await;
+    let mut config = runtime_config(server.ws_base());
+    config.allow_from = vec!["alice".to_string()];
+    let bus = MessageBus::new(32);
+    let channel = Arc::new(WecomBotChannel::new_with_timing(
+        config,
+        bus.clone(),
+        WecomTiming::for_tests(),
+    ));
+
+    let writer = SharedWriter::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .without_time()
+        .with_writer(writer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let start_task = tokio::spawn({
+        let channel = channel.clone();
+        async move { channel.start().await.expect("start") }
+    });
+
+    server.send_callback(json!({
+        "cmd": "aibot_msg_callback",
+        "headers": { "req_id": "reply-blocked-1" },
+        "body": {
+            "msgid": "msg-blocked-1",
+            "aibotid": "bot-id",
+            "chatid": "chat-blocked-1",
+            "chattype": "group",
+            "from": { "userid": "bob" },
+            "msgtype": "text",
+            "text": { "content": "blocked" }
+        }
+    }));
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), bus.consume_inbound())
+            .await
+            .is_err()
+    );
+
+    server.send_callback(json!({
+        "cmd": "aibot_msg_callback",
+        "headers": { "req_id": "reply-debug-1" },
+        "body": {
+            "msgid": "msg-debug-1",
+            "aibotid": "bot-id",
+            "chatid": "chat-debug-1",
+            "chattype": "group",
+            "from": { "userid": "alice" },
+            "msgtype": "text",
+            "text": { "content": "hello diagnostics" }
+        }
+    }));
+
+    let inbound = tokio::time::timeout(Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("inbound");
+    assert_eq!(inbound.chat_id, "chat-debug-1");
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if server
+                .received
+                .lock()
+                .await
+                .iter()
+                .any(|payload| payload["cmd"] == "ping")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("ping observed");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    channel.stop().await.expect("stop");
+    tokio::time::timeout(Duration::from_secs(1), start_task)
+        .await
+        .expect("channel stopped in time")
+        .expect("join");
+
+    let logs = String::from_utf8(writer.buffer.lock().expect("buffer").clone()).expect("utf8");
+    assert!(
+        logs.contains("dropping wecom message from blocked sender bob"),
+        "{logs}"
+    );
+    assert!(
+        logs.contains("wecom reply context updated chat=chat-debug-1 req_id=reply-debug-1"),
+        "{logs}"
+    );
+    assert!(logs.contains("wecom pong received"), "{logs}");
 }
 
 #[tokio::test]
