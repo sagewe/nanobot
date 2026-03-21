@@ -212,6 +212,13 @@ The provider interface needs to accept an explicit request descriptor instead of
 - model name
 - request extras JSON
 
+Provider client resolution is process-global and profile-aware:
+
+- the runtime keeps a small in-memory provider client cache keyed by resolved transport configuration, effectively by provider name plus the configured auth/base-url/header set
+- switching sessions or profiles does not instantiate a new client if the underlying provider transport config is unchanged
+- each turn resolves the active session profile, selects the cached provider client for that profile's provider, and passes that profile's `model` plus `request` extras into the provider call
+- background tasks and subagent callbacks that post back into a session use that target session's persisted `active_profile` when they execute
+
 The provider implementation merges:
 
 - `"model": <profile.model>`
@@ -231,6 +238,7 @@ This preserves central control over `messages/tools/model` while still allowing 
 Add:
 
 - `GET /api/sessions`
+- `GET /api/sessions/:id`
 - `POST /api/sessions`
 
 `GET /api/sessions` returns Web-channel sessions with:
@@ -242,6 +250,21 @@ Add:
 
 `preview` is derived from the latest user or assistant text message, truncated for UI display.
 
+`GET /api/sessions/:id` returns the selected session detail with:
+
+- `sessionId`
+- `updatedAt`
+- `activeProfile`
+- `messages`
+
+Each message entry contains the already persisted session message shape needed by the UI:
+
+- `role`
+- `content`
+- `timestamp`
+
+The endpoint is the source of truth for restoring a selected transcript after page reload or session switch.
+
 `POST /api/sessions` creates a new Web session, initialized to the default profile, and returns the created session summary.
 
 Existing `POST /api/chat` continues to accept `sessionId`. The response should also include `activeProfile` so the UI can refresh session metadata after `/model ...`.
@@ -251,10 +274,12 @@ Existing `POST /api/chat` continues to accept `sessionId`. The response should a
 The page adds a backend-backed session list and create flow:
 
 - fetch session list on load
+- fetch the selected session transcript on load
 - render current session list
 - allow selecting a session
 - keep selected `sessionId` in local storage
 - create a new session via `POST /api/sessions`
+- load the selected transcript via `GET /api/sessions/:id` after a session switch
 - refresh session list after send/new/model-change
 
 The existing transcript area stays per selected session.
