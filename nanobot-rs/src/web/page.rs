@@ -239,6 +239,15 @@ pub fn render_index_html() -> String {
         transcript.scrollTop = transcript.scrollHeight;
       }
 
+      function appendAssistantMessage(content) {
+        const node = document.createElement("article");
+        node.className = "message";
+        node.dataset.role = "assistant";
+        node.innerHTML = content;
+        transcript.appendChild(node);
+        transcript.scrollTop = transcript.scrollHeight;
+      }
+
       function setStatus(message, variant = "idle") {
         statusNode.textContent = message;
         statusNode.dataset.variant = variant;
@@ -252,7 +261,7 @@ pub fn render_index_html() -> String {
 
       function resetTranscript() {
         transcript.innerHTML = "";
-        appendMessage("assistant", INITIAL_ASSISTANT_MESSAGE);
+        appendAssistantMessage(INITIAL_ASSISTANT_MESSAGE);
       }
 
       newChatButton.addEventListener("click", () => {
@@ -297,7 +306,7 @@ pub fn render_index_html() -> String {
           if (!response.ok) {
             throw new Error(payload.error || "Request failed");
           }
-          appendMessage("assistant", payload.reply || "");
+          appendAssistantMessage(payload.replyHtml || "");
           setStatus("", "idle");
         } catch (error) {
           if (!messageInput.value.trim()) {

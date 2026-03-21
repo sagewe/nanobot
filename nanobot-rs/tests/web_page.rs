@@ -17,6 +17,7 @@ fn page_shell_includes_client_behavior_hooks() {
     assert!(html.contains("/api/chat"));
     assert!(html.contains("aria-live=\"polite\""));
     assert!(html.contains("data-role=\"assistant\""));
+    assert!(html.contains("payload.replyHtml"));
 }
 
 #[test]
@@ -56,4 +57,12 @@ fn page_shell_supports_ctrl_and_cmd_enter_submission() {
     assert!(html.contains("event.key === \"Enter\""));
     assert!(html.contains("event.ctrlKey || event.metaKey"));
     assert!(html.contains("composer.requestSubmit()"));
+}
+
+#[test]
+fn page_shell_renders_assistant_messages_as_html() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("node.innerHTML = content;"));
+    assert!(html.contains("appendAssistantMessage(payload.replyHtml || \"\");"));
 }

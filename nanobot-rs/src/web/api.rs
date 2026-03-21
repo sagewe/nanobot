@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::AppState;
+use crate::presentation::render_web_html;
 
 #[derive(Debug, Deserialize)]
 pub struct ChatRequest {
@@ -17,6 +18,8 @@ pub struct ChatRequest {
 #[derive(Debug, Serialize)]
 pub struct ChatResponse {
     pub reply: String,
+    #[serde(rename = "replyHtml")]
+    pub reply_html: String,
     #[serde(rename = "sessionId")]
     pub session_id: String,
 }
@@ -41,7 +44,12 @@ pub async fn chat(
         .chat(message, &session_id)
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(ChatResponse { reply, session_id }))
+    let reply_html = render_web_html(&reply);
+    Ok(Json(ChatResponse {
+        reply,
+        reply_html,
+        session_id,
+    }))
 }
 
 pub struct ApiError {

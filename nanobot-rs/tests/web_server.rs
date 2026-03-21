@@ -113,7 +113,7 @@ async fn root_and_health_routes_respond() {
 
 #[tokio::test]
 async fn chat_endpoint_returns_agent_reply() {
-    let app = web::build_router(test_state_with_reply("hello from agent"));
+    let app = web::build_router(test_state_with_reply("**hello** from agent"));
     let addr = spawn_test_server(app).await;
 
     let response: serde_json::Value = reqwest::Client::new()
@@ -129,7 +129,13 @@ async fn chat_endpoint_returns_agent_reply() {
         .await
         .expect("chat response body");
 
-    assert_eq!(response["reply"], "hello from agent");
+    assert_eq!(response["reply"], "**hello** from agent");
+    assert!(
+        response["replyHtml"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("<strong>hello</strong>")
+    );
     assert_eq!(response["sessionId"], "browser-session-1");
 }
 
@@ -210,4 +216,5 @@ async fn chat_endpoint_returns_message_tool_reply() {
         .expect("chat response body");
 
     assert_eq!(response["reply"], "Hi from the message tool");
+    assert_eq!(response["replyHtml"], "<p>Hi from the message tool</p>\n");
 }
