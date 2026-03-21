@@ -144,14 +144,11 @@ impl RawConfig {
                     .filter(|value| !value.trim().is_empty())
                     .ok_or_else(|| anyhow!("agents.defaults.defaultProfile is required"))?;
                 let profile_name = profile_key(&provider, &model);
-                profiles.insert(
-                    profile_name.clone(),
-                    AgentProfileConfig {
-                        provider,
-                        model,
-                        request: Map::new(),
-                    },
-                );
+                profiles.entry(profile_name.clone()).or_insert(AgentProfileConfig {
+                    provider,
+                    model,
+                    request: Map::new(),
+                });
                 profile_name
             }
         };
