@@ -19,11 +19,13 @@ pub struct SessionMessage {
     pub tool_call_id: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 impl SessionMessage {
     pub fn to_llm_message(&self) -> Value {
-        let mut obj = serde_json::Map::new();
+        let mut obj = self.extra.clone();
         obj.insert("role".to_string(), json!(self.role));
         obj.insert("content".to_string(), self.content.clone());
         if let Some(tool_calls) = &self.tool_calls {
@@ -42,6 +44,7 @@ impl SessionMessage {
 #[derive(Debug, Clone)]
 pub struct Session {
     pub key: String,
+    pub active_profile: Option<String>,
     pub messages: Vec<SessionMessage>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -53,6 +56,7 @@ impl Session {
         let now = Utc::now();
         Self {
             key: key.into(),
+            active_profile: None,
             messages: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -64,6 +68,10 @@ impl Session {
         self.messages.clear();
         self.last_consolidated = 0;
         self.updated_at = Utc::now();
+    }
+
+    pub fn active_profile_or<'a>(&'a self, default_profile: &'a str) -> &'a str {
+        self.active_profile.as_deref().unwrap_or(default_profile)
     }
 
     pub fn get_history(&self, max_messages: usize) -> Vec<Value> {
@@ -131,6 +139,28 @@ pub struct SessionStore {
     dir: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSummary {
+    pub key: String,
+    pub active_profile: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub message_count: usize,
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionMetadata {
+    #[serde(rename = "_type")]
+    kind: String,
+    key: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    last_consolidated: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active_profile: Option<String>,
+}
+
 impl SessionStore {
     pub fn new(workspace: &Path) -> Result<Self> {
         let dir = workspace.join("sessions");
@@ -145,35 +175,86 @@ impl SessionStore {
     }
 
     pub fn get_or_create(&self, key: &str) -> Result<Session> {
+        Ok(self.load(key)?.unwrap_or_else(|| Session::new(key)))
+    }
+
+    pub fn get_or_create_with_default_profile(
+        &self,
+        key: &str,
+        default_profile: &str,
+    ) -> Result<Session> {
+        let mut session = self.get_or_create(key)?;
+        if session.active_profile.is_none() {
+            session.active_profile = Some(default_profile.to_string());
+        }
+        Ok(session)
+    }
+
+    pub fn load(&self, key: &str) -> Result<Option<Session>> {
         let path = self.path_for(key);
         if !path.exists() {
-            return Ok(Session::new(key));
+            return Ok(None);
         }
+        self.load_from_path(&path).map(Some)
+    }
+
+    pub fn get_session_detail(&self, key: &str) -> Result<Option<Session>> {
+        self.load(key)
+    }
+
+    pub fn get_session_summary(&self, key: &str) -> Result<Option<SessionSummary>> {
+        Ok(self.load(key)?.map(|session| session.into_summary()))
+    }
+
+    pub fn list_sessions_in_namespace(&self, namespace: &str) -> Result<Vec<SessionSummary>> {
+        let prefix = namespace_prefix(namespace);
+        let mut sessions = Vec::new();
+        for entry in std::fs::read_dir(&self.dir)
+            .with_context(|| format!("failed to read {}", self.dir.display()))?
+        {
+            let path = entry?.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(session) = self.load_from_path(&path).ok() else {
+                continue;
+            };
+            if session.key.starts_with(&prefix) {
+                sessions.push(session.into_summary());
+            }
+        }
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| a.key.cmp(&b.key)));
+        Ok(sessions)
+    }
+
+    fn load_from_path(&self, path: &Path) -> Result<Session> {
         let raw = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read session {}", path.display()))?;
+        let mut key = metadata_key_from_path(path);
         let mut created_at = Utc::now();
         let mut updated_at = Utc::now();
         let mut last_consolidated = 0usize;
+        let mut active_profile = None;
         let mut messages = Vec::new();
         for line in raw.lines().filter(|line| !line.trim().is_empty()) {
             let value: Value = serde_json::from_str(line)?;
             if value.get("_type").and_then(Value::as_str) == Some("metadata") {
-                if let Some(created) = value.get("created_at").and_then(Value::as_str) {
-                    created_at = created.parse().unwrap_or(created_at);
+                let metadata: SessionMetadata = serde_json::from_value(value)?;
+                if metadata.kind != "metadata" {
+                    continue;
                 }
-                if let Some(updated) = value.get("updated_at").and_then(Value::as_str) {
-                    updated_at = updated.parse().unwrap_or(updated_at);
-                }
-                last_consolidated = value
-                    .get("last_consolidated")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as usize;
+                key = metadata.key;
+                created_at = metadata.created_at;
+                updated_at = metadata.updated_at;
+                last_consolidated = metadata.last_consolidated;
+                active_profile = metadata.active_profile;
             } else {
                 messages.push(serde_json::from_value(value)?);
             }
         }
         Ok(Session {
-            key: key.to_string(),
+            key,
+            active_profile,
             messages,
             created_at,
             updated_at,
@@ -183,13 +264,14 @@ impl SessionStore {
 
     pub fn save(&self, session: &Session) -> Result<()> {
         let mut lines = Vec::with_capacity(session.messages.len() + 1);
-        lines.push(serde_json::to_string(&json!({
-            "_type": "metadata",
-            "key": session.key,
-            "created_at": session.created_at,
-            "updated_at": session.updated_at,
-            "last_consolidated": session.last_consolidated,
-        }))?);
+        lines.push(serde_json::to_string(&SessionMetadata {
+            kind: "metadata".to_string(),
+            key: session.key.clone(),
+            created_at: session.created_at,
+            updated_at: session.updated_at,
+            last_consolidated: session.last_consolidated,
+            active_profile: session.active_profile.clone(),
+        })?);
         for message in &session.messages {
             lines.push(serde_json::to_string(message)?);
         }
@@ -197,5 +279,46 @@ impl SessionStore {
         std::fs::write(&path, lines.join("\n") + "\n")
             .with_context(|| format!("failed to write session {}", path.display()))?;
         Ok(())
+    }
+}
+
+impl Session {
+    fn into_summary(self) -> SessionSummary {
+        SessionSummary {
+            key: self.key,
+            active_profile: self.active_profile,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            message_count: self.messages.len(),
+            preview: self.messages.iter().rev().find_map(message_preview),
+        }
+    }
+}
+
+fn message_preview(message: &SessionMessage) -> Option<String> {
+    match &message.content {
+        Value::String(text) if !text.trim().is_empty() => Some(text.clone()),
+        Value::Null => None,
+        other => Some(other.to_string()),
+    }
+}
+
+fn namespace_prefix(namespace: &str) -> String {
+    if namespace.ends_with(':') {
+        namespace.to_string()
+    } else {
+        format!("{namespace}:")
+    }
+}
+
+fn metadata_key_from_path(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    if let Some((namespace, rest)) = stem.split_once('_') {
+        format!("{namespace}:{rest}")
+    } else {
+        stem.to_string()
     }
 }

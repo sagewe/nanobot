@@ -6,7 +6,8 @@ use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
 use nanobot_rs::providers::{LlmProvider, OpenAICompatibleProvider};
-use serde_json::{Value, json};
+use nanobot_rs::session::SessionMessage;
+use serde_json::{Map, Value, json};
 use tokio::net::TcpListener;
 
 #[derive(Clone)]
@@ -133,4 +134,33 @@ async fn provider_propagates_empty_choices_from_chat_with_retry() {
         err.to_string().contains("provider returned no choices")
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn stored_assistant_tool_calls_replay_reasoning_content_from_extra() {
+    let mut extra = Map::new();
+    extra.insert("reasoning_content".to_string(), json!("chain-of-thought"));
+    let stored = SessionMessage {
+        role: "assistant".to_string(),
+        content: Value::Null,
+        timestamp: None,
+        tool_calls: Some(vec![json!({
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "search", "arguments": "{}"}
+        })]),
+        tool_call_id: None,
+        name: None,
+        extra,
+    };
+
+    let replay = stored.to_llm_message();
+
+    assert_eq!(
+        replay
+            .get("reasoning_content")
+            .and_then(Value::as_str),
+        Some("chain-of-thought")
+    );
+    assert!(replay.get("tool_calls").is_some());
 }
