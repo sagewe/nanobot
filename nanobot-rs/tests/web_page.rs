@@ -108,3 +108,21 @@ fn page_shell_renders_assistant_messages_as_html() {
     assert!(html.contains("node.innerHTML = content;"));
     assert!(html.contains("appendAssistantMessage(payload.replyHtml || \"\");"));
 }
+
+#[test]
+fn page_shell_commits_session_selection_only_after_detail_load() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("let pendingSelectionToken = 0;"));
+    assert!(html.contains("const selectionToken = ++pendingSelectionToken;"));
+    assert!(html.contains("if (selectionToken !== pendingSelectionToken)"));
+
+    let fetch_index = html
+        .find("const detail = await fetchSessionDetail(sessionId);")
+        .expect("detail fetch");
+    let commit_index = html
+        .find("setSelectedSession(sessionId);")
+        .expect("selection commit");
+
+    assert!(fetch_index < commit_index);
+}

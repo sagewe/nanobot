@@ -307,6 +307,7 @@ pub fn render_index_html() -> String {
       const storedSessionId = localStorage.getItem(SESSION_KEY);
       let currentSessionId = null;
       let currentSessions = [];
+      let pendingSelectionToken = 0;
 
       function appendMessage(role, content) {
         const node = document.createElement("article");
@@ -461,8 +462,12 @@ pub fn render_index_html() -> String {
       }
 
       async function selectSession(sessionId) {
-        setSelectedSession(sessionId);
+        const selectionToken = ++pendingSelectionToken;
         const detail = await fetchSessionDetail(sessionId);
+        if (selectionToken !== pendingSelectionToken) {
+          return;
+        }
+        setSelectedSession(sessionId);
         renderSessionDetail(detail);
         setCurrentProfile(detail.activeProfile || "");
         renderSessionList(currentSessions);
