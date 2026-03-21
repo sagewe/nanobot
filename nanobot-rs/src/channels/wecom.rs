@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::channels::Channel;
 use crate::config::WecomConfig;
+use crate::presentation::{render_wecom_markdown, should_deliver_to_channel};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedWecomTextCallback {
@@ -281,22 +282,15 @@ pub fn build_wecom_ping_request(req_id: &str) -> Value {
     })
 }
 
-pub fn build_wecom_stream_reply_request(
-    req_id: &str,
-    stream_id: &str,
-    content: &str,
-    finish: bool,
-) -> Value {
+pub fn build_wecom_markdown_reply_request(req_id: &str, content: &str) -> Value {
     json!({
         "cmd": "aibot_respond_msg",
         "headers": {
             "req_id": req_id,
         },
         "body": {
-            "msgtype": "stream",
-            "stream": {
-                "id": stream_id,
-                "finish": finish,
+            "msgtype": "markdown",
+            "markdown": {
                 "content": content,
             }
         }
@@ -369,6 +363,10 @@ impl Channel for WecomBotChannel {
     }
 
     async fn send(&self, msg: OutboundMessage) -> Result<()> {
+        if !should_deliver_to_channel("wecom", &msg.metadata) {
+            return Ok(());
+        }
+
         let reply_context = self
             .reply_contexts
             .lock()
@@ -383,13 +381,12 @@ impl Channel for WecomBotChannel {
             .await
             .clone()
             .ok_or_else(|| anyhow!("wecom channel is not connected"))?;
+        let rendered = render_wecom_markdown(&msg.content);
 
         writer
-            .send(build_wecom_stream_reply_request(
+            .send(build_wecom_markdown_reply_request(
                 &reply_context.req_id,
-                &Uuid::new_v4().to_string(),
-                &msg.content,
-                true,
+                &rendered,
             ))
             .map_err(|_| anyhow!("wecom writer is closed"))?;
         info!("wecom reply sent chat={}", msg.chat_id);

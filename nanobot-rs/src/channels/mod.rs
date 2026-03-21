@@ -18,8 +18,8 @@ use crate::presentation::{
     telegram_message_limit,
 };
 pub use wecom::{
-    ParsedWecomTextCallback, WecomBotChannel, WecomTiming, build_wecom_ping_request,
-    build_wecom_stream_reply_request, build_wecom_subscribe_request, parse_wecom_text_callback,
+    ParsedWecomTextCallback, WecomBotChannel, WecomTiming, build_wecom_markdown_reply_request,
+    build_wecom_ping_request, build_wecom_subscribe_request, parse_wecom_text_callback,
 };
 
 #[async_trait]

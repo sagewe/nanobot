@@ -13,8 +13,9 @@ use tokio::sync::{Mutex, Notify, mpsc};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 use nanobot_rs::channels::{
-    Channel, ParsedWecomTextCallback, WecomBotChannel, WecomTiming, build_wecom_ping_request,
-    build_wecom_stream_reply_request, build_wecom_subscribe_request, parse_wecom_text_callback,
+    Channel, ParsedWecomTextCallback, WecomBotChannel, WecomTiming,
+    build_wecom_markdown_reply_request, build_wecom_ping_request, build_wecom_subscribe_request,
+    parse_wecom_text_callback,
 };
 use nanobot_rs::config::WecomConfig;
 
@@ -97,15 +98,13 @@ fn parse_text_callback_extracts_sender_chat_and_content() {
 }
 
 #[test]
-fn stream_reply_request_carries_req_id_and_text_content() {
-    let request = build_wecom_stream_reply_request("req-4", "stream-1", "working on it", true);
+fn markdown_reply_request_carries_req_id_and_markdown_content() {
+    let request = build_wecom_markdown_reply_request("req-4", "# working on it");
 
     assert_eq!(request["cmd"], "aibot_respond_msg");
     assert_eq!(request["headers"]["req_id"], "req-4");
-    assert_eq!(request["body"]["msgtype"], "stream");
-    assert_eq!(request["body"]["stream"]["id"], "stream-1");
-    assert_eq!(request["body"]["stream"]["content"], "working on it");
-    assert_eq!(request["body"]["stream"]["finish"], true);
+    assert_eq!(request["body"]["msgtype"], "markdown");
+    assert_eq!(request["body"]["markdown"]["content"], "# working on it");
 }
 
 #[tokio::test]
@@ -323,7 +322,73 @@ async fn wecom_channel_publishes_text_callback_and_replies() {
         .find(|payload| payload["cmd"] == "aibot_respond_msg")
         .expect("reply payload");
     assert_eq!(reply["headers"]["req_id"], "reply-1");
-    assert_eq!(reply["body"]["stream"]["content"], "reply body");
+    assert_eq!(reply["body"]["msgtype"], "markdown");
+    assert_eq!(reply["body"]["markdown"]["content"], "reply body");
+
+    channel.stop().await.expect("stop");
+    tokio::time::timeout(Duration::from_secs(1), start_task)
+        .await
+        .expect("channel stopped in time")
+        .expect("join");
+}
+
+#[tokio::test]
+async fn wecom_channel_drops_runtime_messages() {
+    let server = MockWecomServer::start().await;
+    let bus = MessageBus::new(32);
+    let channel = Arc::new(WecomBotChannel::new_with_timing(
+        runtime_config(server.ws_base()),
+        bus.clone(),
+        WecomTiming::for_tests(),
+    ));
+
+    let start_task = tokio::spawn({
+        let channel = channel.clone();
+        async move { channel.start().await.expect("start") }
+    });
+
+    server.send_callback(json!({
+        "cmd": "aibot_msg_callback",
+        "headers": { "req_id": "reply-progress-1" },
+        "body": {
+            "msgid": "msg-progress-1",
+            "aibotid": "bot-id",
+            "chatid": "chat-progress-1",
+            "chattype": "group",
+            "from": { "userid": "alice" },
+            "msgtype": "text",
+            "text": { "content": "hello from wecom" }
+        }
+    }));
+
+    let inbound = tokio::time::timeout(Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("inbound");
+    assert_eq!(inbound.chat_id, "chat-progress-1");
+
+    channel
+        .send(OutboundMessage {
+            channel: "wecom".to_string(),
+            chat_id: "chat-progress-1".to_string(),
+            content: "message(\"wecom\")".to_string(),
+            metadata: [("_progress".to_string(), json!(true))]
+                .into_iter()
+                .collect(),
+        })
+        .await
+        .expect("send reply");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let received = server.received.lock().await;
+    assert!(
+        received
+            .iter()
+            .filter(|payload| payload["cmd"] == "aibot_respond_msg")
+            .count()
+            == 0
+    );
 
     channel.stop().await.expect("stop");
     tokio::time::timeout(Duration::from_secs(1), start_task)
