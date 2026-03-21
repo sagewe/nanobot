@@ -13,6 +13,10 @@ use tracing::{error, info, warn};
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::config::{Config, TelegramConfig};
+use crate::presentation::{
+    render_telegram_html, should_deliver_to_channel, split_telegram_html_chunks,
+    telegram_message_limit,
+};
 pub use wecom::{
     ParsedWecomTextCallback, WecomBotChannel, WecomTiming, build_wecom_ping_request,
     build_wecom_stream_reply_request, build_wecom_subscribe_request, parse_wecom_text_callback,
@@ -184,12 +188,17 @@ impl Channel for TelegramChannel {
     }
 
     async fn send(&self, msg: OutboundMessage) -> Result<()> {
-        for chunk in split_telegram_message(&msg.content) {
+        if !should_deliver_to_channel("telegram", &msg.metadata) {
+            return Ok(());
+        }
+        let rendered = render_telegram_html(&msg.content);
+        for chunk in split_telegram_html_chunks(&rendered, telegram_message_limit()) {
             self.client
                 .post(self.base_url("sendMessage"))
                 .json(&json!({
                     "chat_id": msg.chat_id,
                     "text": chunk,
+                    "parse_mode": "HTML",
                 }))
                 .send()
                 .await?
@@ -197,26 +206,6 @@ impl Channel for TelegramChannel {
         }
         Ok(())
     }
-}
-
-fn split_telegram_message(content: &str) -> Vec<String> {
-    const LIMIT: usize = 4000;
-    if content.chars().count() <= LIMIT {
-        return vec![content.to_string()];
-    }
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    for ch in content.chars() {
-        current.push(ch);
-        if current.chars().count() >= LIMIT {
-            chunks.push(current);
-            current = String::new();
-        }
-    }
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-    chunks
 }
 
 pub struct ChannelManager {

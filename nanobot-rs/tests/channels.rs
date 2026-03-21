@@ -130,3 +130,69 @@ async fn telegram_channel_sends_outbound_text() {
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].get("text").and_then(Value::as_str), Some("hello"));
 }
+
+#[tokio::test]
+async fn telegram_channel_drops_runtime_messages() {
+    let state = TelegramState::default();
+    let addr = start_server(state.clone()).await;
+    let bus = MessageBus::new(32);
+    let channel = TelegramChannel::new(
+        TelegramConfig {
+            enabled: true,
+            token: "token".to_string(),
+            allow_from: vec!["*".to_string()],
+            api_base: format!("http://{addr}"),
+        },
+        bus,
+    );
+
+    channel
+        .send(OutboundMessage {
+            channel: "telegram".to_string(),
+            chat_id: "123".to_string(),
+            content: "message(\"telegram\")".to_string(),
+            metadata: HashMap::from([("_progress".to_string(), json!(true))]),
+        })
+        .await
+        .expect("send");
+
+    let sent = state.sent.lock().await;
+    assert!(sent.is_empty());
+}
+
+#[tokio::test]
+async fn telegram_channel_sends_rendered_html() {
+    let state = TelegramState::default();
+    let addr = start_server(state.clone()).await;
+    let bus = MessageBus::new(32);
+    let channel = TelegramChannel::new(
+        TelegramConfig {
+            enabled: true,
+            token: "token".to_string(),
+            allow_from: vec!["*".to_string()],
+            api_base: format!("http://{addr}"),
+        },
+        bus,
+    );
+
+    channel
+        .send(OutboundMessage {
+            channel: "telegram".to_string(),
+            chat_id: "123".to_string(),
+            content: "**hello** `code` [link](https://example.com)".to_string(),
+            metadata: HashMap::new(),
+        })
+        .await
+        .expect("send");
+
+    let sent = state.sent.lock().await;
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].get("parse_mode").and_then(Value::as_str),
+        Some("HTML")
+    );
+    assert_eq!(
+        sent[0].get("text").and_then(Value::as_str),
+        Some("<b>hello</b> <code>code</code> <a href=\"https://example.com\">link</a>")
+    );
+}

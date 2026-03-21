@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use nanobot_rs::presentation::{
     render_telegram_html, render_web_html, render_wecom_markdown, should_deliver_to_channel,
+    split_telegram_html_chunks,
 };
 use serde_json::{Value, json};
 
@@ -54,4 +55,14 @@ fn wecom_renderer_returns_markdown_and_enforces_limit() {
     let rendered = render_wecom_markdown("# title");
 
     assert!(rendered.contains("# title"));
+}
+
+#[test]
+fn telegram_html_chunks_preserve_tags() {
+    let chunks = split_telegram_html_chunks(&"<b>Hello</b>".repeat(1000), 4000);
+
+    assert!(chunks.len() > 1);
+    for chunk in chunks {
+        assert_eq!(chunk.matches("<b>").count(), chunk.matches("</b>").count());
+    }
 }
