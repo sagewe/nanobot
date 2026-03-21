@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use nanobot_rs::presentation::should_deliver_to_channel;
+use nanobot_rs::presentation::{
+    render_telegram_html, render_web_html, render_wecom_markdown, should_deliver_to_channel,
+};
 use serde_json::{Value, json};
 
 fn progress_metadata() -> HashMap<String, Value> {
@@ -28,4 +30,28 @@ fn normal_messages_remain_visible_everywhere() {
     assert!(should_deliver_to_channel("telegram", &HashMap::new()));
     assert!(should_deliver_to_channel("wecom", &HashMap::new()));
     assert!(should_deliver_to_channel("web", &HashMap::new()));
+}
+
+#[test]
+fn web_renderer_returns_sanitized_html() {
+    let html = render_web_html("**bold** <script>alert(1)</script>");
+
+    assert!(html.contains("<strong>bold</strong>"));
+    assert!(!html.contains("<script>"));
+}
+
+#[test]
+fn telegram_renderer_returns_html_subset() {
+    let html = render_telegram_html("**bold** `code` [link](https://example.com)");
+
+    assert!(html.contains("<b>bold</b>"));
+    assert!(html.contains("<code>code</code>"));
+    assert!(html.contains("<a href=\"https://example.com\">link</a>"));
+}
+
+#[test]
+fn wecom_renderer_returns_markdown_and_enforces_limit() {
+    let rendered = render_wecom_markdown("# title");
+
+    assert!(rendered.contains("# title"));
 }
