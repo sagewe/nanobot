@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 
 use nanobot_rs::config::Config;
@@ -85,32 +84,115 @@ fn provider_registry_resolves_explicit_provider_defaults() {
 
 #[test]
 fn provider_registry_builds_provider_configs_with_defaults() {
-    let mut config = Config::default();
-    config.agents.defaults.model = "demo-model".to_string();
-    config.agents.defaults.provider = "ollama".to_string();
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("config.json");
+    fs::write(
+        &path,
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "defaultProfile": "ollama:llama3.2",
+      "maxToolIterations": 20
+    },
+    "profiles": {
+      "ollama:llama3.2": {
+        "provider": "ollama",
+        "model": "llama3.2",
+        "request": {
+          "temperature": 0.3
+        }
+      },
+      "openai:gpt-4.1-mini": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "request": {
+          "temperature": 0.2
+        }
+      }
+    }
+  }
+}"#,
+    )
+    .expect("write config");
+
+    let mut config = load_config(Some(&path)).expect("load config");
+    config.agents.defaults.provider = "openai".to_string();
+    config.agents.defaults.model = "gpt-4.1-mini".to_string();
 
     let registry = ProviderRegistry::default();
     let built = registry.build_config(&config).expect("build config");
 
     assert_eq!(built.kind, ProviderKind::Ollama);
     assert_eq!(built.api_base, "http://localhost:11434/v1");
-    assert_eq!(built.default_model, "demo-model");
+    assert_eq!(built.default_model, "llama3.2");
     assert!(built.api_key.is_empty());
 }
 
 #[test]
+fn config_rejects_default_profile_keys_that_are_missing_from_profiles() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("config.json");
+    fs::write(
+        &path,
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "defaultProfile": "openai:missing",
+      "maxToolIterations": 20
+    },
+    "profiles": {
+      "openai:gpt-4.1-mini": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini"
+      }
+    }
+  }
+}"#,
+    )
+    .expect("write config");
+
+    let err = load_config(Some(&path)).expect_err("missing default profile key should fail");
+    assert!(err.to_string().contains("openai:missing"));
+}
+
+#[test]
 fn provider_registry_preserves_custom_extra_headers() {
-    let mut config = Config::default();
-    config.agents.defaults.provider = "custom".to_string();
-    config.providers.custom.api_base = "https://models.example.test/v1".to_string();
-    config.providers.custom.api_key = "secret".to_string();
-    config.providers.custom.extra_headers = HashMap::from([
-        ("X-Trace".to_string(), "abc123".to_string()),
-        (
-            "HTTP-Referer".to_string(),
-            "https://example.test".to_string(),
-        ),
-    ]);
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("config.json");
+    fs::write(
+        &path,
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "defaultProfile": "custom:demo",
+      "maxToolIterations": 20
+    },
+    "profiles": {
+      "custom:demo": {
+        "provider": "custom",
+        "model": "demo",
+        "request": {}
+      }
+    }
+  },
+  "providers": {
+    "custom": {
+      "apiBase": "https://models.example.test/v1",
+      "apiKey": "secret",
+      "extraHeaders": {
+        "X-Trace": "abc123",
+        "HTTP-Referer": "https://example.test"
+      }
+    }
+  }
+}"#,
+    )
+    .expect("write config");
+
+    let config = load_config(Some(&path)).expect("load config");
 
     let registry = ProviderRegistry::default();
     let built = registry.build_config(&config).expect("build config");
@@ -160,6 +242,9 @@ fn provider_registry_uses_the_selected_default_profile_from_the_new_shape() {
     assert_eq!(config.agents.defaults.default_profile, "ollama:llama3.2");
     assert_eq!(config.agents.defaults.provider, "ollama");
     assert_eq!(config.agents.defaults.model, "llama3.2");
+    let mut config = config;
+    config.agents.defaults.provider = "openai".to_string();
+    config.agents.defaults.model = "gpt-4.1-mini".to_string();
     let registry = ProviderRegistry::default();
     let built = registry.build_config(&config).expect("build config");
 

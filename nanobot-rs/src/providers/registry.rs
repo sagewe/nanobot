@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 
 use crate::config::{Config, ProviderConfig};
 
@@ -73,7 +73,13 @@ impl ProviderRegistry {
     }
 
     pub fn build_config(&self, config: &Config) -> Result<ResolvedProviderConfig> {
-        let spec = self.resolve(&config.agents.defaults.provider)?;
+        let profile_name = &config.agents.defaults.default_profile;
+        let profile = config.agents.profiles.get(profile_name).with_context(|| {
+            format!(
+                "agents.defaults.defaultProfile '{profile_name}' does not match any configured profile"
+            )
+        })?;
+        let spec = self.resolve(&profile.provider)?;
         let provider_config = select_provider_config(config, spec.kind);
         let api_base = if provider_config.api_base.trim().is_empty() {
             spec.default_api_base.to_string()
@@ -90,7 +96,7 @@ impl ProviderRegistry {
             name: spec.name.to_string(),
             api_key: provider_config.api_key.clone(),
             api_base,
-            default_model: config.agents.defaults.model.clone(),
+            default_model: profile.model.clone(),
             extra_headers,
         })
     }
