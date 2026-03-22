@@ -112,6 +112,7 @@ fn qr_status_confirmed(
     ilink_bot_id: &str,
     baseurl: &str,
     ilink_user_id: &str,
+    get_updates_buf: &str,
 ) -> Value {
     json!({
         "status": "confirmed",
@@ -119,6 +120,7 @@ fn qr_status_confirmed(
         "ilink_bot_id": ilink_bot_id,
         "baseurl": baseurl,
         "ilink_user_id": ilink_user_id,
+        "get_updates_buf": get_updates_buf,
     })
 }
 
@@ -221,6 +223,7 @@ async fn confirmed_login_persists_account_state() {
             "bot@im.bot",
             "https://alt.example",
             "user@im.wechat",
+            "server-cursor",
         ),
     ])
     .await;

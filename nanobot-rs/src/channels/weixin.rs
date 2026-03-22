@@ -206,7 +206,7 @@ impl WeixinLoginManager {
                     .clone()
                     .unwrap_or_else(|| self.client.api_base().to_string()),
                 ilink_user_id: payload.ilink_user_id.clone(),
-                get_updates_buf: payload.get_updates_buf.clone().unwrap_or_default(),
+                get_updates_buf: String::new(),
                 status: "confirmed".to_string(),
                 updated_at: Utc::now(),
             };
