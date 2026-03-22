@@ -1,7 +1,9 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
+use std::io;
+use std::io::Write;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 
 use axum::extract::{Query, State};
@@ -34,6 +36,36 @@ fn sample_account() -> WeixinAccountState {
         longpolling_timeout_ms: 35000,
         status: "active".to_string(),
         updated_at: Utc.with_ymd_and_hms(2026, 3, 22, 10, 11, 12).unwrap(),
+    }
+}
+
+#[derive(Clone, Default)]
+struct SharedWriter {
+    buffer: Arc<StdMutex<Vec<u8>>>,
+}
+
+struct SharedWriterHandle {
+    buffer: Arc<StdMutex<Vec<u8>>>,
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedWriter {
+    type Writer = SharedWriterHandle;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        SharedWriterHandle {
+            buffer: self.buffer.clone(),
+        }
+    }
+}
+
+impl Write for SharedWriterHandle {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.buffer.lock().expect("buffer").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -171,9 +203,7 @@ async fn weixin_sendmessage_response(
     Json(body): Json<Value>,
 ) -> Json<Value> {
     record_weixin_request(&state, "/ilink/bot/sendmessage", query, headers, body).await;
-    Json(json!({
-        "errcode": 0,
-    }))
+    pop_weixin_response(&state).await
 }
 
 async fn weixin_getupdates_flaky_response(
@@ -340,6 +370,15 @@ fn image_item() -> Value {
     })
 }
 
+fn protocol_text_item(content: &str) -> Value {
+    json!({
+        "type": 1,
+        "text_item": {
+            "text": content,
+        }
+    })
+}
+
 fn message_envelope(
     message_type: i64,
     from_user_id: &str,
@@ -381,6 +420,35 @@ fn direct_text_message(
             get_updates_buf,
             longpolling_timeout_ms,
         )
+    })
+}
+
+fn protocol_direct_text_poll_response(
+    from_user_id: &str,
+    context_token: &str,
+    get_updates_buf: &str,
+    longpolling_timeout_ms: u64,
+    text: &str,
+) -> Value {
+    json!({
+        "ret": 0,
+        "msgs": [
+            {
+                "seq": 429,
+                "message_id": 9812451782375u64,
+                "from_user_id": from_user_id,
+                "to_user_id": "ilink-bot-id",
+                "create_time_ms": 1774158905123u64,
+                "update_time_ms": 1774158905123u64,
+                "session_id": format!("{from_user_id}#ilink-bot-id"),
+                "message_type": 1,
+                "message_state": 2,
+                "context_token": context_token,
+                "item_list": [protocol_text_item(text)],
+            }
+        ],
+        "get_updates_buf": get_updates_buf,
+        "longpolling_timeout_ms": longpolling_timeout_ms
     })
 }
 
@@ -427,6 +495,13 @@ fn non_text_message(
 fn expired_message() -> Value {
     json!({
         "errcode": -14,
+        "errmsg": "account expired",
+    })
+}
+
+fn expired_message_with_ret_only() -> Value {
+    json!({
+        "ret": -14,
         "errmsg": "account expired",
     })
 }
@@ -681,6 +756,9 @@ async fn outbound_send_includes_cached_context_token() {
     let server = spawn_weixin_test_server(vec![]).await;
     let temp = tempdir().unwrap();
     let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let mut account = sample_account();
+    account.baseurl = server.api_base().to_string();
+    store.save_account(&account).unwrap();
     store.save_context_token("user@im.wechat", "ctx-1").unwrap();
     let channel = WeixinChannel::new(
         WeixinConfig {
@@ -742,10 +820,47 @@ async fn outbound_send_includes_cached_context_token() {
 }
 
 #[tokio::test]
+async fn outbound_send_includes_required_auth_headers() {
+    let server = spawn_weixin_test_server(vec![]).await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let mut account = sample_account();
+    account.baseurl = server.api_base().to_string();
+    store.save_account(&account).unwrap();
+    store.save_context_token("user@im.wechat", "ctx-1").unwrap();
+    let channel = WeixinChannel::new(
+        WeixinConfig {
+            enabled: true,
+            api_base: server.api_base().to_string(),
+            cdn_base: "https://cdn.example.com".to_string(),
+        },
+        store,
+        MessageBus::new(32),
+    );
+
+    channel
+        .send(sample_outbound("weixin", "user@im.wechat", "hello"))
+        .await
+        .unwrap();
+
+    let requests = server.take_requests().await;
+    let request = requests
+        .iter()
+        .find(|request| request.path == "/ilink/bot/sendmessage")
+        .expect("sendmessage request");
+    assert_eq!(request.authorization_type, "ilink_bot_token");
+    assert_eq!(request.authorization, "Bearer bot-token");
+    assert!(!request.x_wechat_uin.is_empty());
+}
+
+#[tokio::test]
 async fn outbound_send_preserves_plain_text_literals() {
     let server = spawn_weixin_test_server(vec![]).await;
     let temp = tempdir().unwrap();
     let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let mut account = sample_account();
+    account.baseurl = server.api_base().to_string();
+    store.save_account(&account).unwrap();
     store.save_context_token("user@im.wechat", "ctx-1").unwrap();
     let channel = WeixinChannel::new(
         WeixinConfig {
@@ -792,6 +907,9 @@ async fn outbound_send_skips_runtime_progress_messages() {
     let server = spawn_weixin_test_server(vec![]).await;
     let temp = tempdir().unwrap();
     let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let mut account = sample_account();
+    account.baseurl = server.api_base().to_string();
+    store.save_account(&account).unwrap();
     store.save_context_token("user@im.wechat", "ctx-1").unwrap();
     let channel = WeixinChannel::new(
         WeixinConfig {
@@ -816,6 +934,9 @@ async fn outbound_send_requires_cached_context_token() {
     let server = spawn_weixin_test_server(vec![]).await;
     let temp = tempdir().unwrap();
     let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let mut account = sample_account();
+    account.baseurl = server.api_base().to_string();
+    store.save_account(&account).unwrap();
     let channel = WeixinChannel::new(
         WeixinConfig {
             enabled: true,
@@ -832,6 +953,38 @@ async fn outbound_send_requires_cached_context_token() {
         .unwrap_err();
 
     assert!(err.to_string().contains("context_token"));
+}
+
+#[tokio::test]
+async fn outbound_send_fails_on_business_error_response() {
+    let server = spawn_weixin_test_server(vec![json!({
+        "ret": -2,
+        "errmsg": "bad request",
+    })])
+    .await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let mut account = sample_account();
+    account.baseurl = server.api_base().to_string();
+    store.save_account(&account).unwrap();
+    store.save_context_token("user@im.wechat", "ctx-1").unwrap();
+    let channel = WeixinChannel::new(
+        WeixinConfig {
+            enabled: true,
+            api_base: server.api_base().to_string(),
+            cdn_base: "https://cdn.example.com".to_string(),
+        },
+        store,
+        MessageBus::new(32),
+    );
+
+    let err = channel
+        .send(sample_outbound("weixin", "user@im.wechat", "hello"))
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("ret=-2"));
+    assert!(err.to_string().contains("bad request"));
 }
 
 #[tokio::test]
@@ -864,6 +1017,40 @@ async fn poll_loop_routes_direct_text_messages() {
             .as_deref(),
         Some("ctx-1")
     );
+}
+
+#[tokio::test]
+async fn poll_loop_parses_protocol_msgs_shape_and_text_items() {
+    let server = spawn_weixin_test_server(vec![protocol_direct_text_poll_response(
+        "alice@im.wechat",
+        "ctx-1",
+        "cursor-2",
+        35000,
+        "hello from protocol",
+    )])
+    .await;
+    let account = sample_account();
+    let (_temp, bus, store, handle) = start_weixin_channel(&server, Some(account)).await;
+
+    let inbound = tokio::time::timeout(std::time::Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("message");
+    handle.abort();
+
+    assert_eq!(inbound.channel, "weixin");
+    assert_eq!(inbound.sender_id, "alice@im.wechat");
+    assert_eq!(inbound.chat_id, "alice@im.wechat");
+    assert_eq!(inbound.content, "hello from protocol");
+    assert_eq!(
+        store
+            .load_context_token("alice@im.wechat")
+            .unwrap()
+            .as_deref(),
+        Some("ctx-1")
+    );
+    let account = store.load_account().unwrap().unwrap();
+    assert_eq!(account.get_updates_buf, "cursor-2");
 }
 
 #[tokio::test]
@@ -944,6 +1131,20 @@ async fn poll_loop_marks_account_expired_on_errcode_minus_14() {
 }
 
 #[tokio::test]
+async fn poll_loop_marks_account_expired_on_ret_minus_14() {
+    let server = spawn_weixin_strict_test_server(vec![expired_message_with_ret_only()]).await;
+    let account = sample_account();
+    let (_temp, bus, store, handle) = start_weixin_channel(&server, Some(account)).await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    handle.abort();
+    drop(bus);
+
+    let account = store.load_account().unwrap().unwrap();
+    assert_eq!(account.status, "expired");
+}
+
+#[tokio::test]
 async fn poll_loop_rechecks_store_when_account_missing() {
     let server = spawn_weixin_test_server(vec![direct_text_message(
         "alice@im.wechat",
@@ -968,6 +1169,140 @@ async fn poll_loop_rechecks_store_when_account_missing() {
 
     assert_eq!(inbound.channel, "weixin");
     assert_eq!(inbound.content, "hello");
+}
+
+#[tokio::test]
+async fn weixin_logs_waiting_for_login_and_shutdown() {
+    let server = spawn_weixin_test_server(vec![]).await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let bus = MessageBus::new(32);
+    let channel = Arc::new(WeixinChannel::new(
+        WeixinConfig {
+            enabled: true,
+            api_base: server.api_base().to_string(),
+            cdn_base: "https://cdn.example.com".to_string(),
+        },
+        store,
+        bus,
+    ));
+
+    let writer = SharedWriter::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_ansi(false)
+        .without_time()
+        .with_writer(writer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let start_task = tokio::spawn({
+        let channel = channel.clone();
+        async move { channel.start().await.expect("weixin start") }
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    channel.stop().await.expect("stop");
+    tokio::time::timeout(std::time::Duration::from_secs(1), start_task)
+        .await
+        .expect("channel stopped in time")
+        .expect("join");
+
+    let logs = String::from_utf8(writer.buffer.lock().expect("buffer").clone()).expect("utf8");
+    assert!(logs.contains("weixin waiting for login"), "{logs}");
+    assert!(logs.contains("weixin channel stopped"), "{logs}");
+}
+
+#[tokio::test]
+async fn weixin_logs_polling_message_and_reply_lifecycle() {
+    let server = spawn_weixin_test_server(vec![direct_text_message(
+        "alice@im.wechat",
+        "ctx-1",
+        "cursor-2",
+        35000,
+        vec![text_item("hello from logs")],
+    )])
+    .await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let mut account = sample_account();
+    account.baseurl = server.api_base().to_string();
+    store.save_account(&account).unwrap();
+    let bus = MessageBus::new(32);
+    let channel = Arc::new(WeixinChannel::new(
+        WeixinConfig {
+            enabled: true,
+            api_base: server.api_base().to_string(),
+            cdn_base: "https://cdn.example.com".to_string(),
+        },
+        store,
+        bus.clone(),
+    ));
+
+    let writer = SharedWriter::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_ansi(false)
+        .without_time()
+        .with_writer(writer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let start_task = tokio::spawn({
+        let channel = channel.clone();
+        async move { channel.start().await.expect("weixin start") }
+    });
+
+    let inbound = tokio::time::timeout(std::time::Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("message");
+    assert_eq!(inbound.chat_id, "alice@im.wechat");
+
+    channel
+        .send(sample_outbound(
+            "weixin",
+            "alice@im.wechat",
+            "reply from logs",
+        ))
+        .await
+        .expect("send reply");
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let requests = server.take_requests().await;
+            if requests
+                .iter()
+                .any(|request| request.path == "/ilink/bot/sendmessage")
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("reply observed");
+
+    channel.stop().await.expect("stop");
+    tokio::time::timeout(std::time::Duration::from_secs(1), start_task)
+        .await
+        .expect("channel stopped in time")
+        .expect("join");
+
+    let logs = String::from_utf8(writer.buffer.lock().expect("buffer").clone()).expect("utf8");
+    assert!(
+        logs.contains("weixin polling started bot=ilink-bot-id"),
+        "{logs}"
+    );
+    assert!(
+        logs.contains("weixin text callback sender=alice@im.wechat chat=alice@im.wechat"),
+        "{logs}"
+    );
+    assert!(
+        logs.contains("weixin reply sent chat=alice@im.wechat"),
+        "{logs}"
+    );
+    assert!(logs.contains("weixin channel stopped"), "{logs}");
 }
 
 #[tokio::test]

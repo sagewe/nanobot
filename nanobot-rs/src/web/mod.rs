@@ -699,7 +699,10 @@ fn normalize_weixin_qr_image_source(source: &str) -> String {
         return value.to_string();
     }
     if looks_like_base64_image_payload(value) {
-        return format!("data:image/png;base64,{}", value.replace(char::is_whitespace, ""));
+        return format!(
+            "data:image/png;base64,{}",
+            value.replace(char::is_whitespace, "")
+        );
     }
     if looks_like_direct_image_url(value) {
         return value.to_string();
@@ -733,7 +736,10 @@ fn qr_text_to_svg_data_url(text: &str) -> String {
     let qr = QrCode::encode_text(text, QrCodeEcc::Medium)
         .expect("weixin qr text should fit within QR capacity");
     let svg = qr_to_svg_string(&qr, 4);
-    format!("data:image/svg+xml;base64,{}", base64_encode(svg.as_bytes()))
+    format!(
+        "data:image/svg+xml;base64,{}",
+        base64_encode(svg.as_bytes())
+    )
 }
 
 fn qr_to_svg_string(qr: &QrCode, border: i32) -> String {

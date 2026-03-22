@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 #[cfg(unix)]
@@ -315,7 +315,7 @@ impl WeixinChannel {
 
     fn sendmessage_request(
         &self,
-        api_base: &str,
+        account: &WeixinAccountState,
         chat_id: &str,
         content: &str,
         context_token: &str,
@@ -341,7 +341,10 @@ impl WeixinChannel {
         };
 
         self.client
-            .post(self.sendmessage_url(api_base))
+            .post(self.sendmessage_url(&self.api_base(account)))
+            .header("AuthorizationType", "ilink_bot_token")
+            .header("Authorization", format!("Bearer {}", account.bot_token))
+            .header("X-WECHAT-UIN", WeixinClient::x_wechat_uin())
             .json(&payload)
     }
 
@@ -380,11 +383,7 @@ impl WeixinChannel {
             Err(error) => return Err(error).context("failed to parse weixin getupdates response"),
         };
 
-        let errcode = payload
-            .get("errcode")
-            .or_else(|| payload.get("err_code"))
-            .and_then(Value::as_i64)
-            .unwrap_or_default();
+        let errcode = weixin_error_code(&payload);
 
         if errcode == -14 {
             account.status = "expired".to_string();
@@ -394,11 +393,7 @@ impl WeixinChannel {
             return Ok(PollOutcome::Expired);
         }
         if errcode != 0 {
-            let errmsg = payload
-                .get("errmsg")
-                .or_else(|| payload.get("err_msg"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown error");
+            let errmsg = weixin_error_message(&payload);
             warn!("weixin getupdates failed: errcode={errcode} errmsg={errmsg}");
             return Err(anyhow!(
                 "weixin getupdates failed: errcode={errcode} errmsg={errmsg}"
@@ -429,12 +424,16 @@ impl WeixinChannel {
             }
         }
 
-        if let Some(message) = parse_weixin_message(root) {
+        for message in parse_weixin_messages(root) {
             should_persist = true;
             if let Some(context_token) = message.context_token.as_deref() {
                 self.store
                     .save_context_token(&message.from_user_id, context_token)?;
             }
+            info!(
+                "weixin text callback sender={} chat={}",
+                message.from_user_id, message.from_user_id
+            );
             self.bus
                 .publish_inbound(InboundMessage {
                     channel: "weixin".to_string(),
@@ -469,6 +468,7 @@ impl Channel for WeixinChannel {
         }
 
         self.running.store(true, Ordering::SeqCst);
+        let mut phase: Option<WeixinRuntimePhase> = None;
         while self.running.load(Ordering::SeqCst) {
             let account = match self.store.load_account() {
                 Ok(account) => account,
@@ -479,14 +479,32 @@ impl Channel for WeixinChannel {
                 }
             };
             let Some(mut account) = account else {
+                if phase != Some(WeixinRuntimePhase::WaitingForLogin) {
+                    info!("weixin waiting for login");
+                    phase = Some(WeixinRuntimePhase::WaitingForLogin);
+                }
                 tokio::time::sleep(WEIXIN_IDLE_RETRY_DELAY).await;
                 continue;
             };
 
             if account.status == "expired" {
-                debug!("weixin account expired; waiting for relogin");
+                if phase != Some(WeixinRuntimePhase::Expired) {
+                    info!("weixin account expired; waiting for relogin");
+                    phase = Some(WeixinRuntimePhase::Expired);
+                }
                 tokio::time::sleep(WEIXIN_IDLE_RETRY_DELAY).await;
                 continue;
+            }
+
+            let current_phase = WeixinRuntimePhase::Polling {
+                bot_id: account.ilink_bot_id.clone(),
+                api_base: self.api_base(&account),
+            };
+            if phase.as_ref() != Some(&current_phase) {
+                if let WeixinRuntimePhase::Polling { bot_id, api_base } = &current_phase {
+                    info!("weixin polling started bot={bot_id} base={api_base}");
+                }
+                phase = Some(current_phase);
             }
 
             match self.poll_once(&mut account).await {
@@ -500,6 +518,7 @@ impl Channel for WeixinChannel {
                 }
             }
         }
+        info!("weixin channel stopped");
         Ok(())
     }
 
@@ -513,22 +532,38 @@ impl Channel for WeixinChannel {
             return Ok(());
         }
 
-        let api_base = self
+        let account = self
             .store
             .load_account()?
-            .map(|account| self.api_base(&account))
-            .unwrap_or_else(|| self.config.api_base.trim_end_matches('/').to_string());
+            .context("missing weixin account")?;
         let context_token = self
             .store
             .load_context_token(&msg.chat_id)?
             .with_context(|| format!("missing context_token for weixin chat {}", msg.chat_id))?;
 
-        self.sendmessage_request(&api_base, &msg.chat_id, &msg.content, &context_token)
+        let response = self
+            .sendmessage_request(&account, &msg.chat_id, &msg.content, &context_token)
             .send()
             .await
             .context("failed to request weixin sendmessage")?
             .error_for_status()
             .context("weixin sendmessage request failed")?;
+        let body = response
+            .bytes()
+            .await
+            .context("failed to read weixin sendmessage response body")?;
+        if !body.is_empty() {
+            let payload = serde_json::from_slice::<Value>(&body)
+                .context("failed to parse weixin sendmessage response")?;
+            let errcode = weixin_error_code(&payload);
+            if errcode != 0 {
+                let errmsg = weixin_error_message(&payload);
+                return Err(anyhow!(
+                    "weixin sendmessage failed: ret={errcode} errmsg={errmsg}"
+                ));
+            }
+        }
+        info!("weixin reply sent chat={}", msg.chat_id);
         Ok(())
     }
 }
@@ -683,6 +718,25 @@ enum PollOutcome {
     Expired,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WeixinRuntimePhase {
+    WaitingForLogin,
+    Polling { bot_id: String, api_base: String },
+    Expired,
+}
+
+fn parse_weixin_messages(root: &Value) -> Vec<ParsedWeixinMessage> {
+    if let Some(messages) = root
+        .get("msgs")
+        .or_else(|| root.get("message_list"))
+        .or_else(|| root.get("messageList"))
+        .and_then(Value::as_array)
+    {
+        return messages.iter().filter_map(parse_weixin_message).collect();
+    }
+    parse_weixin_message(root).into_iter().collect()
+}
+
 fn parse_weixin_message(root: &Value) -> Option<ParsedWeixinMessage> {
     let message_type = root
         .get("message_type")
@@ -734,6 +788,7 @@ fn parse_weixin_message(root: &Value) -> Option<ParsedWeixinMessage> {
 fn parse_weixin_text_item(item: &Value) -> Option<&str> {
     let item_type = item
         .get("item_type")
+        .or_else(|| item.get("type"))
         .or_else(|| item.get("itemType"))
         .and_then(Value::as_i64)?;
     if item_type != 1 {
@@ -748,8 +803,33 @@ fn parse_weixin_text_item(item: &Value) -> Option<&str> {
     }
 
     item.pointer("/text/content")
+        .or_else(|| item.pointer("/text_item/text"))
+        .or_else(|| item.pointer("/textItem/text"))
         .and_then(Value::as_str)
         .filter(|text| !text.trim().is_empty())
+}
+
+fn weixin_error_code(payload: &Value) -> i64 {
+    payload
+        .get("errcode")
+        .or_else(|| payload.get("err_code"))
+        .and_then(Value::as_i64)
+        .filter(|code| *code != 0)
+        .or_else(|| {
+            payload
+                .get("ret")
+                .and_then(Value::as_i64)
+                .filter(|code| *code != 0)
+        })
+        .unwrap_or_default()
+}
+
+fn weixin_error_message(payload: &Value) -> &str {
+    payload
+        .get("errmsg")
+        .or_else(|| payload.get("err_msg"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown error")
 }
 
 #[derive(Debug, Clone)]

@@ -936,10 +936,12 @@ async fn real_agentchatservice_converts_weixin_qr_page_urls_to_renderable_images
         .expect("login start payload");
 
     assert_eq!(response["qrcode"], "qr-token");
-    assert!(response["qrcodeImgContent"]
-        .as_str()
-        .unwrap_or_default()
-        .starts_with("data:image/svg+xml;base64,"));
+    assert!(
+        response["qrcodeImgContent"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("data:image/svg+xml;base64,")
+    );
     assert_eq!(requests.lock().await.len(), 1);
     assert_eq!(requests.lock().await[0], "/ilink/bot/get_bot_qrcode");
 }
