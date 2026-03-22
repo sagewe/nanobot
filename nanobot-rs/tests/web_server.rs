@@ -9,7 +9,7 @@ use chrono::{Duration, Utc};
 use nanobot_rs::agent::AgentLoop;
 use nanobot_rs::bus::MessageBus;
 use nanobot_rs::channels::weixin::{WeixinAccountState, WeixinAccountStore};
-use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig};
+use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use nanobot_rs::session::{Session, SessionMessage, SessionStore};
 use nanobot_rs::web::{
@@ -275,6 +275,20 @@ async fn agent_app(dir: &TempDir, responses: Vec<LlmResponse>) -> Router {
     web::build_router(AppState::new(Arc::new(AgentChatService::new(agent))))
 }
 
+async fn agent_app_with_config(
+    dir: &TempDir,
+    mut config: Config,
+    responses: Vec<LlmResponse>,
+) -> Router {
+    let provider = mock_provider(responses);
+    let bus = MessageBus::new(32);
+    config.agents.defaults.workspace = dir.path().display().to_string();
+    let agent = AgentLoop::from_config(bus, provider, config)
+        .await
+        .expect("agent");
+    web::build_router(AppState::new(Arc::new(AgentChatService::new(agent))))
+}
+
 async fn agent_app_with_profiles(
     dir: &TempDir,
     responses: Vec<LlmResponse>,
@@ -309,6 +323,44 @@ async fn agent_app_with_profiles(
         .await
         .expect("agent");
     web::build_router(AppState::new(Arc::new(AgentChatService::new(agent))))
+}
+
+#[derive(Clone, Default)]
+struct WeixinApiState {
+    requests: Arc<Mutex<Vec<String>>>,
+}
+
+async fn weixin_get_bot_qrcode(
+    axum::extract::State(state): axum::extract::State<WeixinApiState>,
+) -> axum::Json<serde_json::Value> {
+    state
+        .requests
+        .lock()
+        .await
+        .push("/ilink/bot/get_bot_qrcode".to_string());
+    axum::Json(json!({
+        "data": {
+            "qrcode": "qr-token",
+            "qrcode_img_content": "data:image/png;base64,abc"
+        }
+    }))
+}
+
+async fn spawn_weixin_api_server() -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
+    let state = WeixinApiState::default();
+    let requests = state.requests.clone();
+    let app = Router::new()
+        .route(
+            "/ilink/bot/get_bot_qrcode",
+            axum::routing::get(weixin_get_bot_qrcode),
+        )
+        .with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    (addr, requests)
 }
 
 fn save_session(workspace: &Path, session: &Session) {
@@ -749,6 +801,83 @@ async fn weixin_account_endpoints_report_login_status() {
         .expect("weixin account after logout payload");
     assert_eq!(after_logout["loggedIn"], false);
     assert_eq!(after_logout["expired"], false);
+}
+
+#[tokio::test]
+async fn real_agentchatservice_respects_disabled_weixin_config() {
+    let dir = tempdir().expect("tempdir");
+    let mut config = Config::default();
+    config.channels.weixin = WeixinConfig {
+        enabled: false,
+        api_base: "https://custom-weixin.example.com".to_string(),
+        cdn_base: "https://novac2c.cdn.weixin.qq.com/c2c".to_string(),
+    };
+    let app = agent_app_with_config(&dir, config, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let account: serde_json::Value = reqwest::get(format!("http://{addr}/api/weixin/account"))
+        .await
+        .expect("fetch weixin account")
+        .json()
+        .await
+        .expect("weixin account payload");
+
+    assert_eq!(account["enabled"], false);
+    assert_eq!(account["loggedIn"], false);
+    assert_eq!(account["expired"], false);
+}
+
+#[tokio::test]
+async fn real_agentchatservice_uses_configured_weixin_api_base() {
+    let dir = tempdir().expect("tempdir");
+    let (api_addr, requests) = spawn_weixin_api_server().await;
+    let mut config = Config::default();
+    config.channels.weixin = WeixinConfig {
+        enabled: true,
+        api_base: format!("http://{api_addr}"),
+        cdn_base: "https://novac2c.cdn.weixin.qq.com/c2c".to_string(),
+    };
+    let app = agent_app_with_config(&dir, config, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let response: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/api/weixin/login/start"))
+        .send()
+        .await
+        .expect("start weixin login")
+        .json()
+        .await
+        .expect("login start payload");
+
+    assert_eq!(response["qrcode"], "qr-token");
+    assert_eq!(response["qrcodeImgContent"], "data:image/png;base64,abc");
+    assert_eq!(requests.lock().await.len(), 1);
+    assert_eq!(requests.lock().await[0], "/ilink/bot/get_bot_qrcode");
+}
+
+#[tokio::test]
+async fn real_agentchatservice_rejects_weixin_status_before_login_start() {
+    let dir = tempdir().expect("tempdir");
+    let mut config = Config::default();
+    config.channels.weixin = WeixinConfig {
+        enabled: true,
+        api_base: "https://custom-weixin.example.com".to_string(),
+        cdn_base: "https://novac2c.cdn.weixin.qq.com/c2c".to_string(),
+    };
+    let app = agent_app_with_config(&dir, config, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let response = reqwest::get(format!("http://{addr}/api/weixin/login/status"))
+        .await
+        .expect("poll weixin login status");
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("login status payload");
+
+    assert_eq!(status, reqwest::StatusCode::CONFLICT);
+    assert!(payload["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("weixin login has not been started"));
 }
 
 #[tokio::test]

@@ -167,7 +167,7 @@ pub async fn start_weixin_login(
         .chat
         .start_weixin_login()
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(map_weixin_workflow_error)?;
     Ok(Json(login))
 }
 
@@ -178,7 +178,7 @@ pub async fn poll_weixin_login(
         .chat
         .poll_weixin_login()
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(map_weixin_workflow_error)?;
     Ok(Json(status))
 }
 
@@ -189,7 +189,7 @@ pub async fn logout_weixin(
         .chat
         .logout_weixin()
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(map_weixin_workflow_error)?;
     Ok(Json(account))
 }
 
@@ -217,6 +217,13 @@ impl ApiError {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: error.to_string(),
+        }
+    }
+
+    fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            message: message.into(),
         }
     }
 }
@@ -261,6 +268,16 @@ fn map_duplicate_error(error: anyhow::Error, channel: &str, session_id: &str) ->
     let message = error.to_string();
     if message.contains("not found") {
         return ApiError::not_found(format!("session {channel}:{session_id} not found"));
+    }
+    ApiError::internal(error)
+}
+
+fn map_weixin_workflow_error(error: anyhow::Error) -> ApiError {
+    let message = error.to_string();
+    if message.contains("weixin runtime is not available")
+        || message.contains("weixin login has not been started")
+    {
+        return ApiError::conflict(message);
     }
     ApiError::internal(error)
 }

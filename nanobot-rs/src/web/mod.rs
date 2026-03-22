@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use crate::agent::AgentLoop;
 use crate::channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinLoginManager};
+use crate::config::WeixinConfig;
 use crate::presentation::render_web_html;
 use crate::session::{
     split_session_key, Session, SessionGroupSummary, SessionMessage, SessionSummary,
@@ -188,6 +189,21 @@ impl WebWeixinLoginStatus {
     }
 }
 
+#[derive(Debug, Clone)]
+struct WeixinWebConfig {
+    enabled: bool,
+    api_base: String,
+}
+
+impl From<&WeixinConfig> for WeixinWebConfig {
+    fn from(config: &WeixinConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            api_base: config.api_base.clone(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) chat: Arc<dyn ChatService>,
@@ -219,35 +235,38 @@ pub fn build_router(state: AppState) -> Router {
 
 #[derive(Clone)]
 struct WeixinRuntime {
+    config: WeixinWebConfig,
     store: WeixinAccountStore,
     login: WeixinLoginManager,
-    enabled: bool,
 }
 
 impl WeixinRuntime {
-    fn new(workspace: PathBuf) -> Result<Self> {
+    fn new(workspace: PathBuf, config: WeixinWebConfig) -> Result<Self> {
         let store = WeixinAccountStore::new(&workspace)?;
         let login = WeixinLoginManager::new(
-            "https://ilinkai.weixin.qq.com",
+            config.api_base.clone(),
             store.clone(),
             env!("CARGO_PKG_VERSION"),
         );
         Ok(Self {
+            config,
             store,
             login,
-            enabled: true,
         })
     }
 
     async fn get_account(&self) -> Result<WebWeixinAccount> {
         let account = self.store.load_account()?;
         Ok(WebWeixinAccount::from_account(
-            self.enabled,
+            self.config.enabled,
             account.as_ref(),
         ))
     }
 
     async fn start_login(&self) -> Result<WeixinLoginStartResponse> {
+        if !self.config.enabled {
+            bail!("weixin runtime is not available");
+        }
         let login = self.login.start_login().await?;
         Ok(WeixinLoginStartResponse {
             qrcode: login.qrcode,
@@ -256,6 +275,9 @@ impl WeixinRuntime {
     }
 
     async fn poll_login(&self) -> Result<WebWeixinLoginStatus> {
+        if !self.config.enabled {
+            bail!("weixin runtime is not available");
+        }
         let status = self.login.poll_login_status().await?;
         let account = self.store.load_account()?;
         Ok(WebWeixinLoginStatus::from_state(
@@ -267,26 +289,33 @@ impl WeixinRuntime {
     async fn logout(&self) -> Result<WebWeixinAccount> {
         self.store.clear_all()?;
         self.login.clear_login_session()?;
-        Ok(WebWeixinAccount::from_account(self.enabled, None))
+        Ok(WebWeixinAccount::from_account(self.config.enabled, None))
     }
 }
 
 #[derive(Clone)]
 pub struct AgentChatService {
     agent: AgentLoop,
+    weixin_config: WeixinWebConfig,
     weixin: Option<WeixinRuntime>,
 }
 
 impl AgentChatService {
     pub fn new(agent: AgentLoop) -> Self {
-        let weixin = match WeixinRuntime::new(agent.workspace_path().to_path_buf()) {
-            Ok(runtime) => Some(runtime),
-            Err(error) => {
-                error!(error = %error, "failed to initialize weixin web runtime");
-                None
-            }
-        };
-        Self { agent, weixin }
+        let weixin_config = WeixinWebConfig::from(agent.weixin_web_config());
+        let weixin =
+            match WeixinRuntime::new(agent.workspace_path().to_path_buf(), weixin_config.clone()) {
+                Ok(runtime) => Some(runtime),
+                Err(error) => {
+                    error!(error = %error, "failed to initialize weixin web runtime");
+                    None
+                }
+            };
+        Self {
+            agent,
+            weixin_config,
+            weixin,
+        }
     }
 }
 
@@ -369,30 +398,34 @@ impl ChatService for AgentChatService {
     async fn get_weixin_account(&self) -> Result<WebWeixinAccount> {
         match &self.weixin {
             Some(weixin) => weixin.get_account().await,
-            None => Ok(WebWeixinAccount::from_account(false, None)),
+            None => Ok(WebWeixinAccount::from_account(
+                self.weixin_config.enabled,
+                None,
+            )),
         }
     }
 
     async fn start_weixin_login(&self) -> Result<WeixinLoginStartResponse> {
-        let weixin = self
-            .weixin
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("weixin runtime is not available"))?;
-        weixin.start_login().await
+        match &self.weixin {
+            Some(weixin) => weixin.start_login().await,
+            None => Err(anyhow::anyhow!("weixin runtime is not available")),
+        }
     }
 
     async fn poll_weixin_login(&self) -> Result<WebWeixinLoginStatus> {
-        let weixin = self
-            .weixin
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("weixin runtime is not available"))?;
-        weixin.poll_login().await
+        match &self.weixin {
+            Some(weixin) => weixin.poll_login().await,
+            None => Err(anyhow::anyhow!("weixin runtime is not available")),
+        }
     }
 
     async fn logout_weixin(&self) -> Result<WebWeixinAccount> {
         match &self.weixin {
             Some(weixin) => weixin.logout().await,
-            None => Ok(WebWeixinAccount::from_account(false, None)),
+            None => Ok(WebWeixinAccount::from_account(
+                self.weixin_config.enabled,
+                None,
+            )),
         }
     }
 }

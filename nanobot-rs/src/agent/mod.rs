@@ -12,7 +12,7 @@ use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
-use crate::config::{AgentProfileConfig, Config, WebToolsConfig};
+use crate::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
 use crate::providers::{LlmProvider, ProviderRequestDescriptor};
 use crate::session::{Session, SessionGroupSummary, SessionMessage, SessionStore, SessionSummary};
 use crate::tools::{
@@ -472,6 +472,7 @@ pub struct AgentLoop {
     exec_timeout: u64,
     restrict_to_workspace: bool,
     web_tools: WebToolsConfig,
+    weixin_web: WeixinConfig,
     sessions: SessionStore,
     context: ContextBuilder,
     subagents: SubagentManager,
@@ -500,6 +501,7 @@ impl AgentLoop {
                 request: serde_json::Map::new(),
             },
         )]);
+        let weixin_web = WeixinConfig::default();
         Self::new_internal(
             bus,
             provider,
@@ -510,6 +512,7 @@ impl AgentLoop {
             exec_timeout,
             restrict_to_workspace,
             web_tools,
+            weixin_web,
         )
         .await
     }
@@ -530,6 +533,7 @@ impl AgentLoop {
             config.tools.exec.timeout,
             config.tools.restrict_to_workspace,
             config.tools.web.clone(),
+            config.channels.weixin.clone(),
         )
         .await
     }
@@ -544,6 +548,7 @@ impl AgentLoop {
         exec_timeout: u64,
         restrict_to_workspace: bool,
         web_tools: WebToolsConfig,
+        weixin_web: WeixinConfig,
     ) -> Result<Self> {
         let sessions = SessionStore::new(&workspace)?;
         let context = ContextBuilder::new(workspace.clone());
@@ -571,6 +576,7 @@ impl AgentLoop {
             exec_timeout,
             restrict_to_workspace,
             web_tools,
+            weixin_web,
             sessions,
             context,
             subagents,
@@ -695,6 +701,10 @@ impl AgentLoop {
 
     pub fn workspace_path(&self) -> &Path {
         &self.workspace
+    }
+
+    pub fn weixin_web_config(&self) -> &WeixinConfig {
+        &self.weixin_web
     }
 
     pub fn has_profile(&self, key: &str) -> bool {
@@ -1088,6 +1098,7 @@ impl Clone for AgentLoop {
             exec_timeout: self.exec_timeout,
             restrict_to_workspace: self.restrict_to_workspace,
             web_tools: self.web_tools.clone(),
+            weixin_web: self.weixin_web.clone(),
             sessions: self.sessions.clone(),
             context: self.context.clone(),
             subagents: self.subagents.clone(),
