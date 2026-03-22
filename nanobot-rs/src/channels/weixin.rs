@@ -3,12 +3,12 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
+    Arc, Mutex, OnceLock,
 };
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,7 @@ use std::os::unix::fs::PermissionsExt;
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::channels::Channel;
 use crate::config::WeixinConfig;
+use crate::presentation::should_deliver_to_channel;
 
 const WEIXIN_IDLE_RETRY_DELAY: Duration = Duration::from_millis(250);
 
@@ -289,6 +290,42 @@ impl WeixinChannel {
             }))
     }
 
+    fn sendmessage_url(&self, api_base: &str) -> String {
+        format!("{}/ilink/bot/sendmessage", api_base.trim_end_matches('/'))
+    }
+
+    fn sendmessage_request(
+        &self,
+        api_base: &str,
+        chat_id: &str,
+        content: &str,
+        context_token: &str,
+    ) -> reqwest::RequestBuilder {
+        let payload = WeixinSendMessageRequest {
+            msg: WeixinSendMessage {
+                from_user_id: String::new(),
+                to_user_id: chat_id.to_string(),
+                client_id: Uuid::new_v4().to_string(),
+                message_type: 2,
+                message_state: 2,
+                item_list: vec![WeixinSendItem {
+                    item_type: 1,
+                    text_item: WeixinSendTextItem {
+                        text: flatten_weixin_text(content),
+                    },
+                }],
+                context_token: context_token.to_string(),
+            },
+            base_info: WeixinSendBaseInfo {
+                channel_version: self.channel_version().to_string(),
+            },
+        };
+
+        self.client
+            .post(self.sendmessage_url(api_base))
+            .json(&payload)
+    }
+
     async fn poll_once(&self, account: &mut WeixinAccountState) -> Result<PollOutcome> {
         let timeout = Duration::from_millis(account.longpolling_timeout_ms.max(1));
         let response = self
@@ -452,9 +489,79 @@ impl Channel for WeixinChannel {
         Ok(())
     }
 
-    async fn send(&self, _msg: OutboundMessage) -> Result<()> {
-        Err(anyhow!("weixin outbound send is not implemented yet"))
+    async fn send(&self, msg: OutboundMessage) -> Result<()> {
+        if !should_deliver_to_channel("weixin", &msg.metadata) || is_runtime_outbound(&msg.metadata)
+        {
+            return Ok(());
+        }
+
+        let api_base = self
+            .store
+            .load_account()?
+            .map(|account| self.api_base(&account))
+            .unwrap_or_else(|| self.config.api_base.trim_end_matches('/').to_string());
+        let context_token = self
+            .store
+            .load_context_token(&msg.chat_id)?
+            .with_context(|| format!("missing context_token for weixin chat {}", msg.chat_id))?;
+
+        self.sendmessage_request(&api_base, &msg.chat_id, &msg.content, &context_token)
+            .send()
+            .await
+            .context("failed to request weixin sendmessage")?
+            .error_for_status()
+            .context("weixin sendmessage request failed")?;
+        Ok(())
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WeixinSendMessageRequest {
+    msg: WeixinSendMessage,
+    base_info: WeixinSendBaseInfo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WeixinSendMessage {
+    from_user_id: String,
+    to_user_id: String,
+    client_id: String,
+    message_type: i64,
+    message_state: i64,
+    item_list: Vec<WeixinSendItem>,
+    context_token: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WeixinSendItem {
+    #[serde(rename = "type")]
+    item_type: i64,
+    text_item: WeixinSendTextItem,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WeixinSendTextItem {
+    text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WeixinSendBaseInfo {
+    channel_version: String,
+}
+
+fn flatten_weixin_text(content: &str) -> String {
+    content.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_runtime_outbound(metadata: &std::collections::HashMap<String, Value>) -> bool {
+    metadata
+        .get("_progress")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || metadata
+            .get("_tool_hint")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

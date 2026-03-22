@@ -7,15 +7,15 @@ use std::time::Instant;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::routing::{get, post};
-use axum::{Json, Router, response::IntoResponse};
+use axum::{response::IntoResponse, Json, Router};
 use chrono::{TimeZone, Utc};
-use nanobot_rs::bus::MessageBus;
-use nanobot_rs::channels::Channel;
+use nanobot_rs::bus::{MessageBus, OutboundMessage};
 use nanobot_rs::channels::weixin::{
     WeixinAccountState, WeixinAccountStore, WeixinChannel, WeixinLoginManager,
 };
+use nanobot_rs::channels::Channel;
 use nanobot_rs::config::WeixinConfig;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
@@ -164,6 +164,18 @@ async fn weixin_getupdates_response(
     pop_weixin_response(&state).await
 }
 
+async fn weixin_sendmessage_response(
+    State(state): State<WeixinTestState>,
+    Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    record_weixin_request(&state, "/ilink/bot/sendmessage", query, headers, body).await;
+    Json(json!({
+        "errcode": 0,
+    }))
+}
+
 async fn weixin_getupdates_flaky_response(
     State(state): State<WeixinTestState>,
     Query(query): Query<HashMap<String, String>>,
@@ -200,6 +212,7 @@ async fn spawn_weixin_test_server(responses: Vec<Value>) -> WeixinTestServer {
             get(weixin_qr_status_response),
         )
         .route("/ilink/bot/getupdates", post(weixin_getupdates_response))
+        .route("/ilink/bot/sendmessage", post(weixin_sendmessage_response))
         .with_state(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr: SocketAddr = listener.local_addr().expect("local addr");
@@ -654,6 +667,121 @@ async fn start_weixin_channel(
     (temp, bus, store, handle)
 }
 
+fn sample_outbound(channel: &str, chat_id: &str, content: &str) -> OutboundMessage {
+    OutboundMessage {
+        channel: channel.to_string(),
+        chat_id: chat_id.to_string(),
+        content: content.to_string(),
+        metadata: HashMap::new(),
+    }
+}
+
+#[tokio::test]
+async fn outbound_send_includes_cached_context_token() {
+    let server = spawn_weixin_test_server(vec![]).await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    store.save_context_token("user@im.wechat", "ctx-1").unwrap();
+    let channel = WeixinChannel::new(
+        WeixinConfig {
+            enabled: true,
+            api_base: server.api_base().to_string(),
+            cdn_base: "https://cdn.example.com".to_string(),
+        },
+        store,
+        MessageBus::new(32),
+    );
+
+    channel
+        .send(sample_outbound("weixin", "user@im.wechat", "hello"))
+        .await
+        .unwrap();
+
+    let requests = server.take_requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/ilink/bot/sendmessage");
+    assert_eq!(
+        requests[0]
+            .body
+            .pointer("/msg/to_user_id")
+            .and_then(Value::as_str),
+        Some("user@im.wechat")
+    );
+    assert_eq!(
+        requests[0]
+            .body
+            .pointer("/msg/context_token")
+            .and_then(Value::as_str),
+        Some("ctx-1")
+    );
+    assert_eq!(
+        requests[0]
+            .body
+            .pointer("/msg/item_list/0/text_item/text")
+            .and_then(Value::as_str),
+        Some("hello")
+    );
+    assert_eq!(
+        requests[0]
+            .body
+            .pointer("/base_info/channel_version")
+            .and_then(Value::as_str),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
+    assert!(requests[0]
+        .body
+        .pointer("/msg/client_id")
+        .and_then(Value::as_str)
+        .is_some_and(|client_id| !client_id.is_empty()));
+}
+
+#[tokio::test]
+async fn outbound_send_skips_runtime_progress_messages() {
+    let server = spawn_weixin_test_server(vec![]).await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    store.save_context_token("user@im.wechat", "ctx-1").unwrap();
+    let channel = WeixinChannel::new(
+        WeixinConfig {
+            enabled: true,
+            api_base: server.api_base().to_string(),
+            cdn_base: "https://cdn.example.com".to_string(),
+        },
+        store,
+        MessageBus::new(32),
+    );
+
+    let mut msg = sample_outbound("weixin", "user@im.wechat", "progress");
+    msg.metadata.insert("_progress".to_string(), json!(true));
+    channel.send(msg).await.unwrap();
+
+    let requests = server.take_requests().await;
+    assert!(requests.is_empty());
+}
+
+#[tokio::test]
+async fn outbound_send_requires_cached_context_token() {
+    let server = spawn_weixin_test_server(vec![]).await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let channel = WeixinChannel::new(
+        WeixinConfig {
+            enabled: true,
+            api_base: server.api_base().to_string(),
+            cdn_base: "https://cdn.example.com".to_string(),
+        },
+        store,
+        MessageBus::new(32),
+    );
+
+    let err = channel
+        .send(sample_outbound("weixin", "user@im.wechat", "hello"))
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("context_token"));
+}
+
 #[tokio::test]
 async fn poll_loop_routes_direct_text_messages() {
     let server = spawn_weixin_test_server(vec![direct_text_message(
@@ -944,11 +1072,9 @@ async fn client_side_timeout_is_treated_as_an_empty_poll() {
     drop(bus);
 
     let requests = server.take_requests().await;
-    assert!(
-        requests
-            .iter()
-            .any(|request| request.path == "/ilink/bot/getupdates")
-    );
+    assert!(requests
+        .iter()
+        .any(|request| request.path == "/ilink/bot/getupdates"));
     assert!(requests.len() >= 2);
 }
 
@@ -1047,20 +1173,16 @@ fn weixin_account_store_clear_all_removes_persisted_state() {
     store.clear_all().unwrap();
 
     assert!(store.load_account().unwrap().is_none());
-    assert!(
-        store
-            .load_context_token("user@im.wechat")
-            .unwrap()
-            .is_none()
-    );
-    assert!(
-        !temp
-            .path()
-            .join("channels")
-            .join("weixin")
-            .join("context_tokens.json")
-            .exists()
-    );
+    assert!(store
+        .load_context_token("user@im.wechat")
+        .unwrap()
+        .is_none());
+    assert!(!temp
+        .path()
+        .join("channels")
+        .join("weixin")
+        .join("context_tokens.json")
+        .exists());
 }
 
 #[test]

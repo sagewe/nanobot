@@ -9,7 +9,7 @@ use nanobot_rs::bus::{MessageBus, OutboundMessage};
 use nanobot_rs::channels::weixin::{WeixinAccountStore, WeixinChannel};
 use nanobot_rs::channels::{Channel, ChannelManager, TelegramChannel};
 use nanobot_rs::config::{Config, TelegramConfig, WeixinConfig};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -36,10 +36,30 @@ async fn send_message(
     Json(json!({"ok": true, "result": {"message_id": 1}}))
 }
 
+async fn weixin_send_message(
+    State(state): State<TelegramState>,
+    Json(payload): Json<Value>,
+) -> Json<Value> {
+    state.sent.lock().await.push(payload);
+    Json(json!({"errcode": 0}))
+}
+
 async fn start_server(state: TelegramState) -> SocketAddr {
     let app = Router::new()
         .route("/bottoken/getUpdates", post(get_updates))
         .route("/bottoken/sendMessage", post(send_message))
+        .with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    addr
+}
+
+async fn start_weixin_server(state: TelegramState) -> SocketAddr {
+    let app = Router::new()
+        .route("/ilink/bot/sendmessage", post(weixin_send_message))
         .with_state(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
@@ -223,20 +243,23 @@ async fn telegram_channel_sends_rendered_html() {
 }
 
 #[tokio::test]
-async fn weixin_channel_send_returns_error() {
+async fn weixin_channel_sends_outbound_text() {
+    let state = TelegramState::default();
+    let addr = start_weixin_server(state.clone()).await;
     let temp = tempdir().unwrap();
     let store = WeixinAccountStore::new(temp.path()).unwrap();
+    store.save_context_token("user@im.wechat", "ctx-1").unwrap();
     let channel = WeixinChannel::new(
         WeixinConfig {
             enabled: true,
-            api_base: "http://localhost:1".to_string(),
+            api_base: format!("http://{addr}"),
             cdn_base: "https://cdn.example.com".to_string(),
         },
         store,
         MessageBus::new(32),
     );
 
-    let error = channel
+    channel
         .send(OutboundMessage {
             channel: "weixin".to_string(),
             chat_id: "user@im.wechat".to_string(),
@@ -244,11 +267,20 @@ async fn weixin_channel_send_returns_error() {
             metadata: HashMap::new(),
         })
         .await
-        .expect_err("send should not be implemented");
+        .expect("send");
 
-    assert!(
-        error
-            .to_string()
-            .contains("weixin outbound send is not implemented yet")
+    let sent = state.sent.lock().await;
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0]
+            .pointer("/msg/context_token")
+            .and_then(Value::as_str),
+        Some("ctx-1")
+    );
+    assert_eq!(
+        sent[0]
+            .pointer("/msg/item_list/0/text_item/text")
+            .and_then(Value::as_str),
+        Some("hello")
     );
 }
