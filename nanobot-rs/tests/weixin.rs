@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Json, Router, response::IntoResponse};
 use chrono::{TimeZone, Utc};
 use nanobot_rs::bus::MessageBus;
 use nanobot_rs::channels::Channel;
@@ -15,6 +15,7 @@ use nanobot_rs::channels::weixin::{
 };
 use nanobot_rs::config::WeixinConfig;
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -39,6 +40,7 @@ fn sample_account() -> WeixinAccountState {
 struct WeixinTestState {
     responses: Arc<Mutex<VecDeque<Value>>>,
     requests: Arc<Mutex<Vec<WeixinRequestRecord>>>,
+    attempts: Arc<AtomicUsize>,
 }
 
 impl WeixinTestState {
@@ -46,6 +48,7 @@ impl WeixinTestState {
         Self {
             responses: Arc::new(Mutex::new(responses.into())),
             requests: Arc::new(Mutex::new(Vec::new())),
+            attempts: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -65,10 +68,25 @@ async fn pop_weixin_response(state: &WeixinTestState) -> Json<Value> {
         json!({
             "errcode": 0,
             "data": {
-                "items": []
+                "message_type": 1,
+                "from_user_id": "alice@im.wechat",
+                "context_token": "ctx-1",
+                "item_list": [],
+                "get_updates_buf": "",
+                "longpolling_timeout_ms": 35000,
             }
         })
     });
+    Json(response)
+}
+
+async fn pop_weixin_response_strict(state: &WeixinTestState) -> Json<Value> {
+    let response = state
+        .responses
+        .lock()
+        .await
+        .pop_front()
+        .expect("unexpected extra poll");
     Json(response)
 }
 
@@ -143,6 +161,21 @@ async fn weixin_getupdates_response(
     pop_weixin_response(&state).await
 }
 
+async fn weixin_getupdates_flaky_response(
+    State(state): State<WeixinTestState>,
+    Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> axum::response::Response {
+    record_weixin_request(&state, "/ilink/bot/getupdates", query, headers, body).await;
+    let attempt = state.attempts.fetch_add(1, Ordering::SeqCst);
+    if attempt == 0 {
+        (axum::http::StatusCode::OK, "not json").into_response()
+    } else {
+        pop_weixin_response(&state).await.into_response()
+    }
+}
+
 async fn weixin_getupdates_slow_response(
     State(state): State<WeixinTestState>,
     Query(query): Query<HashMap<String, String>>,
@@ -164,6 +197,46 @@ async fn spawn_weixin_test_server(responses: Vec<Value>) -> WeixinTestServer {
             get(weixin_qr_status_response),
         )
         .route("/ilink/bot/getupdates", post(weixin_getupdates_response))
+        .with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr: SocketAddr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    WeixinTestServer {
+        api_base: format!("http://{addr}"),
+        requests,
+    }
+}
+
+async fn spawn_weixin_strict_test_server(responses: Vec<Value>) -> WeixinTestServer {
+    let state = WeixinTestState::with_responses(responses);
+    let requests = state.requests.clone();
+    let app = Router::new()
+        .route(
+            "/ilink/bot/getupdates",
+            post(weixin_getupdates_strict_response),
+        )
+        .with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr: SocketAddr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    WeixinTestServer {
+        api_base: format!("http://{addr}"),
+        requests,
+    }
+}
+
+async fn spawn_weixin_flaky_test_server(responses: Vec<Value>) -> WeixinTestServer {
+    let state = WeixinTestState::with_responses(responses);
+    let requests = state.requests.clone();
+    let app = Router::new()
+        .route(
+            "/ilink/bot/getupdates",
+            post(weixin_getupdates_flaky_response),
+        )
         .with_state(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr: SocketAddr = listener.local_addr().expect("local addr");
@@ -231,6 +304,125 @@ fn qr_status_confirmed(
         "ilink_user_id": ilink_user_id,
         "get_updates_buf": get_updates_buf,
     })
+}
+
+fn text_item(content: &str) -> Value {
+    json!({
+        "item_type": 1,
+        "text": {
+            "content": content,
+        }
+    })
+}
+
+fn image_item() -> Value {
+    json!({
+        "item_type": 2,
+        "image": {
+            "media_id": "image-1",
+        }
+    })
+}
+
+fn message_envelope(
+    message_type: i64,
+    from_user_id: &str,
+    group_id: Option<&str>,
+    context_token: &str,
+    item_list: Vec<Value>,
+    get_updates_buf: &str,
+    longpolling_timeout_ms: u64,
+) -> Value {
+    let mut envelope = json!({
+        "message_type": message_type,
+        "from_user_id": from_user_id,
+        "context_token": context_token,
+        "item_list": item_list,
+        "get_updates_buf": get_updates_buf,
+        "longpolling_timeout_ms": longpolling_timeout_ms,
+    });
+    if let Some(group_id) = group_id {
+        envelope["group_id"] = json!(group_id);
+    }
+    envelope
+}
+
+fn direct_text_message(
+    from_user_id: &str,
+    context_token: &str,
+    get_updates_buf: &str,
+    longpolling_timeout_ms: u64,
+    item_list: Vec<Value>,
+) -> Value {
+    json!({
+        "errcode": 0,
+        "data": message_envelope(
+            1,
+            from_user_id,
+            None,
+            context_token,
+            item_list,
+            get_updates_buf,
+            longpolling_timeout_ms,
+        )
+    })
+}
+
+fn group_text_message(
+    from_user_id: &str,
+    group_id: &str,
+    context_token: &str,
+    get_updates_buf: &str,
+    longpolling_timeout_ms: u64,
+) -> Value {
+    json!({
+        "errcode": 0,
+        "data": message_envelope(
+            1,
+            from_user_id,
+            Some(group_id),
+            context_token,
+            vec![text_item("hello")],
+            get_updates_buf,
+            longpolling_timeout_ms,
+        )
+    })
+}
+
+fn non_text_message(
+    from_user_id: &str,
+    get_updates_buf: &str,
+    longpolling_timeout_ms: u64,
+) -> Value {
+    json!({
+        "errcode": 0,
+        "data": message_envelope(
+            2,
+            from_user_id,
+            None,
+            "ctx-image",
+            vec![image_item()],
+            get_updates_buf,
+            longpolling_timeout_ms,
+        )
+    })
+}
+
+fn expired_message() -> Value {
+    json!({
+        "errcode": -14,
+        "errmsg": "account expired",
+    })
+}
+
+async fn weixin_getupdates_strict_response(
+    State(state): State<WeixinTestState>,
+    Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    record_weixin_request(&state, "/ilink/bot/getupdates", query, headers, body).await;
+    pop_weixin_response_strict(&state).await
 }
 
 #[test]
@@ -421,58 +613,9 @@ async fn confirmed_login_falls_back_to_configured_api_base_without_baseurl() {
     assert_eq!(account.get_updates_buf, "");
 }
 
-fn poll_response(items: Vec<Value>, get_updates_buf: &str, timeout_ms: u64) -> Value {
-    json!({
-        "errcode": 0,
-        "data": {
-            "items": items,
-            "get_updates_buf": get_updates_buf,
-            "longpolling_timeout_ms": timeout_ms,
-        }
-    })
-}
-
-fn poll_expired_response() -> Value {
-    json!({
-        "errcode": -14,
-        "errmsg": "account expired",
-    })
-}
-
-fn direct_text_item(from_user_id: &str, text: &str, context_token: &str) -> Value {
-    json!({
-        "msg_type": "text",
-        "from_user_id": from_user_id,
-        "chat_id": from_user_id,
-        "text": text,
-        "context_token": context_token,
-    })
-}
-
-fn group_text_item(from_user_id: &str, group_id: &str, text: &str) -> Value {
-    json!({
-        "msg_type": "text",
-        "from_user_id": from_user_id,
-        "group_id": group_id,
-        "chat_id": group_id,
-        "text": text,
-        "context_token": "ctx-group",
-    })
-}
-
-fn non_text_item(from_user_id: &str) -> Value {
-    json!({
-        "msg_type": "image",
-        "from_user_id": from_user_id,
-        "chat_id": from_user_id,
-        "media_id": "image-1",
-        "context_token": "ctx-image",
-    })
-}
-
 async fn start_weixin_channel(
     server: &WeixinTestServer,
-    account: WeixinAccountState,
+    account: Option<WeixinAccountState>,
 ) -> (
     tempfile::TempDir,
     MessageBus,
@@ -481,9 +624,10 @@ async fn start_weixin_channel(
 ) {
     let temp = tempdir().unwrap();
     let store = WeixinAccountStore::new(temp.path()).unwrap();
-    let mut account = account;
-    account.baseurl = server.api_base().to_string();
-    store.save_account(&account).unwrap();
+    if let Some(mut account) = account {
+        account.baseurl = server.api_base().to_string();
+        store.save_account(&account).unwrap();
+    }
     let bus = MessageBus::new(32);
     let channel = WeixinChannel::new(
         WeixinConfig {
@@ -502,14 +646,16 @@ async fn start_weixin_channel(
 
 #[tokio::test]
 async fn poll_loop_routes_direct_text_messages() {
-    let server = spawn_weixin_test_server(vec![poll_response(
-        vec![direct_text_item("alice@im.wechat", "hello", "ctx-1")],
+    let server = spawn_weixin_test_server(vec![direct_text_message(
+        "alice@im.wechat",
+        "ctx-1",
         "cursor-2",
         35000,
+        vec![image_item(), text_item("hello"), text_item("ignored")],
     )])
     .await;
     let account = sample_account();
-    let (_temp, bus, store, handle) = start_weixin_channel(&server, account).await;
+    let (_temp, bus, store, handle) = start_weixin_channel(&server, Some(account)).await;
 
     let inbound = tokio::time::timeout(std::time::Duration::from_secs(2), bus.consume_inbound())
         .await
@@ -532,18 +678,16 @@ async fn poll_loop_routes_direct_text_messages() {
 
 #[tokio::test]
 async fn poll_loop_ignores_group_messages() {
-    let server = spawn_weixin_test_server(vec![poll_response(
-        vec![group_text_item(
-            "alice@im.wechat",
-            "group@chat.wechat",
-            "hello",
-        )],
+    let server = spawn_weixin_test_server(vec![group_text_message(
+        "alice@im.wechat",
+        "group@chat.wechat",
+        "ctx-group",
         "cursor-2",
         35000,
     )])
     .await;
     let account = sample_account();
-    let (_temp, bus, _, handle) = start_weixin_channel(&server, account).await;
+    let (_temp, bus, _, handle) = start_weixin_channel(&server, Some(account)).await;
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     handle.abort();
@@ -557,14 +701,11 @@ async fn poll_loop_ignores_group_messages() {
 
 #[tokio::test]
 async fn poll_loop_ignores_non_text_items() {
-    let server = spawn_weixin_test_server(vec![poll_response(
-        vec![non_text_item("alice@im.wechat")],
-        "cursor-2",
-        35000,
-    )])
-    .await;
+    let server =
+        spawn_weixin_test_server(vec![non_text_message("alice@im.wechat", "cursor-2", 35000)])
+            .await;
     let account = sample_account();
-    let (_temp, bus, _, handle) = start_weixin_channel(&server, account).await;
+    let (_temp, bus, _, handle) = start_weixin_channel(&server, Some(account)).await;
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     handle.abort();
@@ -578,13 +719,21 @@ async fn poll_loop_ignores_non_text_items() {
 
 #[tokio::test]
 async fn poll_loop_persists_get_updates_buf_after_poll() {
-    let server = spawn_weixin_test_server(vec![poll_response(vec![], "cursor-2", 35000)]).await;
+    let server = spawn_weixin_test_server(vec![direct_text_message(
+        "alice@im.wechat",
+        "ctx-1",
+        "cursor-2",
+        35000,
+        vec![text_item("hello")],
+    )])
+    .await;
     let account = sample_account();
-    let (_temp, bus, store, handle) = start_weixin_channel(&server, account).await;
+    let (_temp, bus, store, handle) = start_weixin_channel(&server, Some(account)).await;
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound");
     handle.abort();
-    drop(bus);
 
     let account = store.load_account().unwrap().unwrap();
     assert_eq!(account.get_updates_buf, "cursor-2");
@@ -592,9 +741,9 @@ async fn poll_loop_persists_get_updates_buf_after_poll() {
 
 #[tokio::test]
 async fn poll_loop_marks_account_expired_on_errcode_minus_14() {
-    let server = spawn_weixin_test_server(vec![poll_expired_response()]).await;
+    let server = spawn_weixin_strict_test_server(vec![expired_message()]).await;
     let account = sample_account();
-    let (_temp, bus, store, handle) = start_weixin_channel(&server, account).await;
+    let (_temp, bus, store, handle) = start_weixin_channel(&server, Some(account)).await;
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     handle.abort();
@@ -605,10 +754,73 @@ async fn poll_loop_marks_account_expired_on_errcode_minus_14() {
 }
 
 #[tokio::test]
-async fn getupdates_request_includes_required_auth_headers_and_channel_version() {
-    let server = spawn_weixin_test_server(vec![poll_response(vec![], "cursor-2", 35000)]).await;
+async fn poll_loop_rechecks_store_when_account_missing() {
+    let server = spawn_weixin_test_server(vec![direct_text_message(
+        "alice@im.wechat",
+        "ctx-1",
+        "cursor-2",
+        35000,
+        vec![text_item("hello")],
+    )])
+    .await;
+    let (_temp, bus, store, handle) = start_weixin_channel(&server, None).await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let mut account = sample_account();
+    account.baseurl = server.api_base().to_string();
+    store.save_account(&account).unwrap();
+
+    let inbound = tokio::time::timeout(std::time::Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("message");
+    handle.abort();
+
+    assert_eq!(inbound.channel, "weixin");
+    assert_eq!(inbound.content, "hello");
+}
+
+#[tokio::test]
+async fn poll_loop_recovers_after_request_error() {
+    let server = spawn_weixin_flaky_test_server(vec![direct_text_message(
+        "alice@im.wechat",
+        "ctx-1",
+        "cursor-2",
+        35000,
+        vec![text_item("hello")],
+    )])
+    .await;
     let account = sample_account();
-    let (_temp, bus, _, handle) = start_weixin_channel(&server, account).await;
+    let (_temp, bus, _, handle) = start_weixin_channel(&server, Some(account)).await;
+
+    let inbound = tokio::time::timeout(std::time::Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("message");
+    handle.abort();
+
+    assert_eq!(inbound.channel, "weixin");
+    assert_eq!(inbound.content, "hello");
+    let requests = server.take_requests().await;
+    assert!(requests.len() >= 2);
+}
+
+#[tokio::test]
+async fn getupdates_request_includes_required_auth_headers_and_channel_version() {
+    let server = spawn_weixin_test_server(vec![json!({
+        "errcode": 0,
+        "data": {
+            "message_type": 1,
+            "from_user_id": "alice@im.wechat",
+            "context_token": "ctx-1",
+            "item_list": [text_item("hello")],
+            "get_updates_buf": "cursor-2",
+            "longpolling_timeout_ms": 35000,
+        }
+    })])
+    .await;
+    let account = sample_account();
+    let (_temp, bus, _, handle) = start_weixin_channel(&server, Some(account)).await;
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     handle.abort();
@@ -634,8 +846,28 @@ async fn getupdates_request_includes_required_auth_headers_and_channel_version()
 #[tokio::test]
 async fn client_side_timeout_is_treated_as_an_empty_poll() {
     let state = WeixinTestState::with_responses(vec![
-        poll_response(vec![], "cursor-2", 25),
-        poll_response(vec![], "cursor-3", 25),
+        json!({
+            "errcode": 0,
+            "data": {
+                "message_type": 1,
+                "from_user_id": "alice@im.wechat",
+                "context_token": "ctx-1",
+                "item_list": [],
+                "get_updates_buf": "cursor-2",
+                "longpolling_timeout_ms": 25,
+            }
+        }),
+        json!({
+            "errcode": 0,
+            "data": {
+                "message_type": 1,
+                "from_user_id": "alice@im.wechat",
+                "context_token": "ctx-1",
+                "item_list": [],
+                "get_updates_buf": "cursor-3",
+                "longpolling_timeout_ms": 25,
+            }
+        }),
     ]);
     let requests = state.requests.clone();
     let app = Router::new()
@@ -655,7 +887,7 @@ async fn client_side_timeout_is_treated_as_an_empty_poll() {
     };
     let mut account = sample_account();
     account.longpolling_timeout_ms = 25;
-    let (_temp, bus, _, handle) = start_weixin_channel(&server, account).await;
+    let (_temp, bus, _, handle) = start_weixin_channel(&server, Some(account)).await;
 
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     handle.abort();
@@ -674,8 +906,19 @@ async fn client_side_timeout_is_treated_as_an_empty_poll() {
 async fn poll_timeout_follows_longpolling_timeout_ms() {
     let mut account = sample_account();
     account.longpolling_timeout_ms = 1234;
-    let server = spawn_weixin_test_server(vec![poll_response(vec![], "cursor-2", 1234)]).await;
-    let (_temp, bus, _, handle) = start_weixin_channel(&server, account).await;
+    let server = spawn_weixin_test_server(vec![json!({
+        "errcode": 0,
+        "data": {
+            "message_type": 1,
+            "from_user_id": "alice@im.wechat",
+            "context_token": "ctx-1",
+            "item_list": [],
+            "get_updates_buf": "cursor-2",
+            "longpolling_timeout_ms": 1234,
+        }
+    })])
+    .await;
+    let (_temp, bus, _, handle) = start_weixin_channel(&server, Some(account)).await;
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     handle.abort();

@@ -25,6 +25,8 @@ use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::channels::Channel;
 use crate::config::WeixinConfig;
 
+const WEIXIN_IDLE_RETRY_DELAY: Duration = Duration::from_millis(250);
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WeixinAccountState {
     pub bot_token: String,
@@ -299,7 +301,7 @@ impl WeixinChannel {
             Ok(response) => response,
             Err(error) if error.is_timeout() => {
                 debug!("weixin getupdates poll timed out");
-                return Ok(PollOutcome::Empty);
+                return Ok(PollOutcome::Polled);
             }
             Err(error) => return Err(error).context("failed to request weixin getupdates"),
         };
@@ -308,7 +310,7 @@ impl WeixinChannel {
             Ok(response) => response,
             Err(error) if error.is_timeout() => {
                 debug!("weixin getupdates poll timed out after status");
-                return Ok(PollOutcome::Empty);
+                return Ok(PollOutcome::Polled);
             }
             Err(error) => return Err(error).context("weixin getupdates request failed"),
         };
@@ -317,7 +319,7 @@ impl WeixinChannel {
             Ok(payload) => payload,
             Err(error) if error.is_timeout() => {
                 debug!("weixin getupdates response timed out");
-                return Ok(PollOutcome::Empty);
+                return Ok(PollOutcome::Polled);
             }
             Err(error) => return Err(error).context("failed to parse weixin getupdates response"),
         };
@@ -360,31 +362,23 @@ impl WeixinChannel {
             }
         }
 
-        if let Some(items) = root
-            .get("items")
-            .or_else(|| root.get("result"))
-            .and_then(Value::as_array)
-        {
-            for item in items {
-                if let Some(parsed) = parse_weixin_item(item) {
-                    should_persist = true;
-                    if let Some(context_token) = parsed.context_token.as_deref() {
-                        self.store
-                            .save_context_token(&parsed.from_user_id, context_token)?;
-                    }
-                    self.bus
-                        .publish_inbound(InboundMessage {
-                            channel: "weixin".to_string(),
-                            sender_id: parsed.from_user_id.clone(),
-                            chat_id: parsed.from_user_id,
-                            content: parsed.text,
-                            timestamp: Utc::now(),
-                            metadata: Default::default(),
-                            session_key_override: None,
-                        })
-                        .await?;
-                }
+        if let Some(message) = parse_weixin_message(root) {
+            should_persist = true;
+            if let Some(context_token) = message.context_token.as_deref() {
+                self.store
+                    .save_context_token(&message.from_user_id, context_token)?;
             }
+            self.bus
+                .publish_inbound(InboundMessage {
+                    channel: "weixin".to_string(),
+                    sender_id: message.from_user_id.clone(),
+                    chat_id: message.from_user_id,
+                    content: message.text,
+                    timestamp: Utc::now(),
+                    metadata: Default::default(),
+                    session_key_override: None,
+                })
+                .await?;
         }
 
         if should_persist {
@@ -392,7 +386,7 @@ impl WeixinChannel {
             self.store.save_account(account)?;
         }
 
-        Ok(PollOutcome::Empty)
+        Ok(PollOutcome::Polled)
     }
 }
 
@@ -409,18 +403,33 @@ impl Channel for WeixinChannel {
 
         self.running.store(true, Ordering::SeqCst);
         while self.running.load(Ordering::SeqCst) {
-            let mut account = match self.store.load_account()? {
-                Some(account) => account,
-                None => {
-                    warn!("weixin enabled but no account is configured");
-                    break;
+            let account = match self.store.load_account() {
+                Ok(account) => account,
+                Err(error) => {
+                    warn!("failed to load weixin account: {error}");
+                    tokio::time::sleep(WEIXIN_IDLE_RETRY_DELAY).await;
+                    continue;
                 }
             };
-            match self.poll_once(&mut account).await? {
-                PollOutcome::Empty => {}
-                PollOutcome::Expired => {
-                    self.running.store(false, Ordering::SeqCst);
-                    break;
+            let Some(mut account) = account else {
+                tokio::time::sleep(WEIXIN_IDLE_RETRY_DELAY).await;
+                continue;
+            };
+
+            if account.status == "expired" {
+                debug!("weixin account expired; waiting for relogin");
+                tokio::time::sleep(WEIXIN_IDLE_RETRY_DELAY).await;
+                continue;
+            }
+
+            match self.poll_once(&mut account).await {
+                Ok(PollOutcome::Polled) => {}
+                Ok(PollOutcome::Expired) => {
+                    tokio::time::sleep(WEIXIN_IDLE_RETRY_DELAY).await;
+                }
+                Err(error) => {
+                    warn!("weixin polling failed: {error:#}");
+                    tokio::time::sleep(WEIXIN_IDLE_RETRY_DELAY).await;
                 }
             }
         }
@@ -438,7 +447,7 @@ impl Channel for WeixinChannel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ParsedWeixinItem {
+struct ParsedWeixinMessage {
     from_user_id: String,
     text: String,
     context_token: Option<String>,
@@ -446,25 +455,24 @@ struct ParsedWeixinItem {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PollOutcome {
-    Empty,
+    Polled,
     Expired,
 }
 
-fn parse_weixin_item(item: &Value) -> Option<ParsedWeixinItem> {
-    let msg_type = item
-        .get("msg_type")
-        .or_else(|| item.get("msgType"))
-        .or_else(|| item.get("type"))
-        .and_then(Value::as_str)?;
-    if msg_type != "text" {
-        debug!("dropping non-text weixin item: {msg_type}");
+fn parse_weixin_message(root: &Value) -> Option<ParsedWeixinMessage> {
+    let message_type = root
+        .get("message_type")
+        .or_else(|| root.get("messageType"))
+        .and_then(Value::as_i64)?;
+    if message_type != 1 {
+        debug!("dropping weixin message_type {message_type}");
         return None;
     }
-    if item
+    if root
         .get("group_id")
         .and_then(Value::as_str)
         .is_some_and(|group| !group.is_empty())
-        || item
+        || root
             .get("groupId")
             .and_then(Value::as_str)
             .is_some_and(|group| !group.is_empty())
@@ -473,28 +481,51 @@ fn parse_weixin_item(item: &Value) -> Option<ParsedWeixinItem> {
         return None;
     }
 
-    let from_user_id = item
-        .get("from_user_id")
-        .or_else(|| item.get("fromUserId"))
-        .or_else(|| item.pointer("/from/user_id"))
-        .or_else(|| item.pointer("/from/userId"))
-        .and_then(Value::as_str)?;
-    let text = item
-        .get("text")
-        .or_else(|| item.get("content"))
-        .and_then(Value::as_str)?;
-    let context_token = item
+    let context_token = root
         .get("context_token")
-        .or_else(|| item.get("contextToken"))
-        .or_else(|| item.get("context"))
+        .or_else(|| root.get("contextToken"))
         .and_then(Value::as_str)
         .map(ToString::to_string);
 
-    Some(ParsedWeixinItem {
+    let from_user_id = root
+        .get("from_user_id")
+        .or_else(|| root.get("fromUserId"))
+        .or_else(|| root.pointer("/from/user_id"))
+        .or_else(|| root.pointer("/from/userId"))
+        .and_then(Value::as_str)?;
+
+    let item_list = root
+        .get("item_list")
+        .or_else(|| root.get("itemList"))
+        .and_then(Value::as_array)?;
+    let text = item_list.iter().find_map(parse_weixin_text_item)?;
+
+    Some(ParsedWeixinMessage {
         from_user_id: from_user_id.to_string(),
         text: text.to_string(),
         context_token,
     })
+}
+
+fn parse_weixin_text_item(item: &Value) -> Option<&str> {
+    let item_type = item
+        .get("item_type")
+        .or_else(|| item.get("itemType"))
+        .and_then(Value::as_i64)?;
+    if item_type != 1 {
+        return None;
+    }
+
+    if let Some(text) = item.get("text").and_then(Value::as_str) {
+        let text = text.trim();
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
+
+    item.pointer("/text/content")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
 }
 
 #[derive(Debug, Clone)]
