@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 #[cfg(unix)]
@@ -32,7 +33,193 @@ pub struct WeixinLoginSession {
     pub context_token: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeixinQrLoginResponse {
+    pub qrcode: String,
+    pub qrcode_img_content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeixinLoginStatus {
+    pub status: String,
+}
+
+#[derive(Debug, Clone)]
+struct WeixinLoginSessionState {
+    qrcode: String,
+    _qrcode_img_content: String,
+    status: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct WeixinClient {
+    client: reqwest::Client,
+    api_base: String,
+}
+
+impl WeixinClient {
+    pub fn new(api_base: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            api_base: api_base.into().trim_end_matches('/').to_string(),
+        }
+    }
+
+    pub fn api_base(&self) -> &str {
+        &self.api_base
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}/{}", self.api_base, path.trim_start_matches('/'))
+    }
+
+    fn get(&self, path: &str) -> reqwest::RequestBuilder {
+        self.client.get(self.url(path))
+    }
+
+    fn get_with_x_wechat_uin(&self, path: &str) -> reqwest::RequestBuilder {
+        self.get(path)
+            .header("X-WECHAT-UIN", Self::x_wechat_uin())
+    }
+
+    pub async fn fetch_qr_code(&self) -> Result<WeixinQrLoginResponse> {
+        let payload = self
+            .get_with_x_wechat_uin("/ilink/bot/get_bot_qrcode")
+            .query(&[("bot_type", "3")])
+            .send()
+            .await
+            .context("failed to request weixin qr code")?
+            .error_for_status()
+            .context("weixin qr code request failed")?
+            .json::<Value>()
+            .await
+            .context("failed to parse weixin qr code response")?;
+        parse_qr_code_response(&payload)
+    }
+
+    async fn poll_qr_status(&self, qrcode: &str) -> Result<WeixinLoginStatusPayload> {
+        let payload = self
+            .get_with_x_wechat_uin("/ilink/bot/get_qrcode_status")
+            .query(&[("qrcode", qrcode)])
+            .send()
+            .await
+            .context("failed to request weixin qr status")?
+            .error_for_status()
+            .context("weixin qr status request failed")?
+            .json::<Value>()
+            .await
+            .context("failed to parse weixin qr status response")?;
+        parse_qr_status_response(&payload)
+    }
+
+    pub fn x_wechat_uin() -> String {
+        let uuid = Uuid::new_v4();
+        let random = uuid.as_bytes();
+        let seed = u32::from_le_bytes([random[0], random[1], random[2], random[3]]);
+        base64_encode(seed.to_string().as_bytes())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WeixinLoginStatusPayload {
+    status: String,
+    bot_token: Option<String>,
+    ilink_bot_id: Option<String>,
+    baseurl: Option<String>,
+    ilink_user_id: Option<String>,
+    get_updates_buf: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WeixinLoginManager {
+    client: WeixinClient,
+    store: WeixinAccountStore,
+    _channel_version: String,
+    session: Arc<Mutex<Option<WeixinLoginSessionState>>>,
+}
+
+impl WeixinLoginManager {
+    pub fn new(
+        api_base: impl Into<String>,
+        store: WeixinAccountStore,
+        channel_version: impl Into<String>,
+    ) -> Self {
+        Self {
+            client: WeixinClient::new(api_base),
+            store,
+            _channel_version: channel_version.into(),
+            session: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub async fn start_login(&self) -> Result<WeixinQrLoginResponse> {
+        let login = self.client.fetch_qr_code().await?;
+        *self
+            .session
+            .lock()
+            .map_err(|_| anyhow!("weixin login session lock poisoned"))? = Some(
+            WeixinLoginSessionState {
+                qrcode: login.qrcode.clone(),
+                _qrcode_img_content: login.qrcode_img_content.clone(),
+                status: "wait".to_string(),
+            },
+        );
+        Ok(login)
+    }
+
+    pub async fn poll_login_status(&self) -> Result<WeixinLoginStatus> {
+        let qrcode = {
+            let session = self
+                .session
+                .lock()
+                .map_err(|_| anyhow!("weixin login session lock poisoned"))?;
+            session
+                .as_ref()
+                .context("weixin login has not been started")?
+                .qrcode
+                .clone()
+        };
+
+        let payload = self.client.poll_qr_status(&qrcode).await?;
+        {
+            let mut session = self
+                .session
+                .lock()
+                .map_err(|_| anyhow!("weixin login session lock poisoned"))?;
+            if let Some(session) = session.as_mut() {
+                session.status = payload.status.clone();
+            }
+        }
+
+        if payload.status == "confirmed" {
+            let account = WeixinAccountState {
+                bot_token: payload
+                    .bot_token
+                    .clone()
+                    .context("weixin confirmed login missing bot_token")?,
+                ilink_bot_id: payload
+                    .ilink_bot_id
+                    .clone()
+                    .context("weixin confirmed login missing ilink_bot_id")?,
+                baseurl: payload
+                    .baseurl
+                    .clone()
+                    .unwrap_or_else(|| self.client.api_base().to_string()),
+                ilink_user_id: payload.ilink_user_id.clone(),
+                get_updates_buf: payload.get_updates_buf.clone().unwrap_or_default(),
+                status: "confirmed".to_string(),
+                updated_at: Utc::now(),
+            };
+            self.store.save_account(&account)?;
+        }
+
+        Ok(WeixinLoginStatus {
+            status: payload.status,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct WeixinAccountStore {
     dir: PathBuf,
     workspace_lock: Arc<Mutex<()>>,
@@ -114,6 +301,68 @@ impl WeixinAccountStore {
         remove_if_exists(&self.account_path())?;
         remove_if_exists(&self.context_tokens_path())
     }
+}
+
+fn parse_qr_code_response(payload: &Value) -> Result<WeixinQrLoginResponse> {
+    let root = payload.get("data").unwrap_or(payload);
+    Ok(WeixinQrLoginResponse {
+        qrcode: json_string(root, &["qrcode", "qrCode"])
+            .context("weixin qr response missing qrcode")?,
+        qrcode_img_content: json_string(root, &["qrcode_img_content", "qrcodeImgContent"])
+            .context("weixin qr response missing qrcode_img_content")?,
+    })
+}
+
+fn parse_qr_status_response(payload: &Value) -> Result<WeixinLoginStatusPayload> {
+    let root = payload.get("data").unwrap_or(payload);
+    Ok(WeixinLoginStatusPayload {
+        status: json_string(root, &["status"])
+            .context("weixin qr status response missing status")?,
+        bot_token: json_string(root, &["bot_token", "botToken"]),
+        ilink_bot_id: json_string(root, &["ilink_bot_id", "ilinkBotId"]),
+        baseurl: json_string(root, &["baseurl", "baseUrl"]),
+        ilink_user_id: json_string(root, &["ilink_user_id", "ilinkUserId"]),
+        get_updates_buf: json_string(root, &["get_updates_buf", "getUpdatesBuf"]),
+    })
+}
+
+fn json_string(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        value
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+    })
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let mut chunks = bytes.chunks_exact(3);
+    for chunk in &mut chunks {
+        let triple = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | chunk[2] as u32;
+        out.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 6) & 0x3f) as usize] as char);
+        out.push(TABLE[(triple & 0x3f) as usize] as char);
+    }
+    let rem = chunks.remainder();
+    if !rem.is_empty() {
+        let mut triple = (rem[0] as u32) << 16;
+        if rem.len() == 2 {
+            triple |= (rem[1] as u32) << 8;
+        }
+        out.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
+        if rem.len() == 2 {
+            out.push(TABLE[((triple >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        out.push('=');
+    }
+    out
 }
 
 fn workspace_lock(dir: &Path) -> Result<Arc<Mutex<()>>> {

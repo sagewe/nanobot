@@ -1,9 +1,19 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use nanobot_rs::channels::weixin::{WeixinAccountState, WeixinAccountStore};
+use axum::extract::Query;
+use axum::routing::get;
+use axum::{Json, Router};
+use nanobot_rs::channels::weixin::{
+    WeixinAccountState, WeixinAccountStore, WeixinLoginManager,
+};
 use tempfile::tempdir;
+use tokio::net::TcpListener;
+use tokio::sync::Mutex;
+use serde_json::{json, Value};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -18,6 +28,98 @@ fn sample_account() -> WeixinAccountState {
         status: "active".to_string(),
         updated_at: Utc.with_ymd_and_hms(2026, 3, 22, 10, 11, 12).unwrap(),
     }
+}
+
+#[derive(Clone, Default)]
+struct WeixinTestState {
+    responses: Arc<Mutex<VecDeque<Value>>>,
+}
+
+impl WeixinTestState {
+    fn with_responses(responses: Vec<Value>) -> Self {
+        Self {
+            responses: Arc::new(Mutex::new(responses.into())),
+        }
+    }
+}
+
+async fn weixin_test_response(
+    Query(_params): Query<std::collections::HashMap<String, String>>,
+    axum::extract::State(state): axum::extract::State<WeixinTestState>,
+) -> Json<Value> {
+    let response = state
+        .responses
+        .lock()
+        .await
+        .pop_front()
+        .expect("test server ran out of responses");
+    Json(response)
+}
+
+async fn spawn_weixin_test_server(responses: Vec<Value>) -> WeixinTestServer {
+    let state = WeixinTestState::with_responses(responses);
+    let app = Router::new()
+        .route("/ilink/bot/get_bot_qrcode", get(weixin_test_response))
+        .route("/ilink/bot/get_qrcode_status", get(weixin_test_response))
+        .with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr: SocketAddr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    WeixinTestServer {
+        api_base: format!("http://{addr}"),
+    }
+}
+
+struct WeixinTestServer {
+    api_base: String,
+}
+
+impl WeixinTestServer {
+    fn api_base(&self) -> &str {
+        &self.api_base
+    }
+}
+
+fn qr_response(qrcode: &str, qrcode_img_content: &str) -> Value {
+    json!({
+        "qrcode": qrcode,
+        "qrcode_img_content": qrcode_img_content,
+    })
+}
+
+fn qr_status_wait() -> Value {
+    json!({
+        "status": "wait",
+    })
+}
+
+fn qr_status_scanned() -> Value {
+    json!({
+        "status": "scaned",
+    })
+}
+
+fn qr_status_expired() -> Value {
+    json!({
+        "status": "expired",
+    })
+}
+
+fn qr_status_confirmed(
+    bot_token: &str,
+    ilink_bot_id: &str,
+    baseurl: &str,
+    ilink_user_id: &str,
+) -> Value {
+    json!({
+        "status": "confirmed",
+        "bot_token": bot_token,
+        "ilink_bot_id": ilink_bot_id,
+        "baseurl": baseurl,
+        "ilink_user_id": ilink_user_id,
+    })
 }
 
 #[test]
@@ -39,6 +141,103 @@ fn weixin_account_store_round_trips_account_and_context_tokens() {
     assert_eq!(account.status, "active");
     assert_eq!(account.updated_at, sample_account().updated_at);
     assert_eq!(token.as_deref(), Some("ctx-1"));
+}
+
+#[tokio::test]
+async fn start_login_parses_qr_payload() {
+    let server = spawn_weixin_test_server(vec![qr_response(
+        "qr-token",
+        "data:image/png;base64,abc",
+    )])
+    .await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let manager = WeixinLoginManager::new(server.api_base(), store, "1.0.2");
+
+    let login = manager.start_login().await.unwrap();
+
+    assert_eq!(login.qrcode, "qr-token");
+    assert_eq!(login.qrcode_img_content, "data:image/png;base64,abc");
+}
+
+#[tokio::test]
+async fn poll_login_status_handles_wait() {
+    let server = spawn_weixin_test_server(vec![
+        qr_response("qr-token", "data:image/png;base64,abc"),
+        qr_status_wait(),
+    ])
+    .await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let manager = WeixinLoginManager::new(server.api_base(), store, "1.0.2");
+
+    manager.start_login().await.unwrap();
+    let status = manager.poll_login_status().await.unwrap();
+
+    assert_eq!(status.status, "wait");
+}
+
+#[tokio::test]
+async fn poll_login_status_handles_scaned() {
+    let server = spawn_weixin_test_server(vec![
+        qr_response("qr-token", "data:image/png;base64,abc"),
+        qr_status_scanned(),
+    ])
+    .await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let manager = WeixinLoginManager::new(server.api_base(), store, "1.0.2");
+
+    manager.start_login().await.unwrap();
+    let status = manager.poll_login_status().await.unwrap();
+
+    assert_eq!(status.status, "scaned");
+}
+
+#[tokio::test]
+async fn poll_login_status_handles_expired() {
+    let server = spawn_weixin_test_server(vec![
+        qr_response("qr-token", "data:image/png;base64,abc"),
+        qr_status_expired(),
+    ])
+    .await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let manager = WeixinLoginManager::new(server.api_base(), store, "1.0.2");
+
+    manager.start_login().await.unwrap();
+    let status = manager.poll_login_status().await.unwrap();
+
+    assert_eq!(status.status, "expired");
+}
+
+#[tokio::test]
+async fn confirmed_login_persists_account_state() {
+    let temp = tempdir().unwrap();
+    let server = spawn_weixin_test_server(vec![
+        qr_response("qr-token", "data:image/png;base64,abc"),
+        qr_status_confirmed(
+            "bot-token",
+            "bot@im.bot",
+            "https://alt.example",
+            "user@im.wechat",
+        ),
+    ])
+    .await;
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let manager = WeixinLoginManager::new(server.api_base(), store.clone(), "1.0.2");
+
+    manager.start_login().await.unwrap();
+    let status = manager.poll_login_status().await.unwrap();
+
+    assert_eq!(status.status, "confirmed");
+    let account = store.load_account().unwrap().unwrap();
+    assert_eq!(account.bot_token, "bot-token");
+    assert_eq!(account.ilink_bot_id, "bot@im.bot");
+    assert_eq!(account.baseurl, "https://alt.example");
+    assert_eq!(account.ilink_user_id.as_deref(), Some("user@im.wechat"));
+    assert_eq!(account.get_updates_buf, "");
+    assert_eq!(account.status, "confirmed");
 }
 
 #[test]
