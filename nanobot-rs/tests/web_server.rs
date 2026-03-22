@@ -85,6 +85,33 @@ fn test_state_with_reply(reply: &str) -> AppState {
 }
 
 #[derive(Clone)]
+struct ErrorChatService;
+
+#[async_trait]
+impl ChatService for ErrorChatService {
+    async fn chat(
+        &self,
+        _message: &str,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebChatReply> {
+        anyhow::bail!("provider exploded")
+    }
+
+    async fn duplicate_session(
+        &self,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebSessionDetail> {
+        anyhow::bail!("unused")
+    }
+}
+
+fn test_state_with_error() -> AppState {
+    AppState::new(Arc::new(ErrorChatService))
+}
+
+#[derive(Clone)]
 struct MockProvider {
     model: String,
     responses: Arc<Mutex<VecDeque<LlmResponse>>>,
@@ -270,6 +297,30 @@ async fn chat_endpoint_rejects_blank_messages() {
         .as_str()
         .unwrap_or_default()
         .contains("message must not be empty"));
+}
+
+#[tokio::test]
+async fn chat_endpoint_returns_internal_error_for_web_session_service_failures() {
+    let app = web::build_router(test_state_with_error());
+    let addr = spawn_test_server(app).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/api/chat"))
+        .json(&serde_json::json!({
+            "message": "hi",
+            "sessionId": "browser-session-error"
+        }))
+        .send()
+        .await
+        .expect("send chat request");
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("chat error payload");
+
+    assert_eq!(status, reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(payload["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("provider exploded"));
 }
 
 #[tokio::test]

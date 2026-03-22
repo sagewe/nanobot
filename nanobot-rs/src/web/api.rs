@@ -107,11 +107,16 @@ pub async fn chat(
             ));
         }
     };
+    if channel != "web" {
+        return Err(ApiError::bad_request(
+            "session is read-only; duplicate it into web before sending",
+        ));
+    }
     let chat = state
         .chat
         .chat(message, &channel, &session_id)
         .await
-        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        .map_err(ApiError::internal)?;
     let reply_html = render_web_html(&chat.reply);
     Ok(Json(ChatResponse {
         reply: chat.reply,
