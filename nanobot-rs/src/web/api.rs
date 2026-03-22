@@ -9,6 +9,16 @@ use super::{
     AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary, WebWeixinAccount,
     WebWeixinLoginStatus, WeixinLoginStartResponse, WeixinWorkflowError, WeixinWorkflowErrorKind,
 };
+
+#[derive(Debug, Serialize)]
+pub struct ProfileListResponse {
+    pub profiles: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetProfileRequest {
+    pub profile: String,
+}
 use crate::presentation::render_web_html;
 
 #[derive(Debug, Deserialize)]
@@ -128,6 +138,32 @@ pub async fn chat(
         session_id,
         active_profile: chat.active_profile,
     }))
+}
+
+pub async fn list_profiles(
+    State(state): State<AppState>,
+) -> Result<Json<ProfileListResponse>, ApiError> {
+    let profiles = state
+        .chat
+        .list_profiles()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(ProfileListResponse { profiles }))
+}
+
+pub async fn set_session_profile(
+    Path((channel, session_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Json(request): Json<SetProfileRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let channel = validate_channel(&channel)?.to_string();
+    let session_id = validate_session_id(&session_id)?.to_string();
+    state
+        .chat
+        .set_session_profile(&channel, &session_id, &request.profile)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub async fn duplicate_session(

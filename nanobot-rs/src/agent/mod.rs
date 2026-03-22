@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -709,6 +709,24 @@ impl AgentLoop {
 
     pub fn has_profile(&self, key: &str) -> bool {
         self.profiles.contains_key(key)
+    }
+
+    pub fn list_profiles(&self) -> Vec<String> {
+        let mut profiles = self.profiles.keys().cloned().collect::<Vec<_>>();
+        profiles.sort();
+        profiles
+    }
+
+    pub fn set_session_profile(&self, session_key: &str, profile: &str) -> Result<()> {
+        if !self.profiles.contains_key(profile) {
+            bail!("unknown profile '{profile}'");
+        }
+        let mut session = self
+            .sessions
+            .get_or_create_with_default_profile(session_key, &self.default_profile)?;
+        session.active_profile = Some(profile.to_string());
+        self.sessions.save(&session)?;
+        Ok(())
     }
 
     pub fn current_profile_for_session(&self, session_key: &str) -> Result<String> {

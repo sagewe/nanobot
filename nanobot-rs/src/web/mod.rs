@@ -74,6 +74,19 @@ pub trait ChatService: Send + Sync {
     async fn logout_weixin(&self) -> Result<WebWeixinAccount> {
         bail!("weixin logout is not implemented for this service")
     }
+
+    async fn list_profiles(&self) -> Result<Vec<String>> {
+        bail!("profile listing is not implemented for this service")
+    }
+
+    async fn set_session_profile(
+        &self,
+        _channel: &str,
+        _session_id: &str,
+        _profile: &str,
+    ) -> Result<()> {
+        bail!("profile setting is not implemented for this service")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -288,6 +301,11 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/sessions/duplicate", post(api::duplicate_session))
         .route("/api/sessions/{channel}/{id}", get(api::get_session))
+        .route(
+            "/api/sessions/{channel}/{id}/profile",
+            post(api::set_session_profile),
+        )
+        .route("/api/profiles", get(api::list_profiles))
         .route("/api/weixin/account", get(api::get_weixin_account))
         .route("/api/weixin/login/start", post(api::start_weixin_login))
         .route("/api/weixin/login/status", get(api::poll_weixin_login))
@@ -535,6 +553,20 @@ impl ChatService for AgentChatService {
 
     async fn logout_weixin(&self) -> Result<WebWeixinAccount> {
         self.weixin.account_after_logout().await
+    }
+
+    async fn list_profiles(&self) -> Result<Vec<String>> {
+        Ok(self.agent.list_profiles())
+    }
+
+    async fn set_session_profile(
+        &self,
+        channel: &str,
+        session_id: &str,
+        profile: &str,
+    ) -> Result<()> {
+        self.agent
+            .set_session_profile(&session_key(channel, session_id), profile)
     }
 }
 

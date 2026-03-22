@@ -183,6 +183,25 @@ pub fn render_index_html() -> String {
         outline-offset: 2px;
       }
 
+      #profile-select {
+        flex-shrink: 0;
+        border: 1px solid var(--line);
+        border-radius: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.84rem;
+        color: var(--ink);
+        background: var(--input-bg);
+        cursor: pointer;
+        appearance: auto;
+        max-width: 14rem;
+      }
+
+      #profile-select:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
       .tab-bar {
         display: flex;
         flex-direction: column;
@@ -882,7 +901,7 @@ pub fn render_index_html() -> String {
         <section class="conversation-pane">
           <div class="session-header">
             <select id="session-select" aria-label="Select session"></select>
-            <strong id="active-profile">default</strong>
+            <select id="profile-select" aria-label="Select model"></select>
           </div>
           <section id="transcript" aria-live="polite"></section>
           <div id="status" role="status"></div>
@@ -914,7 +933,7 @@ pub fn render_index_html() -> String {
       const newChatButton = document.getElementById("new-chat-button");
       const duplicateButton = document.getElementById("duplicate-session-button");
       const statusNode = document.getElementById("status");
-      const currentProfileNode = document.getElementById("active-profile");
+      const profileSelect = document.getElementById("profile-select");
       const weixinAccountPanel = document.getElementById("weixin-account-panel");
       const weixinStatusLabel = document.getElementById("weixin-status-label");
       const weixinUserLabel = document.getElementById("weixin-user-label");
@@ -1092,8 +1111,38 @@ pub fn render_index_html() -> String {
 
 
       function setCurrentProfile(profile) {
-        currentProfileNode.textContent = profile || "default";
+        if (profile && profileSelect.querySelector(`option[value="${CSS.escape(profile)}"]`)) {
+          profileSelect.value = profile;
+        }
       }
+
+      async function loadProfiles() {
+        try {
+          const response = await fetch("/api/profiles");
+          const payload = await response.json();
+          if (!response.ok) return;
+          const profiles = payload.profiles || [];
+          profileSelect.innerHTML = "";
+          for (const p of profiles) {
+            const opt = document.createElement("option");
+            opt.value = p;
+            opt.textContent = p;
+            profileSelect.appendChild(opt);
+          }
+        } catch (_) {}
+      }
+
+      profileSelect.addEventListener("change", async () => {
+        const profile = profileSelect.value;
+        if (!profile || !currentChannel || !currentSessionId) return;
+        try {
+          await fetch(`/api/sessions/${currentChannel}/${currentSessionId}/profile`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ profile }),
+          });
+        } catch (_) {}
+      });
 
       function setStatus(message, variant = "idle") {
         statusNode.textContent = message;
@@ -1533,7 +1582,6 @@ pub fn render_index_html() -> String {
       });
 
       renderTranscript([]);
-      setCurrentProfile("");
       setComposerAccess(false, false);
 
       duplicateButton.addEventListener("click", async () => {
@@ -1648,7 +1696,7 @@ pub fn render_index_html() -> String {
         }
       });
 
-      Promise.all([bootstrapSessions(), loadWeixinAccount()]).catch((error) => {
+      Promise.all([bootstrapSessions(), loadWeixinAccount(), loadProfiles()]).catch((error) => {
         clearWeixinPollTimer();
         setStatus(error?.message || "Failed to load sessions", "error");
       });
