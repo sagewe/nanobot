@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
@@ -61,6 +62,7 @@ struct WeixinRequestRecord {
     authorization_type: String,
     authorization: String,
     body: Value,
+    observed_at: Instant,
 }
 
 async fn pop_weixin_response(state: &WeixinTestState) -> Json<Value> {
@@ -116,6 +118,7 @@ async fn record_weixin_request(
             .unwrap_or_default()
             .to_string(),
         body,
+        observed_at: Instant::now(),
     });
 }
 
@@ -837,7 +840,19 @@ async fn poll_loop_retries_on_unexpected_errcode() {
     assert_eq!(inbound.channel, "weixin");
     assert_eq!(inbound.content, "hello");
     let requests = server.take_requests().await;
-    assert!(requests.len() >= 2);
+    let poll_requests: Vec<_> = requests
+        .iter()
+        .filter(|request| request.path == "/ilink/bot/getupdates")
+        .collect();
+    assert!(poll_requests.len() >= 2);
+    let gap = poll_requests[1]
+        .observed_at
+        .duration_since(poll_requests[0].observed_at);
+    assert!(
+        gap >= std::time::Duration::from_millis(150),
+        "expected retry gap after errcode failure, got {:?}",
+        gap
+    );
 }
 
 #[tokio::test]
