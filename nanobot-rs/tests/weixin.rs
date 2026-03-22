@@ -693,7 +693,11 @@ async fn outbound_send_includes_cached_context_token() {
     );
 
     channel
-        .send(sample_outbound("weixin", "user@im.wechat", "hello"))
+        .send(sample_outbound(
+            "weixin",
+            "user@im.wechat",
+            "**bold** `code` [link](https://example.com)\n# heading\n- item",
+        ))
         .await
         .unwrap();
 
@@ -719,7 +723,7 @@ async fn outbound_send_includes_cached_context_token() {
             .body
             .pointer("/msg/item_list/0/text_item/text")
             .and_then(Value::as_str),
-        Some("hello")
+        Some("bold code link (https://example.com) heading item")
     );
     assert_eq!(
         requests[0]

@@ -11,6 +11,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, warn};
@@ -490,8 +491,7 @@ impl Channel for WeixinChannel {
     }
 
     async fn send(&self, msg: OutboundMessage) -> Result<()> {
-        if !should_deliver_to_channel("weixin", &msg.metadata) || is_runtime_outbound(&msg.metadata)
-        {
+        if !should_deliver_to_channel("weixin", &msg.metadata) {
             return Ok(());
         }
 
@@ -550,18 +550,88 @@ struct WeixinSendBaseInfo {
 }
 
 fn flatten_weixin_text(content: &str) -> String {
-    content.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut parts = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let line = strip_weixin_block_prefix(line);
+        let line = replace_weixin_links(line);
+        let line = replace_weixin_inline_markers(&line);
+        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !line.is_empty() {
+            parts.push(line);
+        }
+    }
+    parts.join(" ")
 }
 
-fn is_runtime_outbound(metadata: &std::collections::HashMap<String, Value>) -> bool {
-    metadata
-        .get("_progress")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        || metadata
-            .get("_tool_hint")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
+fn strip_weixin_block_prefix(line: &str) -> &str {
+    let line = line.trim_start();
+    let line = line.trim_start_matches('#').trim_start();
+    if let Some(rest) = line.strip_prefix("- ") {
+        return rest;
+    }
+    if let Some(rest) = line.strip_prefix("* ") {
+        return rest;
+    }
+    if let Some(rest) = line.strip_prefix("+ ") {
+        return rest;
+    }
+    if let Some(rest) = strip_weixin_numbered_prefix(line) {
+        return rest;
+    }
+    line
+}
+
+fn strip_weixin_numbered_prefix(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() && bytes[index].is_ascii_digit() {
+        index += 1;
+    }
+    if index == 0 || index + 1 >= bytes.len() {
+        return None;
+    }
+    let separator = bytes[index];
+    if (separator == b'.' || separator == b')') && bytes[index + 1] == b' ' {
+        Some(line[index + 2..].trim_start())
+    } else {
+        None
+    }
+}
+
+fn replace_weixin_links(line: &str) -> String {
+    static LINK_RE: OnceLock<Regex> = OnceLock::new();
+    let link_re = LINK_RE
+        .get_or_init(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").expect("valid weixin link regex"));
+    link_re.replace_all(line, "$1 ($2)").to_string()
+}
+
+fn replace_weixin_inline_markers(line: &str) -> String {
+    static CODE_RE: OnceLock<Regex> = OnceLock::new();
+    static STRONG_RE: OnceLock<Regex> = OnceLock::new();
+    static EMPHASIS_STAR_RE: OnceLock<Regex> = OnceLock::new();
+    static EMPHASIS_UNDERSCORE_RE: OnceLock<Regex> = OnceLock::new();
+    static STRIKE_RE: OnceLock<Regex> = OnceLock::new();
+
+    let code_re = CODE_RE.get_or_init(|| Regex::new(r"`([^`]+)`").expect("valid code regex"));
+    let strong_re =
+        STRONG_RE.get_or_init(|| Regex::new(r"\*\*([^*]+)\*\*").expect("valid strong regex"));
+    let emphasis_star_re =
+        EMPHASIS_STAR_RE.get_or_init(|| Regex::new(r"\*([^*]+)\*").expect("valid emphasis regex"));
+    let emphasis_underscore_re = EMPHASIS_UNDERSCORE_RE
+        .get_or_init(|| Regex::new(r"_([^_]+)_").expect("valid emphasis regex"));
+    let strike_re =
+        STRIKE_RE.get_or_init(|| Regex::new(r"~~([^~]+)~~").expect("valid strike regex"));
+
+    let line = code_re.replace_all(line, "$1").to_string();
+    let line = strong_re.replace_all(&line, "$1").to_string();
+    let line = emphasis_star_re.replace_all(&line, "$1").to_string();
+    let line = emphasis_underscore_re.replace_all(&line, "$1").to_string();
+    strike_re.replace_all(&line, "$1").to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

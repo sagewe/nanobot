@@ -4,7 +4,7 @@ use nanobot_rs::presentation::{
     render_telegram_html, render_web_html, render_wecom_markdown, should_deliver_to_channel,
     split_telegram_html_chunks,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn progress_metadata() -> HashMap<String, Value> {
     HashMap::from([("_progress".to_string(), json!(true))])
@@ -19,6 +19,8 @@ fn runtime_messages_are_hidden_from_external_channels() {
     assert!(!should_deliver_to_channel("telegram", &progress_metadata()));
     assert!(!should_deliver_to_channel("wecom", &tool_hint_metadata()));
     assert!(!should_deliver_to_channel("web", &progress_metadata()));
+    assert!(!should_deliver_to_channel("weixin", &progress_metadata()));
+    assert!(!should_deliver_to_channel("weixin", &tool_hint_metadata()));
 }
 
 #[test]
