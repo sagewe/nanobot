@@ -5,6 +5,9 @@ use chrono::{TimeZone, Utc};
 use nanobot_rs::channels::weixin::{WeixinAccountState, WeixinAccountStore};
 use tempfile::tempdir;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 fn sample_account() -> WeixinAccountState {
     WeixinAccountState {
         bot_token: "bot-token".to_string(),
@@ -41,10 +44,13 @@ fn weixin_account_store_round_trips_account_and_context_tokens() {
 #[test]
 fn weixin_account_store_preserves_multiple_context_tokens_on_disk() {
     let temp = tempdir().unwrap();
-    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let store_a = WeixinAccountStore::new(temp.path()).unwrap();
+    let store_b = WeixinAccountStore::new(temp.path()).unwrap();
 
-    store.save_context_token("user@im.wechat", "ctx-1").unwrap();
-    store
+    store_a
+        .save_context_token("user@im.wechat", "ctx-1")
+        .unwrap();
+    store_b
         .save_context_token("friend@im.wechat", "ctx-2")
         .unwrap();
 
@@ -69,14 +75,14 @@ fn weixin_account_store_preserves_multiple_context_tokens_on_disk() {
     );
 
     assert_eq!(
-        store
+        store_a
             .load_context_token("user@im.wechat")
             .unwrap()
             .as_deref(),
         Some("ctx-1")
     );
     assert_eq!(
-        store
+        store_b
             .load_context_token("friend@im.wechat")
             .unwrap()
             .as_deref(),
@@ -118,7 +124,13 @@ fn weixin_account_store_writes_expected_account_json_shape() {
 
     store.save_account(&account).unwrap();
 
-    let raw = fs::read_to_string(store.account_path()).unwrap();
+    let raw = fs::read_to_string(
+        temp.path()
+            .join("channels")
+            .join("weixin")
+            .join("account.json"),
+    )
+    .unwrap();
     let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
     assert_eq!(json["bot_token"], "bot-token");
@@ -144,4 +156,38 @@ fn weixin_account_store_writes_expected_account_json_shape() {
             "updated_at".to_string(),
         ])
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn weixin_account_store_writes_owner_only_files_on_unix() {
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+
+    store.save_account(&sample_account()).unwrap();
+    store.save_context_token("user@im.wechat", "ctx-1").unwrap();
+
+    let account_mode = fs::metadata(
+        temp.path()
+            .join("channels")
+            .join("weixin")
+            .join("account.json"),
+    )
+    .unwrap()
+    .permissions()
+    .mode()
+        & 0o777;
+    let context_mode = fs::metadata(
+        temp.path()
+            .join("channels")
+            .join("weixin")
+            .join("context_tokens.json"),
+    )
+    .unwrap()
+    .permissions()
+    .mode()
+        & 0o777;
+
+    assert_eq!(account_mode, 0o600);
+    assert_eq!(context_mode, 0o600);
 }

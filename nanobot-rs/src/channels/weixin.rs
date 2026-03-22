@@ -2,12 +2,17 @@ use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WeixinAccountState {
@@ -30,7 +35,7 @@ pub struct WeixinLoginSession {
 #[derive(Debug)]
 pub struct WeixinAccountStore {
     dir: PathBuf,
-    context_tokens_lock: Mutex<()>,
+    workspace_lock: Arc<Mutex<()>>,
 }
 
 impl WeixinAccountStore {
@@ -38,13 +43,14 @@ impl WeixinAccountStore {
         let dir = workspace.join("channels").join("weixin");
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("failed to create {}", dir.display()))?;
+        let workspace_lock = workspace_lock(&dir)?;
         Ok(Self {
             dir,
-            context_tokens_lock: Mutex::new(()),
+            workspace_lock,
         })
     }
 
-    pub fn account_path(&self) -> PathBuf {
+    fn account_path(&self) -> PathBuf {
         self.dir.join("account.json")
     }
 
@@ -62,18 +68,22 @@ impl WeixinAccountStore {
     }
 
     pub fn save_account(&self, account: &WeixinAccountState) -> Result<()> {
+        let _guard = self
+            .workspace_lock
+            .lock()
+            .map_err(|_| anyhow!("weixin workspace lock poisoned"))?;
         write_json(&self.account_path(), account)
     }
 
     pub fn clear_account(&self) -> Result<()> {
+        let _guard = self
+            .workspace_lock
+            .lock()
+            .map_err(|_| anyhow!("weixin workspace lock poisoned"))?;
         remove_if_exists(&self.account_path())
     }
 
     pub fn load_context_token(&self, peer_user_id: &str) -> Result<Option<String>> {
-        let _guard = self
-            .context_tokens_lock
-            .lock()
-            .map_err(|_| anyhow!("weixin context token lock poisoned"))?;
         let path = self.context_tokens_path();
         if !path.exists() {
             return Ok(None);
@@ -84,9 +94,9 @@ impl WeixinAccountStore {
 
     pub fn save_context_token(&self, peer_user_id: &str, token: &str) -> Result<()> {
         let _guard = self
-            .context_tokens_lock
+            .workspace_lock
             .lock()
-            .map_err(|_| anyhow!("weixin context token lock poisoned"))?;
+            .map_err(|_| anyhow!("weixin workspace lock poisoned"))?;
         let mut tokens = if self.context_tokens_path().exists() {
             read_json::<BTreeMap<String, String>>(&self.context_tokens_path())?
         } else {
@@ -98,12 +108,26 @@ impl WeixinAccountStore {
 
     pub fn clear_all(&self) -> Result<()> {
         let _guard = self
-            .context_tokens_lock
+            .workspace_lock
             .lock()
-            .map_err(|_| anyhow!("weixin context token lock poisoned"))?;
-        self.clear_account()?;
+            .map_err(|_| anyhow!("weixin workspace lock poisoned"))?;
+        remove_if_exists(&self.account_path())?;
         remove_if_exists(&self.context_tokens_path())
     }
+}
+
+fn workspace_lock(dir: &Path) -> Result<Arc<Mutex<()>>> {
+    static WORKSPACE_LOCKS: OnceLock<Mutex<std::collections::HashMap<PathBuf, Arc<Mutex<()>>>>> =
+        OnceLock::new();
+
+    let mut locks = WORKSPACE_LOCKS
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow!("weixin workspace lock registry poisoned"))?;
+    Ok(locks
+        .entry(dir.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone())
 }
 
 fn read_json<T>(path: &Path) -> Result<T>
@@ -134,9 +158,13 @@ where
         Uuid::new_v4()
     ));
     {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            options.mode(0o600);
+        }
+        let mut file = options
             .open(&temp_path)
             .with_context(|| format!("failed to create {}", temp_path.display()))?;
         file.write_all(raw.as_bytes())
@@ -152,6 +180,9 @@ where
             temp_path.display()
         )
     })?;
+    #[cfg(unix)]
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("failed to set permissions on {}", path.display()))?;
     Ok(())
 }
 
