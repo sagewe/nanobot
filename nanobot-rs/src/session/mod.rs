@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMessage {
@@ -45,6 +46,7 @@ impl SessionMessage {
 pub struct Session {
     pub key: String,
     pub active_profile: Option<String>,
+    pub source_session_key: Option<String>,
     pub messages: Vec<SessionMessage>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -57,6 +59,7 @@ impl Session {
         Self {
             key: key.into(),
             active_profile: None,
+            source_session_key: None,
             messages: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -142,11 +145,19 @@ pub struct SessionStore {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSummary {
     pub key: String,
+    pub channel: String,
+    pub session_id: String,
     pub active_profile: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub message_count: usize,
     pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionGroupSummary {
+    pub channel: String,
+    pub sessions: Vec<SessionSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +170,8 @@ struct SessionMetadata {
     last_consolidated: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     active_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_session_key: Option<String>,
 }
 
 impl SessionStore {
@@ -206,6 +219,42 @@ impl SessionStore {
         Ok(self.load(key)?.map(|session| session.into_summary()))
     }
 
+    pub fn list_sessions_across_namespaces(&self) -> Result<Vec<SessionSummary>> {
+        let mut sessions = Vec::new();
+        for entry in std::fs::read_dir(&self.dir)
+            .with_context(|| format!("failed to read {}", self.dir.display()))?
+        {
+            let path = entry?.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(session) = self.load_from_path(&path).ok() else {
+                continue;
+            };
+            sessions.push(session.into_summary());
+        }
+        sessions.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| a.key.cmp(&b.key))
+        });
+        Ok(sessions)
+    }
+
+    pub fn list_sessions_grouped_by_channel(&self) -> Result<Vec<SessionGroupSummary>> {
+        let mut grouped = BTreeMap::<String, Vec<SessionSummary>>::new();
+        for session in self.list_sessions_across_namespaces()? {
+            grouped
+                .entry(session.channel.clone())
+                .or_default()
+                .push(session);
+        }
+        Ok(grouped
+            .into_iter()
+            .map(|(channel, sessions)| SessionGroupSummary { channel, sessions })
+            .collect())
+    }
+
     pub fn list_sessions_in_namespace(&self, namespace: &str) -> Result<Vec<SessionSummary>> {
         let prefix = namespace_prefix(namespace);
         let mut sessions = Vec::new();
@@ -231,6 +280,25 @@ impl SessionStore {
         Ok(sessions)
     }
 
+    pub fn duplicate_session_to_web(&self, source_key: &str) -> Result<Session> {
+        let source = self
+            .load(source_key)?
+            .with_context(|| format!("session {source_key} not found"))?;
+        let now = Utc::now();
+        let mut duplicated = Session::new(format!("web:{}", Uuid::new_v4()));
+        duplicated.active_profile = source.active_profile.clone();
+        duplicated.source_session_key = source
+            .source_session_key
+            .clone()
+            .or_else(|| Some(source.key.clone()));
+        duplicated.messages = source.messages.clone();
+        duplicated.created_at = now;
+        duplicated.updated_at = now;
+        duplicated.last_consolidated = source.last_consolidated;
+        self.save(&duplicated)?;
+        Ok(duplicated)
+    }
+
     fn load_from_path(&self, path: &Path) -> Result<Session> {
         let raw = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read session {}", path.display()))?;
@@ -239,6 +307,7 @@ impl SessionStore {
         let mut updated_at = Utc::now();
         let mut last_consolidated = 0usize;
         let mut active_profile = None;
+        let mut source_session_key = None;
         let mut messages = Vec::new();
         for line in raw.lines().filter(|line| !line.trim().is_empty()) {
             let value: Value = serde_json::from_str(line)?;
@@ -252,6 +321,7 @@ impl SessionStore {
                 updated_at = metadata.updated_at;
                 last_consolidated = metadata.last_consolidated;
                 active_profile = metadata.active_profile;
+                source_session_key = metadata.source_session_key;
             } else {
                 messages.push(serde_json::from_value(value)?);
             }
@@ -259,6 +329,7 @@ impl SessionStore {
         Ok(Session {
             key,
             active_profile,
+            source_session_key,
             messages,
             created_at,
             updated_at,
@@ -275,6 +346,7 @@ impl SessionStore {
             updated_at: session.updated_at,
             last_consolidated: session.last_consolidated,
             active_profile: session.active_profile.clone(),
+            source_session_key: session.source_session_key.clone(),
         })?);
         for message in &session.messages {
             lines.push(serde_json::to_string(message)?);
@@ -288,8 +360,11 @@ impl SessionStore {
 
 impl Session {
     fn into_summary(self) -> SessionSummary {
+        let (channel, session_id) = split_session_key(&self.key);
         SessionSummary {
             key: self.key,
+            channel,
+            session_id,
             active_profile: self.active_profile,
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -317,6 +392,14 @@ fn truncate_preview(text: &str, max_chars: usize) -> String {
         return trimmed.to_string();
     }
     format!("{}…", chars[..max_chars].iter().collect::<String>())
+}
+
+pub fn split_session_key(key: &str) -> (String, String) {
+    if let Some((channel, session_id)) = key.split_once(':') {
+        (channel.to_string(), session_id.to_string())
+    } else {
+        (key.to_string(), String::new())
+    }
 }
 
 fn namespace_prefix(namespace: &str) -> String {

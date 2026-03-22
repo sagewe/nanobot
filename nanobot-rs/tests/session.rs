@@ -2,6 +2,13 @@ use nanobot_rs::session::{Session, SessionMessage, SessionStore};
 use serde_json::json;
 use tempfile::tempdir;
 
+fn value_messages(messages: &[SessionMessage]) -> Vec<serde_json::Value> {
+    messages
+        .iter()
+        .map(|message| serde_json::to_value(message).expect("session message"))
+        .collect()
+}
+
 fn tool_turn(prefix: &str, idx: usize) -> Vec<SessionMessage> {
     vec![
         SessionMessage {
@@ -302,6 +309,179 @@ fn session_store_helpers_expose_namespaced_sessions() {
     assert_eq!(detail.key, "web:two");
     assert_eq!(detail.active_profile.as_deref(), Some("second-profile"));
     assert_eq!(detail.messages.len(), 1);
+}
+
+#[test]
+fn session_store_lists_cross_namespace_sessions_and_grouped_channels() {
+    let dir = tempdir().expect("tempdir");
+    let store = SessionStore::new(dir.path()).expect("session store");
+    let base = chrono::Utc::now();
+
+    let mut web_one = Session::new("web:one");
+    web_one.active_profile = Some("web-profile".to_string());
+    web_one.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("older"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    web_one.created_at = base - chrono::Duration::seconds(3);
+    web_one.updated_at = base - chrono::Duration::seconds(3);
+    store.save(&web_one).expect("save web one");
+
+    let mut system = Session::new("system:wecom:chat-42");
+    system.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("middle"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    system.created_at = base - chrono::Duration::seconds(2);
+    system.updated_at = base - chrono::Duration::seconds(2);
+    store.save(&system).expect("save system");
+
+    let mut web_two = Session::new("web:two");
+    web_two.active_profile = Some("second-profile".to_string());
+    web_two.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("newest"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    web_two.created_at = base - chrono::Duration::seconds(1);
+    web_two.updated_at = base - chrono::Duration::seconds(1);
+    store.save(&web_two).expect("save web two");
+
+    let mut cli = Session::new("cli:other");
+    cli.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("oldest"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    cli.created_at = base;
+    cli.updated_at = base;
+    store.save(&cli).expect("save cli");
+
+    let sessions = store
+        .list_sessions_across_namespaces()
+        .expect("list sessions");
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|session| session.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["cli:other", "web:two", "system:wecom:chat-42", "web:one"]
+    );
+    assert_eq!(sessions[2].channel, "system");
+    assert_eq!(sessions[2].session_id, "wecom:chat-42");
+    assert_eq!(sessions[0].channel, "cli");
+    assert_eq!(sessions[0].session_id, "other");
+
+    let grouped = store
+        .list_sessions_grouped_by_channel()
+        .expect("grouped sessions");
+    assert_eq!(
+        grouped
+            .iter()
+            .map(|group| group.channel.as_str())
+            .collect::<Vec<_>>(),
+        vec!["cli", "system", "web"]
+    );
+    assert_eq!(grouped[1].sessions.len(), 1);
+    assert_eq!(grouped[1].sessions[0].channel, "system");
+    assert_eq!(grouped[1].sessions[0].session_id, "wecom:chat-42");
+    assert_eq!(
+        grouped[2]
+            .sessions
+            .iter()
+            .map(|session| session.key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["web:two", "web:one"]
+    );
+}
+
+#[test]
+fn duplicate_to_web_copies_history_and_source_metadata() {
+    let dir = tempdir().expect("tempdir");
+    let store = SessionStore::new(dir.path()).expect("session store");
+
+    let mut source = Session::new("telegram:thread-9");
+    source.active_profile = Some("archive-profile".to_string());
+    source.source_session_key = Some("signal:origin-1".to_string());
+    source.created_at = chrono::Utc::now() - chrono::Duration::seconds(10);
+    source.updated_at = chrono::Utc::now() - chrono::Duration::seconds(5);
+    source.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("ignored"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    source.messages.extend(tool_turn("first", 0));
+    source.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("keep"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    source.messages.extend(tool_turn("second", 1));
+    source.last_consolidated = 4;
+    store.save(&source).expect("save source");
+
+    let duplicated = store
+        .duplicate_session_to_web("telegram:thread-9")
+        .expect("duplicate session");
+
+    assert!(duplicated.key.starts_with("web:"));
+    assert_ne!(duplicated.key, source.key);
+    assert_eq!(
+        duplicated.active_profile.as_deref(),
+        Some("archive-profile")
+    );
+    assert_eq!(
+        duplicated.source_session_key.as_deref(),
+        Some("signal:origin-1")
+    );
+    assert_eq!(
+        value_messages(&duplicated.messages),
+        value_messages(&source.messages)
+    );
+
+    let loaded = store
+        .get_session_detail(&duplicated.key)
+        .expect("load duplicated")
+        .expect("duplicated session");
+    assert_eq!(loaded.active_profile.as_deref(), Some("archive-profile"));
+    assert_eq!(
+        loaded.source_session_key.as_deref(),
+        Some("signal:origin-1")
+    );
+    assert_eq!(
+        value_messages(&loaded.messages),
+        value_messages(&source.messages)
+    );
+
+    let copied_history = loaded.get_history(100);
+    assert_eq!(copied_history, source.get_history(100));
+    assert_no_orphans(&copied_history);
 }
 
 #[test]
