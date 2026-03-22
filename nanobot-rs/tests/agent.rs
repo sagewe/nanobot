@@ -1,16 +1,25 @@
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::fs;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::routing::post;
+use axum::{Json, Router};
 use nanobot_rs::agent::{AgentLoop, SubagentManager};
 use nanobot_rs::bus::{InboundMessage, MessageBus};
 use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig};
-use nanobot_rs::providers::{LlmProvider, LlmResponse, ProviderRequestDescriptor, ToolCall};
-use serde_json::{Map, Value, json};
+use nanobot_rs::providers::{
+    LlmProvider, LlmResponse, ProviderPool, ProviderRequestDescriptor, ToolCall,
+};
+use serde_json::{json, Map, Value};
 use tempfile::tempdir;
+use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify};
 
 #[derive(Clone)]
@@ -44,6 +53,102 @@ fn mock_provider(responses: Vec<LlmResponse>) -> Arc<dyn LlmProvider> {
         model: "mock-model".to_string(),
         responses: Arc::new(Mutex::new(responses.into())),
     })
+}
+
+#[derive(Clone, Debug)]
+struct CapturedCodexRequest {
+    path: String,
+    authorization: Option<String>,
+    account_id: Option<String>,
+    body: Value,
+}
+
+#[derive(Clone)]
+struct CodexCaptureState {
+    requests: Arc<Mutex<Vec<CapturedCodexRequest>>>,
+    responses: Arc<Mutex<VecDeque<(StatusCode, Value)>>>,
+}
+
+async fn capture_codex_responses_request(
+    State(state): State<CodexCaptureState>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(payload): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    state.requests.lock().await.push(CapturedCodexRequest {
+        path: uri.path().to_string(),
+        authorization: headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(ToString::to_string),
+        account_id: headers
+            .get("ChatGPT-Account-Id")
+            .and_then(|value| value.to_str().ok())
+            .map(ToString::to_string),
+        body: payload,
+    });
+
+    let (status, body) = state
+        .responses
+        .lock()
+        .await
+        .pop_front()
+        .expect("unexpected extra codex request");
+    (status, Json(body))
+}
+
+async fn start_codex_capture_server(
+    responses: Vec<(StatusCode, Value)>,
+) -> (SocketAddr, Arc<Mutex<Vec<CapturedCodexRequest>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route(
+            "/backend-api/responses",
+            post(capture_codex_responses_request),
+        )
+        .with_state(CodexCaptureState {
+            requests: requests.clone(),
+            responses: Arc::new(Mutex::new(responses.into_iter().collect())),
+        });
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    (addr, requests)
+}
+
+fn codex_agent_config(
+    workspace: &std::path::Path,
+    auth_file: &std::path::Path,
+    api_base: String,
+) -> Config {
+    let mut config = Config::default();
+    config.agents.defaults.workspace = workspace.display().to_string();
+    config.agents.defaults.default_profile = "openai:gpt-4.1-mini".to_string();
+    config.agents.profiles.insert(
+        "codex:gpt-5.4".to_string(),
+        AgentProfileConfig {
+            provider: "codex".to_string(),
+            model: "gpt-5.4".to_string(),
+            request: Map::new(),
+        },
+    );
+    config.providers.codex.auth_file = auth_file.display().to_string();
+    config.providers.codex.api_base = api_base;
+    config
+}
+
+fn valid_codex_auth_json() -> &'static str {
+    r#"{
+  "auth_mode": "chatgpt",
+  "tokens": {
+    "access_token": "access-token",
+    "refresh_token": "refresh-token",
+    "id_token": "id-token",
+    "account_id": "account-id"
+  }
+}"#
 }
 
 #[derive(Default)]
@@ -364,14 +469,12 @@ async fn agent_process_direct_returns_message_tool_reply() {
         .await
         .expect("process");
     assert_eq!(result, long_chinese);
-    assert!(
-        tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            bus.consume_outbound()
-        )
-        .await
-        .is_err()
-    );
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        bus.consume_outbound()
+    )
+    .await
+    .is_err());
 }
 
 #[tokio::test]
@@ -439,14 +542,12 @@ async fn agent_bus_mode_suppresses_duplicate_final_reply_after_message_tool() {
         }
     };
     assert_eq!(outbound.content, long_chinese);
-    assert!(
-        tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            bus.consume_outbound()
-        )
-        .await
-        .is_err()
-    );
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        bus.consume_outbound()
+    )
+    .await
+    .is_err());
     agent.stop();
     runner.abort();
 }
@@ -620,6 +721,93 @@ async fn models_command_lists_profiles_and_marks_current_one() {
 
     assert!(result.contains("* openai:gpt-4.1-mini"));
     assert!(result.contains("openrouter:deepseek-r1"));
+}
+
+#[tokio::test]
+async fn model_command_can_switch_a_session_to_a_codex_profile_and_use_the_codex_backend() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = dir.path().join("codex-auth.json");
+    fs::write(&auth_file, valid_codex_auth_json()).expect("write auth file");
+    let (addr, requests) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        json!({
+            "id": "resp_123",
+            "status": "completed",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "id": "msg_123",
+                "status": "completed",
+                "content": [
+                    {"type": "output_text", "text": "codex reply"}
+                ]
+            }]
+        }),
+    )])
+    .await;
+    let config = codex_agent_config(dir.path(), &auth_file, format!("http://{addr}/backend-api"));
+    let provider: Arc<dyn LlmProvider> = Arc::new(ProviderPool::new(config.clone()));
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus, provider, config)
+        .await
+        .expect("agent");
+
+    let switched = agent
+        .process_direct("/model codex:gpt-5.4", "cli:codex", "cli", "codex")
+        .await
+        .expect("switch");
+    assert!(switched.contains("codex:gpt-5.4"), "{switched}");
+    assert_eq!(
+        agent
+            .current_profile_for_session("cli:codex")
+            .expect("profile"),
+        "codex:gpt-5.4"
+    );
+
+    let reply = agent
+        .process_direct("hello", "cli:codex", "cli", "codex")
+        .await
+        .expect("reply");
+    assert_eq!(reply, "codex reply");
+
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/backend-api/responses");
+    assert_eq!(
+        requests[0].authorization.as_deref(),
+        Some("Bearer access-token")
+    );
+    assert_eq!(requests[0].account_id.as_deref(), Some("account-id"));
+    assert_eq!(
+        requests[0].body.get("model").and_then(Value::as_str),
+        Some("gpt-5.4")
+    );
+}
+
+#[tokio::test]
+async fn codex_default_profile_fails_without_falling_back_to_openai() {
+    let dir = tempdir().expect("tempdir");
+    let missing_auth_file = dir.path().join("missing-codex-auth.json");
+    let config = codex_agent_config(
+        dir.path(),
+        &missing_auth_file,
+        "https://chatgpt.com/backend-api".to_string(),
+    );
+    let mut config = config;
+    config.agents.defaults.default_profile = "codex:gpt-5.4".to_string();
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(ProviderPool::new(config.clone()));
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus, provider, config)
+        .await
+        .expect("agent");
+
+    let err = agent
+        .process_direct("hello", "cli:codex", "cli", "codex")
+        .await
+        .expect_err("missing auth file should fail");
+
+    assert!(err.to_string().contains("auth file"), "{err}");
 }
 
 #[tokio::test]
