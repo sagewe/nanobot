@@ -526,3 +526,33 @@ fn codex_default_profile_fails_when_the_raw_codex_provider_block_is_missing() {
 
     assert!(err.to_string().contains("providers.codex"));
 }
+
+#[test]
+fn codex_profile_elsewhere_still_requires_the_raw_codex_provider_block() {
+    let err = load_config_from_json(
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "maxToolIterations": 20,
+      "defaultProfile": "openai:gpt-4.1-mini"
+    },
+    "profiles": {
+      "openai:gpt-4.1-mini": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "request": {}
+      },
+      "codex:gpt-5-codex": {
+        "provider": "codex",
+        "model": "gpt-5-codex",
+        "request": {}
+      }
+    }
+  }
+}"#,
+    )
+    .expect_err("codex profile should require raw codex provider block");
+
+    assert!(err.to_string().contains("providers.codex"));
+}
