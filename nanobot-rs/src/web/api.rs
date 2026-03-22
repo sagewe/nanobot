@@ -5,7 +5,10 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::{AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary};
+use super::{
+    AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary, WebWeixinAccount,
+    WebWeixinLoginStatus, WeixinLoginStartResponse,
+};
 use crate::presentation::render_web_html;
 
 #[derive(Debug, Deserialize)]
@@ -144,6 +147,50 @@ pub async fn duplicate_session(
         .await
         .map_err(|error| map_duplicate_error(error, &channel, &session_id))?;
     Ok(Json(session))
+}
+
+pub async fn get_weixin_account(
+    State(state): State<AppState>,
+) -> Result<Json<WebWeixinAccount>, ApiError> {
+    let account = state
+        .chat
+        .get_weixin_account()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(account))
+}
+
+pub async fn start_weixin_login(
+    State(state): State<AppState>,
+) -> Result<Json<WeixinLoginStartResponse>, ApiError> {
+    let login = state
+        .chat
+        .start_weixin_login()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(login))
+}
+
+pub async fn poll_weixin_login(
+    State(state): State<AppState>,
+) -> Result<Json<WebWeixinLoginStatus>, ApiError> {
+    let status = state
+        .chat
+        .poll_weixin_login()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(status))
+}
+
+pub async fn logout_weixin(
+    State(state): State<AppState>,
+) -> Result<Json<WebWeixinAccount>, ApiError> {
+    let account = state
+        .chat
+        .logout_weixin()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(account))
 }
 
 pub struct ApiError {

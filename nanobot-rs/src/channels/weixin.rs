@@ -42,6 +42,16 @@ pub struct WeixinAccountState {
     pub updated_at: DateTime<Utc>,
 }
 
+impl WeixinAccountState {
+    pub fn is_expired(&self) -> bool {
+        self.status.eq_ignore_ascii_case("expired")
+    }
+
+    pub fn is_logged_in(&self) -> bool {
+        !self.bot_token.trim().is_empty() && !self.is_expired()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WeixinLoginSession {
     pub account: WeixinAccountState,
@@ -234,6 +244,14 @@ impl WeixinLoginManager {
         Ok(WeixinLoginStatus {
             status: payload.status,
         })
+    }
+
+    pub fn clear_login_session(&self) -> Result<()> {
+        *self
+            .session
+            .lock()
+            .map_err(|_| anyhow!("weixin login session lock poisoned"))? = None;
+        Ok(())
     }
 }
 

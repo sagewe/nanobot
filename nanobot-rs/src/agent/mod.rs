@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -691,6 +691,10 @@ impl AgentLoop {
 
     pub fn default_profile(&self) -> &str {
         &self.default_profile
+    }
+
+    pub fn workspace_path(&self) -> &Path {
+        &self.workspace
     }
 
     pub fn has_profile(&self, key: &str) -> bool {

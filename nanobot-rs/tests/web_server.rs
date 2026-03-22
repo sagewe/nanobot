@@ -8,6 +8,7 @@ use axum::Router;
 use chrono::{Duration, Utc};
 use nanobot_rs::agent::AgentLoop;
 use nanobot_rs::bus::MessageBus;
+use nanobot_rs::channels::weixin::{WeixinAccountState, WeixinAccountStore};
 use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig};
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use nanobot_rs::session::{Session, SessionMessage, SessionStore};
@@ -109,6 +110,109 @@ impl ChatService for ErrorChatService {
 
 fn test_state_with_error() -> AppState {
     AppState::new(Arc::new(ErrorChatService))
+}
+
+#[derive(Clone)]
+struct WeixinLoginSnapshot {
+    qrcode: String,
+    qrcode_img_content: String,
+    status: String,
+}
+
+struct WeixinAccountChatService {
+    enabled: bool,
+    store: WeixinAccountStore,
+    _workspace: TempDir,
+    login: Arc<Mutex<Option<WeixinLoginSnapshot>>>,
+}
+
+impl WeixinAccountChatService {
+    fn new(enabled: bool, workspace: TempDir, store: WeixinAccountStore) -> Self {
+        Self {
+            enabled,
+            store,
+            _workspace: workspace,
+            login: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+#[async_trait]
+impl ChatService for WeixinAccountChatService {
+    async fn chat(
+        &self,
+        _message: &str,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebChatReply> {
+        anyhow::bail!("unused")
+    }
+
+    async fn duplicate_session(
+        &self,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebSessionDetail> {
+        anyhow::bail!("unused")
+    }
+
+    async fn get_weixin_account(&self) -> Result<web::WebWeixinAccount> {
+        let account = self.store.load_account()?;
+        Ok(web::WebWeixinAccount::from_account(
+            self.enabled,
+            account.as_ref(),
+        ))
+    }
+
+    async fn start_weixin_login(&self) -> Result<web::WeixinLoginStartResponse> {
+        let login = WeixinLoginSnapshot {
+            qrcode: "qr-token".to_string(),
+            qrcode_img_content: "data:image/png;base64,abc".to_string(),
+            status: "wait".to_string(),
+        };
+        *self.login.lock().await = Some(login.clone());
+        Ok(web::WeixinLoginStartResponse {
+            qrcode: login.qrcode,
+            qrcode_img_content: login.qrcode_img_content,
+        })
+    }
+
+    async fn poll_weixin_login(&self) -> Result<web::WebWeixinLoginStatus> {
+        let login = self.login.lock().await.clone();
+        let account = self.store.load_account()?;
+        Ok(web::WebWeixinLoginStatus::from_state(
+            login.as_ref().map(|snapshot| snapshot.status.as_str()),
+            account.as_ref(),
+        ))
+    }
+
+    async fn logout_weixin(&self) -> Result<web::WebWeixinAccount> {
+        self.store.clear_all()?;
+        *self.login.lock().await = None;
+        Ok(web::WebWeixinAccount::from_account(self.enabled, None))
+    }
+}
+
+async fn build_test_router_with_weixin_account_state(account: WeixinAccountState) -> Router {
+    let dir = tempdir().expect("tempdir");
+    let store = WeixinAccountStore::new(dir.path()).expect("weixin store");
+    store.save_account(&account).expect("save account");
+    web::build_router(AppState::new(Arc::new(WeixinAccountChatService::new(
+        true, dir, store,
+    ))))
+}
+
+fn sample_weixin_account() -> WeixinAccountState {
+    WeixinAccountState {
+        bot_token: "bot-token".to_string(),
+        ilink_bot_id: "bot@im.bot".to_string(),
+        baseurl: "https://ilinkai.weixin.qq.com".to_string(),
+        ilink_user_id: Some("user@im.wechat".to_string()),
+        get_updates_buf: "cursor-1".to_string(),
+        longpolling_timeout_ms: 35_000,
+        status: "active".to_string(),
+        updated_at: Utc::now(),
+    }
 }
 
 #[derive(Clone)]
@@ -588,6 +692,66 @@ async fn chat_endpoint_includes_active_profile() {
 }
 
 #[tokio::test]
+async fn weixin_account_endpoints_report_login_status() {
+    let app = build_test_router_with_weixin_account_state(sample_weixin_account()).await;
+    let addr = spawn_test_server(app).await;
+
+    let account: serde_json::Value = reqwest::get(format!("http://{addr}/api/weixin/account"))
+        .await
+        .expect("fetch weixin account")
+        .json()
+        .await
+        .expect("weixin account payload");
+    assert_eq!(account["enabled"], true);
+    assert_eq!(account["loggedIn"], true);
+    assert_eq!(account["expired"], false);
+    assert_eq!(account["botId"], "bot@im.bot");
+    assert_eq!(account["userId"], "user@im.wechat");
+
+    let login_start: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/api/weixin/login/start"))
+        .send()
+        .await
+        .expect("start weixin login")
+        .json()
+        .await
+        .expect("login start payload");
+    assert_eq!(login_start["qrcode"], "qr-token");
+    assert_eq!(login_start["qrcodeImgContent"], "data:image/png;base64,abc");
+
+    let login_status: serde_json::Value =
+        reqwest::get(format!("http://{addr}/api/weixin/login/status"))
+            .await
+            .expect("poll weixin login")
+            .json()
+            .await
+            .expect("login status payload");
+    assert_eq!(login_status["status"], "wait");
+    assert_eq!(login_status["loggedIn"], true);
+    assert_eq!(login_status["expired"], false);
+
+    let logout: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/api/weixin/logout"))
+        .send()
+        .await
+        .expect("logout weixin")
+        .json()
+        .await
+        .expect("logout payload");
+    assert_eq!(logout["loggedIn"], false);
+    assert_eq!(logout["expired"], false);
+
+    let after_logout: serde_json::Value = reqwest::get(format!("http://{addr}/api/weixin/account"))
+        .await
+        .expect("fetch weixin account after logout")
+        .json()
+        .await
+        .expect("weixin account after logout payload");
+    assert_eq!(after_logout["loggedIn"], false);
+    assert_eq!(after_logout["expired"], false);
+}
+
+#[tokio::test]
 async fn chat_endpoint_rejects_non_web_sessions_until_duplicated() {
     let dir = tempdir().expect("tempdir");
     let mut telegram = Session::new("telegram:outside");
@@ -685,14 +849,13 @@ async fn nested_session_ids_are_browsable_and_duplicable() {
     let app = agent_app(&dir, Vec::new()).await;
     let addr = spawn_test_server(app).await;
 
-    let detail: serde_json::Value = reqwest::get(format!(
-        "http://{addr}/api/sessions/system/wecom:chat-42"
-    ))
-    .await
-    .expect("fetch nested detail")
-    .json()
-    .await
-    .expect("nested detail payload");
+    let detail: serde_json::Value =
+        reqwest::get(format!("http://{addr}/api/sessions/system/wecom:chat-42"))
+            .await
+            .expect("fetch nested detail")
+            .json()
+            .await
+            .expect("nested detail payload");
 
     assert_eq!(detail["channel"], "system");
     assert_eq!(detail["sessionId"], "wecom:chat-42");

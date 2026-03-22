@@ -1,6 +1,7 @@
 pub mod api;
 pub mod page;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
@@ -16,6 +17,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::agent::AgentLoop;
+use crate::channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinLoginManager};
 use crate::presentation::render_web_html;
 use crate::session::{
     split_session_key, Session, SessionGroupSummary, SessionMessage, SessionSummary,
@@ -49,6 +51,22 @@ pub trait ChatService: Send + Sync {
         _session_id: &str,
     ) -> Result<WebSessionDetail> {
         bail!("session duplication is not implemented for this service")
+    }
+
+    async fn get_weixin_account(&self) -> Result<WebWeixinAccount> {
+        bail!("weixin account lookup is not implemented for this service")
+    }
+
+    async fn start_weixin_login(&self) -> Result<WeixinLoginStartResponse> {
+        bail!("weixin login start is not implemented for this service")
+    }
+
+    async fn poll_weixin_login(&self) -> Result<WebWeixinLoginStatus> {
+        bail!("weixin login status is not implemented for this service")
+    }
+
+    async fn logout_weixin(&self) -> Result<WebWeixinAccount> {
+        bail!("weixin logout is not implemented for this service")
     }
 }
 
@@ -102,6 +120,74 @@ pub struct WebSessionDetail {
     pub source_session_key: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebWeixinAccount {
+    pub enabled: bool,
+    pub logged_in: bool,
+    pub expired: bool,
+    pub bot_id: Option<String>,
+    pub user_id: Option<String>,
+    pub base_url: Option<String>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl WebWeixinAccount {
+    pub fn from_account(enabled: bool, account: Option<&WeixinAccountState>) -> Self {
+        match account {
+            Some(account) => Self {
+                enabled,
+                logged_in: account.is_logged_in(),
+                expired: account.is_expired(),
+                bot_id: Some(account.ilink_bot_id.clone()),
+                user_id: account.ilink_user_id.clone(),
+                base_url: Some(account.baseurl.clone()),
+                updated_at: Some(account.updated_at),
+            },
+            None => Self {
+                enabled,
+                logged_in: false,
+                expired: false,
+                bot_id: None,
+                user_id: None,
+                base_url: None,
+                updated_at: None,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WeixinLoginStartResponse {
+    pub qrcode: String,
+    pub qrcode_img_content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebWeixinLoginStatus {
+    pub status: String,
+    pub logged_in: bool,
+    pub expired: bool,
+}
+
+impl WebWeixinLoginStatus {
+    pub fn from_state(status: Option<&str>, account: Option<&WeixinAccountState>) -> Self {
+        let logged_in = account.is_some_and(WeixinAccountState::is_logged_in);
+        let expired = account.is_some_and(WeixinAccountState::is_expired)
+            || status.is_some_and(|status| status.eq_ignore_ascii_case("expired"));
+        let status = status
+            .map(ToString::to_string)
+            .unwrap_or_else(|| if logged_in { "confirmed" } else { "failed" }.to_string());
+        Self {
+            status,
+            logged_in,
+            expired,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) chat: Arc<dyn ChatService>,
@@ -123,18 +209,84 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/sessions/duplicate", post(api::duplicate_session))
         .route("/api/sessions/{channel}/{id}", get(api::get_session))
+        .route("/api/weixin/account", get(api::get_weixin_account))
+        .route("/api/weixin/login/start", post(api::start_weixin_login))
+        .route("/api/weixin/login/status", get(api::poll_weixin_login))
+        .route("/api/weixin/logout", post(api::logout_weixin))
         .route("/api/chat", post(api::chat))
         .with_state(state)
 }
 
 #[derive(Clone)]
+struct WeixinRuntime {
+    store: WeixinAccountStore,
+    login: WeixinLoginManager,
+    enabled: bool,
+}
+
+impl WeixinRuntime {
+    fn new(workspace: PathBuf) -> Result<Self> {
+        let store = WeixinAccountStore::new(&workspace)?;
+        let login = WeixinLoginManager::new(
+            "https://ilinkai.weixin.qq.com",
+            store.clone(),
+            env!("CARGO_PKG_VERSION"),
+        );
+        Ok(Self {
+            store,
+            login,
+            enabled: true,
+        })
+    }
+
+    async fn get_account(&self) -> Result<WebWeixinAccount> {
+        let account = self.store.load_account()?;
+        Ok(WebWeixinAccount::from_account(
+            self.enabled,
+            account.as_ref(),
+        ))
+    }
+
+    async fn start_login(&self) -> Result<WeixinLoginStartResponse> {
+        let login = self.login.start_login().await?;
+        Ok(WeixinLoginStartResponse {
+            qrcode: login.qrcode,
+            qrcode_img_content: login.qrcode_img_content,
+        })
+    }
+
+    async fn poll_login(&self) -> Result<WebWeixinLoginStatus> {
+        let status = self.login.poll_login_status().await?;
+        let account = self.store.load_account()?;
+        Ok(WebWeixinLoginStatus::from_state(
+            Some(status.status.as_str()),
+            account.as_ref(),
+        ))
+    }
+
+    async fn logout(&self) -> Result<WebWeixinAccount> {
+        self.store.clear_all()?;
+        self.login.clear_login_session()?;
+        Ok(WebWeixinAccount::from_account(self.enabled, None))
+    }
+}
+
+#[derive(Clone)]
 pub struct AgentChatService {
     agent: AgentLoop,
+    weixin: Option<WeixinRuntime>,
 }
 
 impl AgentChatService {
     pub fn new(agent: AgentLoop) -> Self {
-        Self { agent }
+        let weixin = match WeixinRuntime::new(agent.workspace_path().to_path_buf()) {
+            Ok(runtime) => Some(runtime),
+            Err(error) => {
+                error!(error = %error, "failed to initialize weixin web runtime");
+                None
+            }
+        };
+        Self { agent, weixin }
     }
 }
 
@@ -212,6 +364,36 @@ impl ChatService for AgentChatService {
             .agent
             .duplicate_session_to_web(&session_key(channel, session_id))?;
         Ok(detail_from_session(self, session))
+    }
+
+    async fn get_weixin_account(&self) -> Result<WebWeixinAccount> {
+        match &self.weixin {
+            Some(weixin) => weixin.get_account().await,
+            None => Ok(WebWeixinAccount::from_account(false, None)),
+        }
+    }
+
+    async fn start_weixin_login(&self) -> Result<WeixinLoginStartResponse> {
+        let weixin = self
+            .weixin
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("weixin runtime is not available"))?;
+        weixin.start_login().await
+    }
+
+    async fn poll_weixin_login(&self) -> Result<WebWeixinLoginStatus> {
+        let weixin = self
+            .weixin
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("weixin runtime is not available"))?;
+        weixin.poll_login().await
+    }
+
+    async fn logout_weixin(&self) -> Result<WebWeixinAccount> {
+        match &self.weixin {
+            Some(weixin) => weixin.logout().await,
+            None => Ok(WebWeixinAccount::from_account(false, None)),
+        }
     }
 }
 
