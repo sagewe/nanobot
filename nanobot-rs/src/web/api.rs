@@ -133,6 +133,11 @@ pub async fn duplicate_session(
 ) -> Result<Json<WebSessionDetail>, ApiError> {
     let channel = validate_channel(&request.channel)?.to_string();
     let session_id = validate_session_id(&request.session_id)?.to_string();
+    if channel == "web" {
+        return Err(ApiError::bad_request(
+            "session is already writable; duplicate non-web sessions only",
+        ));
+    }
     let session = state
         .chat
         .duplicate_session(&channel, &session_id)
@@ -186,7 +191,7 @@ fn validate_session_id(session_id: &str) -> Result<&str, ApiError> {
     if trimmed.is_empty()
         || !trimmed
             .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':'))
     {
         return Err(ApiError::bad_request("invalid session id"));
     }

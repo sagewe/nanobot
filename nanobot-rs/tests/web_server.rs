@@ -672,6 +672,50 @@ async fn duplicate_session_endpoint_returns_new_web_detail_with_copied_history()
 }
 
 #[tokio::test]
+async fn nested_session_ids_are_browsable_and_duplicable() {
+    let dir = tempdir().expect("tempdir");
+    let mut system = Session::new("system:wecom:chat-42");
+    system.active_profile = Some("openai:gpt-4.1-mini".to_string());
+    system.messages = vec![
+        text_message("user", "nested hello"),
+        text_message("assistant", "nested reply"),
+    ];
+    save_session(dir.path(), &system);
+
+    let app = agent_app(&dir, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let detail: serde_json::Value = reqwest::get(format!(
+        "http://{addr}/api/sessions/system/wecom:chat-42"
+    ))
+    .await
+    .expect("fetch nested detail")
+    .json()
+    .await
+    .expect("nested detail payload");
+
+    assert_eq!(detail["channel"], "system");
+    assert_eq!(detail["sessionId"], "wecom:chat-42");
+    assert_eq!(detail["messages"][1]["content"], "nested reply");
+
+    let duplicated: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/api/sessions/duplicate"))
+        .json(&serde_json::json!({
+            "channel": "system",
+            "sessionId": "wecom:chat-42"
+        }))
+        .send()
+        .await
+        .expect("duplicate nested session")
+        .json()
+        .await
+        .expect("duplicate nested payload");
+
+    assert_eq!(duplicated["channel"], "web");
+    assert_eq!(duplicated["sourceSessionKey"], "system:wecom:chat-42");
+}
+
+#[tokio::test]
 async fn duplicate_session_endpoint_returns_not_found_for_missing_source() {
     let dir = tempdir().expect("tempdir");
     let app = agent_app(&dir, Vec::new()).await;
@@ -697,6 +741,36 @@ async fn duplicate_session_endpoint_returns_not_found_for_missing_source() {
 }
 
 #[tokio::test]
+async fn duplicate_session_endpoint_rejects_already_writable_web_sessions() {
+    let dir = tempdir().expect("tempdir");
+    let mut web_session = Session::new("web:alpha");
+    web_session.active_profile = Some("openai:gpt-4.1-mini".to_string());
+    web_session.messages = vec![text_message("assistant", "already web")];
+    save_session(dir.path(), &web_session);
+
+    let app = agent_app(&dir, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/api/sessions/duplicate"))
+        .json(&serde_json::json!({
+            "channel": "web",
+            "sessionId": "alpha"
+        }))
+        .send()
+        .await
+        .expect("duplicate web session");
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("duplicate web payload");
+
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    assert!(payload["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("already writable"));
+}
+
+#[tokio::test]
 async fn session_endpoints_reject_invalid_or_missing_ids() {
     let dir = tempdir().expect("tempdir");
     let mut telegram = Session::new("telegram:outside");
@@ -707,7 +781,7 @@ async fn session_endpoints_reject_invalid_or_missing_ids() {
     let app = agent_app(&dir, Vec::new()).await;
     let addr = spawn_test_server(app).await;
 
-    let invalid = reqwest::get(format!("http://{addr}/api/sessions/telegram/bad:id"))
+    let invalid = reqwest::get(format!("http://{addr}/api/sessions/telegram/bad$id"))
         .await
         .expect("fetch invalid id");
     let invalid_status = invalid.status();
