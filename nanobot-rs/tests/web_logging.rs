@@ -121,7 +121,7 @@ async fn web_chat_logs_agent_execution_progress() {
 
     let _guard = tracing::subscriber::set_default(subscriber);
     let reply = service
-        .chat("inspect the workspace", "browser-session")
+        .chat("inspect the workspace", "web", "browser-session")
         .await;
 
     assert_eq!(reply.expect("reply").reply, "done");
