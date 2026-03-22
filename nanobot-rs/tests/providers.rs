@@ -61,6 +61,26 @@ fn config_defaults_expose_the_new_default_profile_shape() {
     assert_eq!(config.tools.web.search.provider, "duckduckgo");
     assert_eq!(config.tools.web.search.max_results, 5);
     assert_eq!(config.tools.web.fetch.max_chars, 20_000);
+    assert_eq!(
+        value
+            .pointer("/channels/weixin/enabled")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        value
+            .pointer("/channels/weixin/apiBase")
+            .and_then(Value::as_str),
+        Some("https://ilinkai.weixin.qq.com")
+    );
+    assert_eq!(
+        value
+            .pointer("/channels/weixin/cdnBase")
+            .and_then(Value::as_str),
+        Some("https://novac2c.cdn.weixin.qq.com/c2c")
+    );
+    assert!(value.pointer("/channels/weixin/api_base").is_none());
+    assert!(value.pointer("/channels/weixin/cdn_base").is_none());
 }
 
 #[test]

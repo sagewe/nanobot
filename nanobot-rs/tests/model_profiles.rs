@@ -117,6 +117,39 @@ fn empty_config_still_inherits_the_default_profile() {
 }
 
 #[test]
+fn sparse_weixin_config_keeps_enabled_and_fills_default_bases() {
+    let value = load_config_from_json(
+        r#"{
+  "channels": {
+    "weixin": {
+      "enabled": true
+    }
+  }
+}"#,
+    )
+    .expect("load config");
+
+    assert_eq!(
+        value
+            .pointer("/channels/weixin/enabled")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        value
+            .pointer("/channels/weixin/apiBase")
+            .and_then(Value::as_str),
+        Some("https://ilinkai.weixin.qq.com")
+    );
+    assert_eq!(
+        value
+            .pointer("/channels/weixin/cdnBase")
+            .and_then(Value::as_str),
+        Some("https://novac2c.cdn.weixin.qq.com/c2c")
+    );
+}
+
+#[test]
 fn non_object_request_is_rejected() {
     let err = load_config_from_json(
         r#"{
