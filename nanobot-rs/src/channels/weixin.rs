@@ -570,7 +570,7 @@ fn flatten_weixin_text(content: &str) -> String {
 
 fn strip_weixin_block_prefix(line: &str) -> &str {
     let line = line.trim_start();
-    let line = line.trim_start_matches('#').trim_start();
+    let line = strip_weixin_heading_prefix(line);
     if let Some(rest) = line.strip_prefix("- ") {
         return rest;
     }
@@ -584,6 +584,18 @@ fn strip_weixin_block_prefix(line: &str) -> &str {
         return rest;
     }
     line
+}
+
+fn strip_weixin_heading_prefix(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() && bytes[index] == b'#' {
+        index += 1;
+    }
+    if index == 0 || index > 6 || index >= bytes.len() || !bytes[index].is_ascii_whitespace() {
+        return line;
+    }
+    line[index..].trim_start()
 }
 
 fn strip_weixin_numbered_prefix(line: &str) -> Option<&str> {
@@ -620,17 +632,23 @@ fn replace_weixin_inline_markers(line: &str) -> String {
     let code_re = CODE_RE.get_or_init(|| Regex::new(r"`([^`]+)`").expect("valid code regex"));
     let strong_re =
         STRONG_RE.get_or_init(|| Regex::new(r"\*\*([^*]+)\*\*").expect("valid strong regex"));
-    let emphasis_star_re =
-        EMPHASIS_STAR_RE.get_or_init(|| Regex::new(r"\*([^*]+)\*").expect("valid emphasis regex"));
-    let emphasis_underscore_re = EMPHASIS_UNDERSCORE_RE
-        .get_or_init(|| Regex::new(r"_([^_]+)_").expect("valid emphasis regex"));
+    let emphasis_star_re = EMPHASIS_STAR_RE.get_or_init(|| {
+        Regex::new(r"(^|[^[:alnum:]_])\*([^\s*][^*]*?)\*([^[:alnum:]_]|$)")
+            .expect("valid emphasis regex")
+    });
+    let emphasis_underscore_re = EMPHASIS_UNDERSCORE_RE.get_or_init(|| {
+        Regex::new(r"(^|[^[:alnum:]_])_([^\s_][^_]*?)_([^[:alnum:]_]|$)")
+            .expect("valid emphasis regex")
+    });
     let strike_re =
         STRIKE_RE.get_or_init(|| Regex::new(r"~~([^~]+)~~").expect("valid strike regex"));
 
     let line = code_re.replace_all(line, "$1").to_string();
     let line = strong_re.replace_all(&line, "$1").to_string();
-    let line = emphasis_star_re.replace_all(&line, "$1").to_string();
-    let line = emphasis_underscore_re.replace_all(&line, "$1").to_string();
+    let line = emphasis_star_re.replace_all(&line, "$1$2$3").to_string();
+    let line = emphasis_underscore_re
+        .replace_all(&line, "$1$2$3")
+        .to_string();
     strike_re.replace_all(&line, "$1").to_string()
 }
 

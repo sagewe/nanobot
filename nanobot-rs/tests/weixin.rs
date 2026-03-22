@@ -740,6 +740,52 @@ async fn outbound_send_includes_cached_context_token() {
 }
 
 #[tokio::test]
+async fn outbound_send_preserves_plain_text_literals() {
+    let server = spawn_weixin_test_server(vec![]).await;
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    store.save_context_token("user@im.wechat", "ctx-1").unwrap();
+    let channel = WeixinChannel::new(
+        WeixinConfig {
+            enabled: true,
+            api_base: server.api_base().to_string(),
+            cdn_base: "https://cdn.example.com".to_string(),
+        },
+        store,
+        MessageBus::new(32),
+    );
+
+    let cases = [
+        ("#hashtag", "#hashtag"),
+        ("foo_bar_baz", "foo_bar_baz"),
+        ("center_1_report", "center_1_report"),
+        (
+            "path/to_file_v1.txt and ./nested_dir/report_2.md",
+            "path/to_file_v1.txt and ./nested_dir/report_2.md",
+        ),
+        ("123 apples", "123 apples"),
+        ("2026.03 release", "2026.03 release"),
+    ];
+
+    for (input, expected) in cases {
+        channel
+            .send(sample_outbound("weixin", "user@im.wechat", input))
+            .await
+            .unwrap();
+
+        let requests = server.take_requests().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0]
+                .body
+                .pointer("/msg/item_list/0/text_item/text")
+                .and_then(Value::as_str),
+            Some(expected)
+        );
+    }
+}
+
+#[tokio::test]
 async fn outbound_send_skips_runtime_progress_messages() {
     let server = spawn_weixin_test_server(vec![]).await;
     let temp = tempdir().unwrap();
