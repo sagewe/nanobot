@@ -75,6 +75,18 @@ fn onboard_generates_config_with_provider_and_web_defaults() {
     );
     assert_eq!(
         value
+            .pointer("/providers/codex/authFile")
+            .and_then(Value::as_str),
+        Some("~/.codex/auth.json")
+    );
+    assert_eq!(
+        value
+            .pointer("/providers/codex/apiBase")
+            .and_then(Value::as_str),
+        Some("https://chatgpt.com/backend-api")
+    );
+    assert_eq!(
+        value
             .pointer("/tools/web/search/provider")
             .and_then(Value::as_str),
         Some("duckduckgo")

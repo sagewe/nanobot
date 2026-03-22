@@ -1,4 +1,5 @@
 mod base;
+mod codex;
 mod openai_compatible;
 mod registry;
 
@@ -11,9 +12,11 @@ use tokio::sync::Mutex;
 
 use crate::config::Config;
 
+pub use crate::config::CodexProviderConfig;
 pub use base::{
     LlmProvider, LlmResponse, ProviderError, ProviderRequestDescriptor, ToolCall, should_retry,
 };
+pub use codex::CodexProvider;
 pub use openai_compatible::OpenAICompatibleProvider;
 pub use registry::{ProviderKind, ProviderRegistry, ProviderSpec, ResolvedProviderConfig};
 
@@ -23,7 +26,7 @@ pub type OpenAIProvider = OpenAICompatibleProvider;
 pub struct ProviderPool {
     config: Config,
     registry: ProviderRegistry,
-    clients: Arc<Mutex<HashMap<String, Arc<OpenAICompatibleProvider>>>>,
+    clients: Arc<Mutex<HashMap<String, Arc<dyn LlmProvider>>>>,
     default_model: String,
 }
 
@@ -41,19 +44,33 @@ impl ProviderPool {
     async fn client_for(
         &self,
         request: &ProviderRequestDescriptor,
-    ) -> Result<Arc<OpenAICompatibleProvider>> {
-        let resolved = self.registry.build_config_for_provider(
-            &self.config,
-            &request.provider_name,
-            &request.model_name,
-        )?;
-        let key = provider_cache_key(&resolved);
+    ) -> Result<Arc<dyn LlmProvider>> {
+        let spec = self.registry.resolve(&request.provider_name)?;
+        let resolved = match spec.kind {
+            ProviderKind::Codex => None,
+            _ => Some(self.registry.build_config_for_provider(
+                &self.config,
+                &request.provider_name,
+                &request.model_name,
+            )?),
+        };
+        let key = match (&spec.kind, resolved.as_ref()) {
+            (ProviderKind::Codex, _) => codex_provider_cache_key(&self.config.providers.codex),
+            (_, Some(resolved)) => provider_cache_key(resolved),
+            _ => unreachable!("non-codex provider must have resolved config"),
+        };
 
         if let Some(existing) = self.clients.lock().await.get(&key).cloned() {
             return Ok(existing);
         }
 
-        let client = Arc::new(OpenAICompatibleProvider::from_config(resolved)?);
+        let client: Arc<dyn LlmProvider> = match resolved {
+            None => Arc::new(CodexProvider::from_config(
+                self.config.providers.codex.clone(),
+            )?),
+            Some(resolved) => Arc::new(OpenAICompatibleProvider::from_config(resolved)?),
+        };
+
         let mut clients = self.clients.lock().await;
         Ok(clients.entry(key).or_insert_with(|| client.clone()).clone())
     }
@@ -71,7 +88,7 @@ impl LlmProvider for ProviderPool {
         tools: Vec<serde_json::Value>,
         model: &str,
     ) -> Result<LlmResponse> {
-        let request = ProviderRequestDescriptor::new("openai", model, serde_json::Map::new());
+        let request = self.default_request_descriptor(model)?;
         self.chat_with_request(messages, tools, &request).await
     }
 
@@ -83,6 +100,23 @@ impl LlmProvider for ProviderPool {
     ) -> Result<LlmResponse> {
         let client = self.client_for(request).await?;
         client.chat_with_request(messages, tools, request).await
+    }
+}
+
+impl ProviderPool {
+    fn default_request_descriptor(&self, model: &str) -> Result<ProviderRequestDescriptor> {
+        let profile_name = &self.config.agents.defaults.default_profile;
+        let profile = self.config.agents.profiles.get(profile_name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "agents.defaults.defaultProfile '{profile_name}' does not match any configured profile"
+            )
+        })?;
+        self.registry.resolve(&profile.provider)?;
+        Ok(ProviderRequestDescriptor::new(
+            profile.provider.clone(),
+            model.to_string(),
+            profile.request.clone(),
+        ))
     }
 }
 
@@ -98,6 +132,10 @@ fn provider_cache_key(config: &ResolvedProviderConfig) -> String {
         "{}\n{}\n{}\n{}",
         config.name, config.api_base, config.api_key, header_blob
     )
+}
+
+fn codex_provider_cache_key(config: &CodexProviderConfig) -> String {
+    codex::cache_key(config)
 }
 
 pub fn build_provider_from_config(config: &Config) -> Result<Arc<dyn LlmProvider>> {
