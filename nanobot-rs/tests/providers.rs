@@ -211,6 +211,52 @@ async fn provider_pool_routes_codex_profiles_to_codex_provider() {
     assert!(err.to_string().contains("auth file"), "{err}");
 }
 
+#[tokio::test]
+async fn provider_pool_default_chat_routes_codex_default_profile_to_codex_provider() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("config.json");
+    let missing_auth_path = dir.path().join("missing-codex-auth.json");
+    fs::write(
+        &path,
+        format!(
+            r#"{{
+  "agents": {{
+    "defaults": {{
+      "workspace": "/tmp/nanobot",
+      "defaultProfile": "codex:gpt-5.4",
+      "maxToolIterations": 20
+    }},
+    "profiles": {{
+      "codex:gpt-5.4": {{
+        "provider": "codex",
+        "model": "gpt-5.4",
+        "request": {{}}
+      }}
+    }}
+  }},
+  "providers": {{
+    "codex": {{
+      "authFile": "{}",
+      "apiBase": "https://chatgpt.com/backend-api"
+    }}
+  }}
+}}"#,
+            missing_auth_path.display()
+        ),
+    )
+    .expect("write config");
+
+    let config = load_config(Some(&path)).expect("load config");
+    let pool = ProviderPool::new(config);
+
+    let err = pool
+        .chat(vec![], vec![], "gpt-5.4")
+        .await
+        .expect_err("missing auth file should fail");
+
+    assert!(err.to_string().contains("auth file"), "{err}");
+}
+
 #[test]
 fn config_defaults_include_a_concrete_codex_provider_block() {
     let config = Config::default();

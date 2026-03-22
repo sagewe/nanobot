@@ -88,7 +88,7 @@ impl LlmProvider for ProviderPool {
         tools: Vec<serde_json::Value>,
         model: &str,
     ) -> Result<LlmResponse> {
-        let request = ProviderRequestDescriptor::new("openai", model, serde_json::Map::new());
+        let request = self.default_request_descriptor(model)?;
         self.chat_with_request(messages, tools, &request).await
     }
 
@@ -100,6 +100,23 @@ impl LlmProvider for ProviderPool {
     ) -> Result<LlmResponse> {
         let client = self.client_for(request).await?;
         client.chat_with_request(messages, tools, request).await
+    }
+}
+
+impl ProviderPool {
+    fn default_request_descriptor(&self, model: &str) -> Result<ProviderRequestDescriptor> {
+        let profile_name = &self.config.agents.defaults.default_profile;
+        let profile = self.config.agents.profiles.get(profile_name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "agents.defaults.defaultProfile '{profile_name}' does not match any configured profile"
+            )
+        })?;
+        self.registry.resolve(&profile.provider)?;
+        Ok(ProviderRequestDescriptor::new(
+            profile.provider.clone(),
+            model.to_string(),
+            profile.request.clone(),
+        ))
     }
 }
 
