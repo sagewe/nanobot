@@ -1,12 +1,30 @@
 use nanobot_rs::session::{Session, SessionMessage, SessionStore};
 use serde_json::json;
 use tempfile::tempdir;
+use tracing::subscriber::with_default;
+
+struct SharedWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for SharedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("writer lock").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 fn value_messages(messages: &[SessionMessage]) -> Vec<serde_json::Value> {
     messages
         .iter()
         .map(|message| serde_json::to_value(message).expect("session message"))
         .collect()
+}
+
+fn warning_log(buffer: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>) -> String {
+    String::from_utf8(buffer.lock().expect("buffer lock").clone()).expect("utf8 log")
 }
 
 fn tool_turn(prefix: &str, idx: usize) -> Vec<SessionMessage> {
@@ -458,7 +476,7 @@ fn duplicate_to_web_copies_history_and_source_metadata() {
     );
     assert_eq!(
         duplicated.source_session_key.as_deref(),
-        Some("signal:origin-1")
+        Some("telegram:thread-9")
     );
     assert_eq!(
         value_messages(&duplicated.messages),
@@ -472,7 +490,7 @@ fn duplicate_to_web_copies_history_and_source_metadata() {
     assert_eq!(loaded.active_profile.as_deref(), Some("archive-profile"));
     assert_eq!(
         loaded.source_session_key.as_deref(),
-        Some("signal:origin-1")
+        Some("telegram:thread-9")
     );
     assert_eq!(
         value_messages(&loaded.messages),
@@ -482,6 +500,81 @@ fn duplicate_to_web_copies_history_and_source_metadata() {
     let copied_history = loaded.get_history(100);
     assert_eq!(copied_history, source.get_history(100));
     assert_no_orphans(&copied_history);
+}
+
+#[test]
+fn duplicate_to_web_sets_source_key_when_source_has_no_ancestor_metadata() {
+    let dir = tempdir().expect("tempdir");
+    let store = SessionStore::new(dir.path()).expect("session store");
+
+    let mut source = Session::new("cli:thread-7");
+    source.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("hello"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    store.save(&source).expect("save source");
+
+    let duplicated = store
+        .duplicate_session_to_web("cli:thread-7")
+        .expect("duplicate session");
+
+    assert_eq!(
+        duplicated.source_session_key.as_deref(),
+        Some("cli:thread-7")
+    );
+    let loaded = store
+        .get_session_detail(&duplicated.key)
+        .expect("load duplicated")
+        .expect("duplicated session");
+    assert_eq!(loaded.source_session_key.as_deref(), Some("cli:thread-7"));
+}
+
+#[test]
+fn list_sessions_warns_when_a_session_file_is_skipped() {
+    let dir = tempdir().expect("tempdir");
+    let store = SessionStore::new(dir.path()).expect("session store");
+
+    let mut good = Session::new("web:ok");
+    good.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("hello"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    store.save(&good).expect("save good session");
+
+    let bad_path = store.path_for("cli:broken");
+    std::fs::write(&bad_path, "{not-json").expect("write bad session");
+
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_target(false)
+        .without_time()
+        .with_writer({
+            let captured = captured.clone();
+            move || SharedWriter(captured.clone())
+        })
+        .finish();
+
+    let sessions = with_default(subscriber, || {
+        store
+            .list_sessions_across_namespaces()
+            .expect("list sessions")
+    });
+
+    assert_eq!(sessions.len(), 1);
+    let log = warning_log(&captured);
+    assert!(log.contains(bad_path.to_string_lossy().as_ref()));
+    assert!(log.contains("skipping"));
 }
 
 #[test]

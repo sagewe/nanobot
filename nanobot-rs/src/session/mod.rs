@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tracing::warn;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,17 +222,10 @@ impl SessionStore {
 
     pub fn list_sessions_across_namespaces(&self) -> Result<Vec<SessionSummary>> {
         let mut sessions = Vec::new();
-        for entry in std::fs::read_dir(&self.dir)
-            .with_context(|| format!("failed to read {}", self.dir.display()))?
-        {
-            let path = entry?.path();
-            if !path.is_file() {
-                continue;
+        for path in self.session_file_paths()? {
+            if let Some(session) = self.load_session_from_path_logged(&path) {
+                sessions.push(session.into_summary());
             }
-            let Some(session) = self.load_from_path(&path).ok() else {
-                continue;
-            };
-            sessions.push(session.into_summary());
         }
         sessions.sort_by(|a, b| {
             b.updated_at
@@ -258,14 +252,8 @@ impl SessionStore {
     pub fn list_sessions_in_namespace(&self, namespace: &str) -> Result<Vec<SessionSummary>> {
         let prefix = namespace_prefix(namespace);
         let mut sessions = Vec::new();
-        for entry in std::fs::read_dir(&self.dir)
-            .with_context(|| format!("failed to read {}", self.dir.display()))?
-        {
-            let path = entry?.path();
-            if !path.is_file() {
-                continue;
-            }
-            let Some(session) = self.load_from_path(&path).ok() else {
+        for path in self.session_file_paths()? {
+            let Some(session) = self.load_session_from_path_logged(&path) else {
                 continue;
             };
             if session.key.starts_with(&prefix) {
@@ -287,10 +275,7 @@ impl SessionStore {
         let now = Utc::now();
         let mut duplicated = Session::new(format!("web:{}", Uuid::new_v4()));
         duplicated.active_profile = source.active_profile.clone();
-        duplicated.source_session_key = source
-            .source_session_key
-            .clone()
-            .or_else(|| Some(source.key.clone()));
+        duplicated.source_session_key = Some(source.key.clone());
         duplicated.messages = source.messages.clone();
         duplicated.created_at = now;
         duplicated.updated_at = now;
@@ -355,6 +340,29 @@ impl SessionStore {
         std::fs::write(&path, lines.join("\n") + "\n")
             .with_context(|| format!("failed to write session {}", path.display()))?;
         Ok(())
+    }
+
+    fn session_file_paths(&self) -> Result<Vec<PathBuf>> {
+        let mut paths = Vec::new();
+        for entry in std::fs::read_dir(&self.dir)
+            .with_context(|| format!("failed to read {}", self.dir.display()))?
+        {
+            let path = entry?.path();
+            if path.is_file() {
+                paths.push(path);
+            }
+        }
+        Ok(paths)
+    }
+
+    fn load_session_from_path_logged(&self, path: &Path) -> Option<Session> {
+        match self.load_from_path(path) {
+            Ok(session) => Some(session),
+            Err(err) => {
+                warn!(path = %path.display(), error = %err, "skipping unreadable session file");
+                None
+            }
+        }
     }
 }
 
