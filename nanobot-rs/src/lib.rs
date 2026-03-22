@@ -10,6 +10,8 @@ pub mod session;
 pub mod tools;
 pub mod web;
 
+pub use channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinLoginSession};
+
 pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
