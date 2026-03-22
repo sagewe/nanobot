@@ -7,15 +7,15 @@ use std::time::Instant;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::routing::{get, post};
-use axum::{response::IntoResponse, Json, Router};
+use axum::{Json, Router, response::IntoResponse};
 use chrono::{TimeZone, Utc};
 use nanobot_rs::bus::{MessageBus, OutboundMessage};
+use nanobot_rs::channels::Channel;
 use nanobot_rs::channels::weixin::{
     WeixinAccountState, WeixinAccountStore, WeixinChannel, WeixinLoginManager,
 };
-use nanobot_rs::channels::Channel;
 use nanobot_rs::config::WeixinConfig;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
@@ -732,11 +732,13 @@ async fn outbound_send_includes_cached_context_token() {
             .and_then(Value::as_str),
         Some(env!("CARGO_PKG_VERSION"))
     );
-    assert!(requests[0]
-        .body
-        .pointer("/msg/client_id")
-        .and_then(Value::as_str)
-        .is_some_and(|client_id| !client_id.is_empty()));
+    assert!(
+        requests[0]
+            .body
+            .pointer("/msg/client_id")
+            .and_then(Value::as_str)
+            .is_some_and(|client_id| !client_id.is_empty())
+    );
 }
 
 #[tokio::test]
@@ -1122,9 +1124,11 @@ async fn client_side_timeout_is_treated_as_an_empty_poll() {
     drop(bus);
 
     let requests = server.take_requests().await;
-    assert!(requests
-        .iter()
-        .any(|request| request.path == "/ilink/bot/getupdates"));
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.path == "/ilink/bot/getupdates")
+    );
     assert!(requests.len() >= 2);
 }
 
@@ -1223,16 +1227,20 @@ fn weixin_account_store_clear_all_removes_persisted_state() {
     store.clear_all().unwrap();
 
     assert!(store.load_account().unwrap().is_none());
-    assert!(store
-        .load_context_token("user@im.wechat")
-        .unwrap()
-        .is_none());
-    assert!(!temp
-        .path()
-        .join("channels")
-        .join("weixin")
-        .join("context_tokens.json")
-        .exists());
+    assert!(
+        store
+            .load_context_token("user@im.wechat")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !temp
+            .path()
+            .join("channels")
+            .join("weixin")
+            .join("context_tokens.json")
+            .exists()
+    );
 }
 
 #[test]

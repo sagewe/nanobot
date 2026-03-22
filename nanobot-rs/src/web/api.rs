@@ -1,13 +1,13 @@
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{
     AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary, WebWeixinAccount,
-    WebWeixinLoginStatus, WeixinLoginStartResponse,
+    WebWeixinLoginStatus, WeixinLoginStartResponse, WeixinWorkflowError, WeixinWorkflowErrorKind,
 };
 use crate::presentation::render_web_html;
 
@@ -245,7 +245,7 @@ fn validate_session_id(session_id: &str) -> Result<&str, ApiError> {
     if trimmed.is_empty()
         || !trimmed
             .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':'))
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':' | '@' | '.'))
     {
         return Err(ApiError::bad_request("invalid session id"));
     }
@@ -273,11 +273,16 @@ fn map_duplicate_error(error: anyhow::Error, channel: &str, session_id: &str) ->
 }
 
 fn map_weixin_workflow_error(error: anyhow::Error) -> ApiError {
-    let message = error.to_string();
-    if message.contains("weixin runtime is not available")
-        || message.contains("weixin login has not been started")
-    {
-        return ApiError::conflict(message);
+    if let Some(error) = error.downcast_ref::<WeixinWorkflowError>() {
+        return match error.kind() {
+            WeixinWorkflowErrorKind::Disabled | WeixinWorkflowErrorKind::LoginNotStarted => {
+                ApiError::conflict(error.to_string())
+            }
+            WeixinWorkflowErrorKind::InitFailed => ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: error.to_string(),
+            },
+        };
     }
     ApiError::internal(error)
 }

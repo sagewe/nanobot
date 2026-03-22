@@ -4,7 +4,7 @@ use nanobot_rs::presentation::{
     render_telegram_html, render_web_html, render_wecom_markdown, should_deliver_to_channel,
     split_telegram_html_chunks,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn progress_metadata() -> HashMap<String, Value> {
     HashMap::from([("_progress".to_string(), json!(true))])

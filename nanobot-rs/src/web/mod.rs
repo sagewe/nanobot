@@ -1,14 +1,16 @@
 pub mod api;
 pub mod page;
 
+use std::error::Error as StdError;
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -21,7 +23,7 @@ use crate::channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinLogi
 use crate::config::WeixinConfig;
 use crate::presentation::render_web_html;
 use crate::session::{
-    split_session_key, Session, SessionGroupSummary, SessionMessage, SessionSummary,
+    Session, SessionGroupSummary, SessionMessage, SessionSummary, split_session_key,
 };
 
 const WEB_NAMESPACE: &str = "web";
@@ -204,6 +206,54 @@ impl From<&WeixinConfig> for WeixinWebConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeixinWorkflowErrorKind {
+    Disabled,
+    LoginNotStarted,
+    InitFailed,
+}
+
+#[derive(Debug, Clone)]
+pub struct WeixinWorkflowError {
+    kind: WeixinWorkflowErrorKind,
+    message: String,
+}
+
+impl WeixinWorkflowError {
+    fn disabled() -> Self {
+        Self {
+            kind: WeixinWorkflowErrorKind::Disabled,
+            message: "weixin runtime is disabled".to_string(),
+        }
+    }
+
+    fn login_not_started() -> Self {
+        Self {
+            kind: WeixinWorkflowErrorKind::LoginNotStarted,
+            message: "weixin login has not been started".to_string(),
+        }
+    }
+
+    fn init_failed(error: impl fmt::Display) -> Self {
+        Self {
+            kind: WeixinWorkflowErrorKind::InitFailed,
+            message: format!("failed to initialize weixin web runtime: {error}"),
+        }
+    }
+
+    pub fn kind(&self) -> WeixinWorkflowErrorKind {
+        self.kind
+    }
+}
+
+impl fmt::Display for WeixinWorkflowError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl StdError for WeixinWorkflowError {}
+
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) chat: Arc<dyn ChatService>,
@@ -265,7 +315,7 @@ impl WeixinRuntime {
 
     async fn start_login(&self) -> Result<WeixinLoginStartResponse> {
         if !self.config.enabled {
-            bail!("weixin runtime is not available");
+            return Err(anyhow::Error::new(WeixinWorkflowError::disabled()));
         }
         let login = self.login.start_login().await?;
         Ok(WeixinLoginStartResponse {
@@ -276,9 +326,19 @@ impl WeixinRuntime {
 
     async fn poll_login(&self) -> Result<WebWeixinLoginStatus> {
         if !self.config.enabled {
-            bail!("weixin runtime is not available");
+            return Err(anyhow::Error::new(WeixinWorkflowError::disabled()));
         }
-        let status = self.login.poll_login_status().await?;
+        let status = match self.login.poll_login_status().await {
+            Ok(status) => status,
+            Err(error)
+                if error
+                    .to_string()
+                    .contains("weixin login has not been started") =>
+            {
+                return Err(anyhow::Error::new(WeixinWorkflowError::login_not_started()));
+            }
+            Err(error) => return Err(error),
+        };
         let account = self.store.load_account()?;
         Ok(WebWeixinLoginStatus::from_state(
             Some(status.status.as_str()),
@@ -294,28 +354,73 @@ impl WeixinRuntime {
 }
 
 #[derive(Clone)]
+enum WeixinServiceState {
+    Disabled(WeixinWebConfig),
+    Ready(WeixinRuntime),
+    InitFailed { error: Arc<str> },
+}
+
+impl WeixinServiceState {
+    fn new(workspace: PathBuf, config: WeixinWebConfig) -> Self {
+        if !config.enabled {
+            return Self::Disabled(config);
+        }
+
+        match WeixinRuntime::new(workspace, config.clone()) {
+            Ok(runtime) => Self::Ready(runtime),
+            Err(error) => {
+                error!(error = %error, "failed to initialize weixin web runtime");
+                Self::InitFailed {
+                    error: Arc::<str>::from(error.to_string()),
+                }
+            }
+        }
+    }
+
+    fn account_placeholder(config: &WeixinWebConfig) -> WebWeixinAccount {
+        WebWeixinAccount::from_account(config.enabled, None)
+    }
+
+    fn init_failed_error(error: &Arc<str>) -> anyhow::Error {
+        anyhow::Error::new(WeixinWorkflowError::init_failed(error.as_ref()))
+    }
+
+    fn runtime(&self) -> Result<&WeixinRuntime> {
+        match self {
+            Self::Disabled(_) => Err(anyhow::Error::new(WeixinWorkflowError::disabled())),
+            Self::Ready(runtime) => Ok(runtime),
+            Self::InitFailed { error } => Err(Self::init_failed_error(error)),
+        }
+    }
+
+    async fn account_when_unavailable(&self) -> Result<WebWeixinAccount> {
+        match self {
+            Self::Disabled(config) => Ok(Self::account_placeholder(config)),
+            Self::Ready(runtime) => runtime.get_account().await,
+            Self::InitFailed { error } => Err(Self::init_failed_error(error)),
+        }
+    }
+
+    async fn account_after_logout(&self) -> Result<WebWeixinAccount> {
+        match self {
+            Self::Disabled(config) => Ok(Self::account_placeholder(config)),
+            Self::Ready(runtime) => runtime.logout().await,
+            Self::InitFailed { error } => Err(Self::init_failed_error(error)),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct AgentChatService {
     agent: AgentLoop,
-    weixin_config: WeixinWebConfig,
-    weixin: Option<WeixinRuntime>,
+    weixin: WeixinServiceState,
 }
 
 impl AgentChatService {
     pub fn new(agent: AgentLoop) -> Self {
         let weixin_config = WeixinWebConfig::from(agent.weixin_web_config());
-        let weixin =
-            match WeixinRuntime::new(agent.workspace_path().to_path_buf(), weixin_config.clone()) {
-                Ok(runtime) => Some(runtime),
-                Err(error) => {
-                    error!(error = %error, "failed to initialize weixin web runtime");
-                    None
-                }
-            };
-        Self {
-            agent,
-            weixin_config,
-            weixin,
-        }
+        let weixin = WeixinServiceState::new(agent.workspace_path().to_path_buf(), weixin_config);
+        Self { agent, weixin }
     }
 }
 
@@ -396,37 +501,19 @@ impl ChatService for AgentChatService {
     }
 
     async fn get_weixin_account(&self) -> Result<WebWeixinAccount> {
-        match &self.weixin {
-            Some(weixin) => weixin.get_account().await,
-            None => Ok(WebWeixinAccount::from_account(
-                self.weixin_config.enabled,
-                None,
-            )),
-        }
+        self.weixin.account_when_unavailable().await
     }
 
     async fn start_weixin_login(&self) -> Result<WeixinLoginStartResponse> {
-        match &self.weixin {
-            Some(weixin) => weixin.start_login().await,
-            None => Err(anyhow::anyhow!("weixin runtime is not available")),
-        }
+        self.weixin.runtime()?.start_login().await
     }
 
     async fn poll_weixin_login(&self) -> Result<WebWeixinLoginStatus> {
-        match &self.weixin {
-            Some(weixin) => weixin.poll_login().await,
-            None => Err(anyhow::anyhow!("weixin runtime is not available")),
-        }
+        self.weixin.runtime()?.poll_login().await
     }
 
     async fn logout_weixin(&self) -> Result<WebWeixinAccount> {
-        match &self.weixin {
-            Some(weixin) => weixin.logout().await,
-            None => Ok(WebWeixinAccount::from_account(
-                self.weixin_config.enabled,
-                None,
-            )),
-        }
+        self.weixin.account_after_logout().await
     }
 }
 
@@ -544,9 +631,10 @@ fn channel_sort_key(channel: &str) -> (usize, &str) {
         "web" => 0,
         "telegram" => 1,
         "wecom" => 2,
-        "cli" => 3,
-        "system" => 4,
-        _ => 5,
+        "weixin" => 3,
+        "cli" => 4,
+        "system" => 5,
+        _ => 6,
     };
     (rank, channel)
 }

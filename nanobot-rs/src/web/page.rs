@@ -166,6 +166,53 @@ pub fn render_index_html() -> String {
         font-size: 0.78rem;
       }
 
+      .account-panel {
+        display: grid;
+        gap: 0.7rem;
+        padding: 0.95rem;
+        border: 1px solid var(--line);
+        border-radius: 1rem;
+        background: rgba(255, 255, 255, 0.58);
+      }
+
+      .account-status {
+        display: grid;
+        gap: 0.3rem;
+      }
+
+      .account-status strong,
+      .account-status span {
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.84rem;
+      }
+
+      .account-muted {
+        color: var(--muted);
+        font-size: 0.9rem;
+        line-height: 1.4;
+      }
+
+      .account-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+      }
+
+      #weixin-qr-panel {
+        display: grid;
+        gap: 0.5rem;
+        padding: 0.75rem;
+        border-radius: 0.9rem;
+        border: 1px dashed var(--line);
+        background: rgba(255, 255, 255, 0.52);
+      }
+
+      #weixin-qr-image {
+        width: min(100%, 12rem);
+        border-radius: 0.8rem;
+        background: white;
+      }
+
       .conversation-pane {
         display: grid;
         gap: 1rem;
@@ -295,6 +342,21 @@ pub fn render_index_html() -> String {
             <strong id="active-profile">default</strong>
           </div>
           <div id="session-list" aria-live="polite"><section class="session-group" hidden></section></div>
+          <section id="weixin-account-panel" class="account-panel">
+            <div class="session-kicker">Weixin</div>
+            <div class="account-status">
+              <strong id="weixin-status-label">Checking account…</strong>
+              <span id="weixin-user-label" class="account-muted">Login from the embedded console.</span>
+            </div>
+            <div id="weixin-qr-panel" hidden>
+              <img id="weixin-qr-image" alt="Weixin login QR code" />
+              <div id="weixin-qr-note" class="account-muted">Scan this QR code in Weixin to confirm login.</div>
+            </div>
+            <div class="account-actions">
+              <button id="weixin-login-button" type="button">Login to Weixin</button>
+              <button id="weixin-logout-button" type="button">Logout</button>
+            </div>
+          </section>
         </aside>
         <section class="conversation-pane">
           <section id="transcript" aria-live="polite">
@@ -325,6 +387,13 @@ pub fn render_index_html() -> String {
       const duplicateButton = document.getElementById("duplicate-session-button");
       const statusNode = document.getElementById("status");
       const currentProfileNode = document.getElementById("active-profile");
+      const weixinAccountPanel = document.getElementById("weixin-account-panel");
+      const weixinStatusLabel = document.getElementById("weixin-status-label");
+      const weixinUserLabel = document.getElementById("weixin-user-label");
+      const weixinQrPanel = document.getElementById("weixin-qr-panel");
+      const weixinQrImage = document.getElementById("weixin-qr-image");
+      const weixinLoginButton = document.getElementById("weixin-login-button");
+      const weixinLogoutButton = document.getElementById("weixin-logout-button");
       const legacyStoredSessionId = localStorage.getItem(SESSION_KEY);
       let currentChannel = null;
       let currentSessionId = null;
@@ -332,6 +401,7 @@ pub fn render_index_html() -> String {
       let currentSessionCanDuplicate = false;
       let currentSessionGroups = [];
       let pendingSelectionToken = 0;
+      let weixinPollTimer = null;
       let isBusy = false;
 
       function appendMessage(role, content) {
@@ -508,6 +578,57 @@ pub fn render_index_html() -> String {
         return webSessions[0] || null;
       }
 
+      function clearWeixinPollTimer() {
+        if (weixinPollTimer) {
+          clearTimeout(weixinPollTimer);
+          weixinPollTimer = null;
+        }
+      }
+
+      function scheduleWeixinPoll() {
+        clearWeixinPollTimer();
+        weixinPollTimer = setTimeout(() => pollWeixinLoginStatus(), 1500);
+      }
+
+      function renderWeixinAccount(account) {
+        const enabled = account?.enabled === true;
+        const loggedIn = account?.loggedIn === true;
+        const expired = account?.expired === true;
+        const userId = account?.userId || account?.botId || "Login from the embedded console.";
+
+        weixinAccountPanel.hidden = false;
+        weixinLoginButton.disabled = !enabled || loggedIn;
+        weixinLogoutButton.disabled = !enabled || !loggedIn;
+
+        if (!enabled) {
+          clearWeixinPollTimer();
+          weixinStatusLabel.textContent = "Weixin channel disabled";
+          weixinUserLabel.textContent = "Enable channels.weixin to use QR login.";
+          weixinQrPanel.hidden = true;
+          weixinQrImage.src = "";
+          return;
+        }
+
+        if (loggedIn && !expired) {
+          clearWeixinPollTimer();
+          weixinStatusLabel.textContent = "Connected";
+          weixinUserLabel.textContent = userId;
+          weixinQrPanel.hidden = true;
+          weixinQrImage.src = "";
+          return;
+        }
+
+        if (expired) {
+          clearWeixinPollTimer();
+          weixinStatusLabel.textContent = "Login expired";
+          weixinUserLabel.textContent = userId;
+          return;
+        }
+
+        weixinStatusLabel.textContent = "Not connected";
+        weixinUserLabel.textContent = userId;
+      }
+
       async function fetchSessions() {
         const response = await fetch("/api/sessions");
         const payload = await response.json();
@@ -563,6 +684,71 @@ pub fn render_index_html() -> String {
           setSelectedSession(null, null);
         }
         return currentSessionGroups;
+      }
+
+      async function loadWeixinAccount() {
+        const response = await fetch("/api/weixin/account");
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Failed to load Weixin account");
+        }
+        renderWeixinAccount(payload);
+        return payload;
+      }
+
+      async function startWeixinLogin() {
+        const response = await fetch("/api/weixin/login/start", {
+          method: "POST",
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Failed to start Weixin login");
+        }
+        weixinQrPanel.hidden = false;
+        weixinQrImage.src = payload.qrcodeImgContent || "";
+        weixinStatusLabel.textContent = "Waiting for scan";
+        weixinUserLabel.textContent = "Scan the QR code in Weixin.";
+        scheduleWeixinPoll();
+      }
+
+      async function pollWeixinLoginStatus() {
+        try {
+          const response = await fetch("/api/weixin/login/status");
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.error || "Failed to poll Weixin login");
+          }
+
+          if (payload.status === "confirmed") {
+            weixinStatusLabel.textContent = "Connected";
+            weixinQrPanel.hidden = true;
+            clearWeixinPollTimer();
+            await loadWeixinAccount();
+            await refreshSessions();
+            return;
+          }
+
+          if (payload.expired === true || payload.status === "expired") {
+            weixinStatusLabel.textContent = "Login expired";
+            weixinUserLabel.textContent = "Refresh the QR code to try again.";
+            clearWeixinPollTimer();
+            await loadWeixinAccount();
+            return;
+          }
+
+          if (payload.status === "scaned") {
+            weixinStatusLabel.textContent = "QR scanned";
+            weixinUserLabel.textContent = "Confirm login in Weixin.";
+          } else {
+            weixinStatusLabel.textContent = "Waiting for scan";
+          }
+
+          scheduleWeixinPoll();
+        } catch (error) {
+          clearWeixinPollTimer();
+          setStatus(error?.message || "Failed to poll Weixin login", "error");
+          await loadWeixinAccount().catch(() => {});
+        }
       }
 
       async function selectSession(channel, sessionId) {
@@ -639,6 +825,42 @@ pub fn render_index_html() -> String {
         }
       });
 
+      weixinLoginButton.addEventListener("click", async () => {
+        clearWeixinPollTimer();
+        weixinQrPanel.hidden = true;
+        try {
+          setStatus("Starting Weixin login...", "loading");
+          await startWeixinLogin();
+          setStatus("Scan the Weixin QR code to continue.", "idle");
+        } catch (error) {
+          weixinQrPanel.hidden = true;
+          setStatus(error?.message || "Failed to start Weixin login", "error");
+          await loadWeixinAccount().catch(() => {});
+        }
+      });
+
+      weixinLogoutButton.addEventListener("click", async () => {
+        clearWeixinPollTimer();
+        try {
+          setStatus("Disconnecting Weixin...", "loading");
+          const response = await fetch("/api/weixin/logout", {
+            method: "POST",
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.error || "Failed to logout Weixin");
+          }
+          weixinQrPanel.hidden = true;
+          weixinQrImage.src = "";
+          renderWeixinAccount(payload);
+          await loadWeixinAccount();
+          await refreshSessions();
+          setStatus("Weixin disconnected.", "idle");
+        } catch (error) {
+          setStatus(error?.message || "Failed to logout Weixin", "error");
+        }
+      });
+
       messageInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
           event.preventDefault();
@@ -705,7 +927,8 @@ pub fn render_index_html() -> String {
         }
       });
 
-      bootstrapSessions().catch((error) => {
+      Promise.all([bootstrapSessions(), loadWeixinAccount()]).catch((error) => {
+        clearWeixinPollTimer();
         setStatus(error?.message || "Failed to load sessions", "error");
       });
     </script>

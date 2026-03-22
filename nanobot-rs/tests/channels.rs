@@ -9,7 +9,7 @@ use nanobot_rs::bus::{MessageBus, OutboundMessage};
 use nanobot_rs::channels::weixin::{WeixinAccountStore, WeixinChannel};
 use nanobot_rs::channels::{Channel, ChannelManager, TelegramChannel};
 use nanobot_rs::config::{Config, TelegramConfig, WeixinConfig};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;

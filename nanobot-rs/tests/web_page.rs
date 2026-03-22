@@ -77,11 +77,15 @@ fn page_shell_bootstraps_from_backend_sessions_and_stored_selection() {
     assert!(html.contains(
         "const storedSession = findSession(groups, storedChannel || \"web\", restoredSessionId);"
     ));
-    assert!(html.contains(
-        "const initialSession = storedSession || findLatestWritableWebSession(groups);"
-    ));
+    assert!(
+        html.contains(
+            "const initialSession = storedSession || findLatestWritableWebSession(groups);"
+        )
+    );
     assert!(html.contains("await createSession();"));
-    assert!(html.contains("await selectSession(initialSession.channel, initialSession.sessionId);"));
+    assert!(
+        html.contains("await selectSession(initialSession.channel, initialSession.sessionId);")
+    );
 }
 
 #[test]
@@ -163,7 +167,9 @@ fn page_shell_supports_persisted_cross_channel_selection_and_legacy_migration() 
 fn page_shell_disables_composer_for_read_only_sessions_and_exposes_duplicate_action() {
     let html = nanobot_rs::web::page::render_index_html();
 
-    assert!(html.contains("const duplicateButton = document.getElementById(\"duplicate-session-button\");"));
+    assert!(html.contains(
+        "const duplicateButton = document.getElementById(\"duplicate-session-button\");"
+    ));
     assert!(html.contains("messageInput.disabled = readOnly;"));
     assert!(html.contains("sendButton.disabled = busy || currentSessionReadOnly;"));
     assert!(html.contains("duplicateButton.hidden = !canDuplicate;"));
@@ -175,7 +181,9 @@ fn page_shell_duplicates_non_web_sessions_into_new_web_session_and_switches_sele
     let html = nanobot_rs::web::page::render_index_html();
 
     assert!(html.contains("await fetch(\"/api/sessions/duplicate\", {"));
-    assert!(html.contains("body: JSON.stringify({ channel: currentChannel, sessionId: currentSessionId })"));
+    assert!(html.contains(
+        "body: JSON.stringify({ channel: currentChannel, sessionId: currentSessionId })"
+    ));
     assert!(html.contains("const duplicated = await duplicateSession();"));
     assert!(html.contains("await refreshSessions();"));
     assert!(html.contains("await selectSession(duplicated.channel, duplicated.sessionId);"));
@@ -191,4 +199,39 @@ fn page_shell_prefers_writable_web_fallback_and_creates_web_session_when_missing
     assert!(html.contains("if (!initialSession) {"));
     assert!(html.contains("const created = await createSession();"));
     assert!(html.contains("await selectSession(created.channel || \"web\", created.sessionId);"));
+}
+
+#[test]
+fn page_shell_includes_weixin_account_controls() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("id=\"weixin-account-panel\""));
+    assert!(html.contains("Weixin"));
+    assert!(html.contains("id=\"weixin-login-button\""));
+    assert!(html.contains("Login to Weixin"));
+    assert!(html.contains("id=\"weixin-logout-button\""));
+    assert!(html.contains("id=\"weixin-qr-image\""));
+    assert!(html.contains("id=\"weixin-status-label\""));
+}
+
+#[test]
+fn page_shell_bootstraps_weixin_account_and_login_polling() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("await fetch(\"/api/weixin/account\")"));
+    assert!(html.contains("await fetch(\"/api/weixin/login/start\", {"));
+    assert!(html.contains("await fetch(\"/api/weixin/login/status\")"));
+    assert!(html.contains("weixinQrImage.src = payload.qrcodeImgContent || \"\";"));
+    assert!(html.contains("setTimeout(() => pollWeixinLoginStatus(), 1500);"));
+    assert!(html.contains("await loadWeixinAccount();"));
+}
+
+#[test]
+fn page_shell_supports_weixin_logout_and_session_refresh() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("await fetch(\"/api/weixin/logout\", {"));
+    assert!(html.contains("weixinLogoutButton.addEventListener(\"click\""));
+    assert!(html.contains("await refreshSessions();"));
+    assert!(html.contains("weixinQrPanel.hidden = true;"));
 }

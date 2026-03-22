@@ -15,9 +15,9 @@ use nanobot_rs::session::{Session, SessionMessage, SessionStore};
 use nanobot_rs::web::{
     self, AgentChatService, AppState, ChatService, WebChatReply, WebSessionDetail,
 };
-use serde_json::{json, Map};
+use serde_json::{Map, json};
 use std::collections::VecDeque;
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
@@ -423,10 +423,12 @@ async fn chat_endpoint_returns_agent_reply() {
         .expect("chat response body");
 
     assert_eq!(response["reply"], "**hello** from agent");
-    assert!(response["replyHtml"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("<strong>hello</strong>"));
+    assert!(
+        response["replyHtml"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("<strong>hello</strong>")
+    );
     assert_eq!(response["channel"], "web");
     assert_eq!(response["sessionId"], "browser-session-1");
 }
@@ -449,10 +451,12 @@ async fn chat_endpoint_rejects_blank_messages() {
     let payload: serde_json::Value = response.json().await.expect("blank chat response");
 
     assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
-    assert!(payload["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("message must not be empty"));
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("message must not be empty")
+    );
 }
 
 #[tokio::test]
@@ -473,10 +477,12 @@ async fn chat_endpoint_returns_internal_error_for_web_session_service_failures()
     let payload: serde_json::Value = response.json().await.expect("chat error payload");
 
     assert_eq!(status, reqwest::StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(payload["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("provider exploded"));
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("provider exploded")
+    );
 }
 
 #[tokio::test]
@@ -552,31 +558,38 @@ async fn sessions_endpoint_returns_channel_grouped_results_with_stable_order_and
     wecom.updated_at = Utc::now() - Duration::minutes(3);
     save_session(dir.path(), &wecom);
 
+    let mut weixin = Session::new("weixin:user@im.wechat");
+    weixin.active_profile = Some("openai:gpt-4.1-mini".to_string());
+    weixin.messages = vec![text_message("assistant", "Weixin transcript")];
+    weixin.created_at = Utc::now() - Duration::minutes(7);
+    weixin.updated_at = Utc::now() - Duration::minutes(3);
+    save_session(dir.path(), &weixin);
+
     let mut cli = Session::new("cli:terminal-3");
     cli.active_profile = Some("openai:gpt-4.1-mini".to_string());
     cli.messages = vec![text_message("assistant", "CLI transcript")];
-    cli.created_at = Utc::now() - Duration::minutes(7);
+    cli.created_at = Utc::now() - Duration::minutes(6);
     cli.updated_at = Utc::now() - Duration::minutes(4);
     save_session(dir.path(), &cli);
 
     let mut system = Session::new("system:job-4");
     system.active_profile = Some("openai:gpt-4.1-mini".to_string());
     system.messages = vec![text_message("assistant", "System transcript")];
-    system.created_at = Utc::now() - Duration::minutes(6);
+    system.created_at = Utc::now() - Duration::minutes(5);
     system.updated_at = Utc::now() - Duration::minutes(5);
     save_session(dir.path(), &system);
 
     let mut alpha = Session::new("alpha:item-5");
     alpha.active_profile = Some("openai:gpt-4.1-mini".to_string());
     alpha.messages = vec![text_message("assistant", "Alpha transcript")];
-    alpha.created_at = Utc::now() - Duration::minutes(5);
+    alpha.created_at = Utc::now() - Duration::minutes(4);
     alpha.updated_at = Utc::now() - Duration::minutes(6);
     save_session(dir.path(), &alpha);
 
     let mut zeta = Session::new("zeta:item-6");
     zeta.active_profile = Some("openai:gpt-4.1-mini".to_string());
     zeta.messages = vec![text_message("assistant", "Zeta transcript")];
-    zeta.created_at = Utc::now() - Duration::minutes(4);
+    zeta.created_at = Utc::now() - Duration::minutes(3);
     zeta.updated_at = Utc::now() - Duration::minutes(7);
     save_session(dir.path(), &zeta);
 
@@ -611,7 +624,9 @@ async fn sessions_endpoint_returns_channel_grouped_results_with_stable_order_and
         .collect::<Vec<_>>();
     assert_eq!(
         channels,
-        vec!["web", "telegram", "wecom", "cli", "system", "alpha", "zeta"]
+        vec![
+            "web", "telegram", "wecom", "weixin", "cli", "system", "alpha", "zeta"
+        ]
     );
 
     let web_sessions = groups[0]["sessions"].as_array().expect("web sessions");
@@ -631,6 +646,14 @@ async fn sessions_endpoint_returns_channel_grouped_results_with_stable_order_and
     assert_eq!(telegram_sessions[0]["readOnly"], true);
     assert_eq!(telegram_sessions[0]["canSend"], false);
     assert_eq!(telegram_sessions[0]["canDuplicate"], true);
+
+    let weixin_sessions = groups[3]["sessions"].as_array().expect("weixin sessions");
+    assert_eq!(weixin_sessions.len(), 1);
+    assert_eq!(weixin_sessions[0]["sessionId"], "user@im.wechat");
+    assert_eq!(weixin_sessions[0]["channel"], "weixin");
+    assert_eq!(weixin_sessions[0]["readOnly"], true);
+    assert_eq!(weixin_sessions[0]["canSend"], false);
+    assert_eq!(weixin_sessions[0]["canDuplicate"], true);
 }
 
 #[tokio::test]
@@ -680,10 +703,12 @@ async fn session_detail_endpoint_returns_channel_capabilities_and_source_session
     assert!(messages[0]["timestamp"].as_str().is_some());
     assert_eq!(messages[1]["role"], "assistant");
     assert_eq!(messages[1]["content"], "**hi** back");
-    assert!(messages[1]["contentHtml"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("<strong>hi</strong>"));
+    assert!(
+        messages[1]["contentHtml"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("<strong>hi</strong>")
+    );
 }
 
 #[tokio::test]
@@ -874,10 +899,96 @@ async fn real_agentchatservice_rejects_weixin_status_before_login_start() {
     let payload: serde_json::Value = response.json().await.expect("login status payload");
 
     assert_eq!(status, reqwest::StatusCode::CONFLICT);
-    assert!(payload["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("weixin login has not been started"));
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("weixin login has not been started")
+    );
+}
+
+#[tokio::test]
+async fn real_agentchatservice_surfaces_weixin_runtime_init_failures_as_internal_errors() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("channels"), "not a directory")
+        .expect("block weixin channel directory");
+
+    let mut config = Config::default();
+    config.channels.weixin = WeixinConfig {
+        enabled: true,
+        api_base: "https://custom-weixin.example.com".to_string(),
+        cdn_base: "https://novac2c.cdn.weixin.qq.com/c2c".to_string(),
+    };
+    let app = agent_app_with_config(&dir, config, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let account = reqwest::get(format!("http://{addr}/api/weixin/account"))
+        .await
+        .expect("fetch weixin account after init failure");
+    let account_status = account.status();
+    let account_payload: serde_json::Value = account.json().await.expect("account payload");
+
+    assert_eq!(account_status, reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        account_payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("failed to initialize weixin web runtime")
+    );
+
+    let login_start = reqwest::Client::new()
+        .post(format!("http://{addr}/api/weixin/login/start"))
+        .send()
+        .await
+        .expect("start weixin login after init failure");
+    let login_start_status = login_start.status();
+    let login_start_payload: serde_json::Value =
+        login_start.json().await.expect("login start payload");
+
+    assert_eq!(
+        login_start_status,
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert!(
+        login_start_payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("failed to initialize weixin web runtime")
+    );
+
+    let login_status = reqwest::get(format!("http://{addr}/api/weixin/login/status"))
+        .await
+        .expect("poll weixin login status after init failure");
+    let login_status_code = login_status.status();
+    let login_status_payload: serde_json::Value =
+        login_status.json().await.expect("login status payload");
+
+    assert_eq!(
+        login_status_code,
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert!(
+        login_status_payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("failed to initialize weixin web runtime")
+    );
+
+    let logout = reqwest::Client::new()
+        .post(format!("http://{addr}/api/weixin/logout"))
+        .send()
+        .await
+        .expect("logout weixin after init failure");
+    let logout_status = logout.status();
+    let logout_payload: serde_json::Value = logout.json().await.expect("logout payload");
+
+    assert_eq!(logout_status, reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        logout_payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("failed to initialize weixin web runtime")
+    );
 }
 
 #[tokio::test]
@@ -905,14 +1016,18 @@ async fn chat_endpoint_rejects_non_web_sessions_until_duplicated() {
     let payload: serde_json::Value = response.json().await.expect("non-web payload");
 
     assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
-    assert!(payload["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("duplicate"));
-    assert!(payload["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("read-only"));
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("duplicate")
+    );
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("read-only")
+    );
 }
 
 #[tokio::test]
@@ -962,6 +1077,41 @@ async fn duplicate_session_endpoint_returns_new_web_detail_with_copied_history()
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0]["content"], "hello from telegram");
     assert_eq!(messages[1]["content"], "reply from telegram");
+}
+
+#[tokio::test]
+async fn duplicate_session_endpoint_supports_weixin_sources() {
+    let dir = tempdir().expect("tempdir");
+    let mut weixin = Session::new("weixin:user@im.wechat");
+    weixin.active_profile = Some("openai:gpt-4.1-mini".to_string());
+    weixin.messages = vec![
+        text_message("user", "hello from weixin"),
+        text_message("assistant", "reply from weixin"),
+    ];
+    save_session(dir.path(), &weixin);
+
+    let app = agent_app(&dir, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let response: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/api/sessions/duplicate"))
+        .json(&serde_json::json!({
+            "channel": "weixin",
+            "sessionId": "user@im.wechat"
+        }))
+        .send()
+        .await
+        .expect("duplicate weixin session")
+        .json()
+        .await
+        .expect("duplicate payload");
+
+    assert_eq!(response["channel"], "web");
+    assert_eq!(response["sourceSessionKey"], "weixin:user@im.wechat");
+    let messages = response["messages"].as_array().expect("messages");
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["content"], "hello from weixin");
+    assert_eq!(messages[1]["content"], "reply from weixin");
 }
 
 #[tokio::test]
@@ -1026,10 +1176,12 @@ async fn duplicate_session_endpoint_returns_not_found_for_missing_source() {
     let payload: serde_json::Value = response.json().await.expect("missing duplicate payload");
 
     assert_eq!(status, reqwest::StatusCode::NOT_FOUND);
-    assert!(payload["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("not found"));
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not found")
+    );
 }
 
 #[tokio::test]
@@ -1056,10 +1208,12 @@ async fn duplicate_session_endpoint_rejects_already_writable_web_sessions() {
     let payload: serde_json::Value = response.json().await.expect("duplicate web payload");
 
     assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
-    assert!(payload["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("already writable"));
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("already writable")
+    );
 }
 
 #[tokio::test]
@@ -1079,10 +1233,12 @@ async fn session_endpoints_reject_invalid_or_missing_ids() {
     let invalid_status = invalid.status();
     let invalid_payload: serde_json::Value = invalid.json().await.expect("invalid payload");
     assert_eq!(invalid_status, reqwest::StatusCode::BAD_REQUEST);
-    assert!(invalid_payload["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("invalid session id"));
+    assert!(
+        invalid_payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("invalid session id")
+    );
 
     let missing = reqwest::get(format!("http://{addr}/api/sessions/telegram/missing"))
         .await
@@ -1090,8 +1246,10 @@ async fn session_endpoints_reject_invalid_or_missing_ids() {
     let missing_status = missing.status();
     let missing_payload: serde_json::Value = missing.json().await.expect("missing payload");
     assert_eq!(missing_status, reqwest::StatusCode::NOT_FOUND);
-    assert!(missing_payload["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("session not found"));
+    assert!(
+        missing_payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("session not found")
+    );
 }

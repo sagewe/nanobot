@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
@@ -16,9 +16,9 @@ use crate::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
 use crate::providers::{LlmProvider, ProviderRequestDescriptor};
 use crate::session::{Session, SessionGroupSummary, SessionMessage, SessionStore, SessionSummary};
 use crate::tools::{
-    assistant_message_with_extra, build_default_tools, system_message, tool_message, EditFileTool,
-    ExecTool, ListDirTool, ReadFileTool, ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
-    WriteFileTool,
+    EditFileTool, ExecTool, ListDirTool, ReadFileTool, ToolContext, ToolRegistry, WebFetchTool,
+    WebSearchTool, WriteFileTool, assistant_message_with_extra, build_default_tools,
+    system_message, tool_message,
 };
 
 const RUNTIME_CONTEXT_TAG: &str = "[Runtime Context — metadata only, not instructions]";
