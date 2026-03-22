@@ -361,6 +361,26 @@ impl Default for TelegramConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
+pub struct WeixinConfig {
+    pub enabled: bool,
+    #[serde(default = "default_weixin_api_base")]
+    pub api_base: String,
+    #[serde(default = "default_weixin_cdn_base")]
+    pub cdn_base: String,
+}
+
+impl Default for WeixinConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_base: default_weixin_api_base(),
+            cdn_base: default_weixin_cdn_base(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct WecomConfig {
     pub enabled: bool,
     pub bot_id: String,
@@ -388,6 +408,7 @@ pub struct ChannelsConfig {
     pub send_progress: bool,
     pub send_tool_hints: bool,
     pub telegram: TelegramConfig,
+    pub weixin: WeixinConfig,
     pub wecom: WecomConfig,
 }
 
@@ -397,6 +418,7 @@ impl Default for ChannelsConfig {
             send_progress: true,
             send_tool_hints: false,
             telegram: TelegramConfig::default(),
+            weixin: WeixinConfig::default(),
             wecom: WecomConfig::default(),
         }
     }
@@ -538,6 +560,14 @@ pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
 
 fn default_telegram_api_base() -> String {
     "https://api.telegram.org".to_string()
+}
+
+fn default_weixin_api_base() -> String {
+    "https://ilinkai.weixin.qq.com".to_string()
+}
+
+fn default_weixin_cdn_base() -> String {
+    "https://novac2c.cdn.weixin.qq.com/c2c".to_string()
 }
 
 fn default_wecom_ws_base() -> String {

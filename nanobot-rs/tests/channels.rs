@@ -160,6 +160,20 @@ async fn telegram_channel_drops_runtime_messages() {
     assert!(sent.is_empty());
 }
 
+#[test]
+fn default_config_includes_weixin_channel() {
+    let config = nanobot_rs::config::Config::default();
+    assert!(!config.channels.weixin.enabled);
+    assert_eq!(
+        config.channels.weixin.api_base,
+        "https://ilinkai.weixin.qq.com"
+    );
+    assert_eq!(
+        config.channels.weixin.cdn_base,
+        "https://novac2c.cdn.weixin.qq.com/c2c"
+    );
+}
+
 #[tokio::test]
 async fn telegram_channel_sends_rendered_html() {
     let state = TelegramState::default();
