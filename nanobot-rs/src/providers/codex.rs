@@ -3,14 +3,16 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
+use reqwest::Client;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
 use crate::config::CodexProviderConfig;
 use crate::providers::{LlmProvider, LlmResponse, ProviderError, ProviderRequestDescriptor};
 
 #[derive(Debug, Clone)]
 pub struct CodexProvider {
+    client: Client,
     config: CodexProviderConfig,
     auth: CodexAuthFile,
     auth_path: PathBuf,
@@ -34,11 +36,26 @@ struct CodexAuthTokens {
     account_id: Option<String>,
 }
 
+impl CodexAuthTokens {
+    fn access_token(&self) -> &str {
+        self.access_token
+            .as_deref()
+            .expect("validated codex auth access_token")
+    }
+
+    fn account_id(&self) -> &str {
+        self.account_id
+            .as_deref()
+            .expect("validated codex auth account_id")
+    }
+}
+
 impl CodexProvider {
     pub fn from_config(config: CodexProviderConfig) -> Result<Self> {
         let auth_path = resolve_auth_path(&config.auth_file)?;
         let auth = load_auth_file(&auth_path)?;
         Ok(Self {
+            client: Client::new(),
             config,
             auth,
             auth_path,
@@ -59,6 +76,20 @@ impl CodexProvider {
     fn auth(&self) -> &CodexAuthFile {
         &self.auth
     }
+
+    async fn send_responses_request(&self, body: &Value) -> Result<reqwest::Response> {
+        self.client
+            .post(format!(
+                "{}/responses",
+                self.config.api_base.trim_end_matches('/')
+            ))
+            .bearer_auth(self.auth.tokens.access_token())
+            .header("ChatGPT-Account-Id", self.auth.tokens.account_id())
+            .json(body)
+            .send()
+            .await
+            .map_err(Into::into)
+    }
 }
 
 #[async_trait]
@@ -69,11 +100,12 @@ impl LlmProvider for CodexProvider {
 
     async fn chat(
         &self,
-        _messages: Vec<Value>,
-        _tools: Vec<Value>,
-        _model: &str,
+        messages: Vec<Value>,
+        tools: Vec<Value>,
+        model: &str,
     ) -> Result<LlmResponse> {
-        Err(ProviderError::fatal("codex provider transport not implemented yet").into())
+        let request = ProviderRequestDescriptor::new("codex", model, Map::new());
+        self.chat_with_request(messages, tools, &request).await
     }
 
     async fn chat_with_request(
@@ -82,7 +114,33 @@ impl LlmProvider for CodexProvider {
         tools: Vec<Value>,
         request: &ProviderRequestDescriptor,
     ) -> Result<LlmResponse> {
-        self.chat(messages, tools, &request.model_name).await
+        let body = build_request_body(messages, tools, request);
+        let response = self.send_responses_request(&body).await?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .context("failed to read codex provider body")?;
+
+        if !status.is_success() {
+            let details = if text.trim().is_empty() {
+                "empty response body".to_string()
+            } else {
+                text.trim().to_string()
+            };
+            return Err(ProviderError::fatal(format!(
+                "codex provider error {}: {}",
+                status, details
+            ))
+            .into());
+        }
+
+        Ok(LlmResponse {
+            content: None,
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            extra: Map::new(),
+        })
     }
 }
 
@@ -92,6 +150,58 @@ pub fn cache_key(config: &CodexProviderConfig) -> String {
         config.auth_file.trim(),
         config.api_base.trim_end_matches('/')
     )
+}
+
+fn build_request_body(
+    messages: Vec<Value>,
+    tools: Vec<Value>,
+    request: &ProviderRequestDescriptor,
+) -> Value {
+    let mut body = request.request_extras.clone();
+    body.insert("model".to_string(), json!(request.model_name));
+    body.insert(
+        "input".to_string(),
+        Value::Array(messages.into_iter().map(map_input_message).collect()),
+    );
+    body.insert("tools".to_string(), Value::Array(tools));
+    Value::Object(body)
+}
+
+fn map_input_message(message: Value) -> Value {
+    let role = message
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("user")
+        .to_string();
+    let content = map_input_content(message.get("content").cloned().unwrap_or(Value::Null));
+    json!({
+        "role": role,
+        "content": content,
+    })
+}
+
+fn map_input_content(content: Value) -> Vec<Value> {
+    match content {
+        Value::Null => Vec::new(),
+        Value::String(text) => vec![json!({"type": "input_text", "text": text})],
+        Value::Array(items) => items.into_iter().map(map_input_content_item).collect(),
+        other => vec![json!({"type": "input_text", "text": other.to_string()})],
+    }
+}
+
+fn map_input_content_item(item: Value) -> Value {
+    match item {
+        Value::String(text) => json!({"type": "input_text", "text": text}),
+        Value::Object(map) if map.get("type").is_some() => Value::Object(map),
+        Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                json!({"type": "input_text", "text": text})
+            } else {
+                json!({"type": "input_text", "text": Value::Object(map).to_string()})
+            }
+        }
+        other => json!({"type": "input_text", "text": other.to_string()}),
+    }
 }
 
 fn resolve_auth_path(raw_path: &str) -> Result<PathBuf> {
