@@ -6,99 +6,151 @@ pub fn render_index_html() -> String {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>nanobot-rs control room</title>
+    <title>Pikachu control room</title>
     <style>
       :root {
-        --paper: #f6efe2;
-        --ink: #21313d;
-        --muted: #6d6a63;
-        --accent: #c9622f;
-        --panel: rgba(255, 251, 245, 0.82);
-        --line: rgba(33, 49, 61, 0.14);
-        --shadow: 0 22px 60px rgba(75, 50, 28, 0.15);
+        --paper: #faf9f5;
+        --ink: #2c2c2c;
+        --muted: #a19a94;
+        --muted2: #6a6a6a;
+        --accent: #C15F3C;
+        --accent-dark: #A14A2F;
+        --panel: rgba(253, 252, 251, 0.92);
+        --sidebar-bg: #f0efed;
+        --line: #e8e6e3;
+        --shadow: 0 8px 32px rgba(44, 44, 44, 0.1);
+        --input-bg: #ffffff;
+        --error: #d73a49;
       }
 
       * {
         box-sizing: border-box;
       }
 
+      [hidden] {
+        display: none !important;
+      }
+
       body {
         margin: 0;
-        min-height: 100vh;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
         color: var(--ink);
-        background:
-          radial-gradient(circle at top left, rgba(201, 98, 47, 0.16), transparent 28rem),
-          linear-gradient(180deg, #f8f2e7 0%, #efe4d1 100%);
+        background: linear-gradient(160deg, #fdfcfb 0%, #f5f4ed 100%);
         font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
       }
 
-      body::before {
-        content: "";
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        background-image:
-          linear-gradient(rgba(33, 49, 61, 0.03) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(33, 49, 61, 0.03) 1px, transparent 1px);
-        background-size: 2rem 2rem;
-        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.32), transparent 85%);
-      }
-
       #app {
-        width: min(92vw, 72rem);
-        margin: 0 auto;
-        padding: 3rem 0 4rem;
-      }
-
-      .hero {
-        display: grid;
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        padding: 0.75rem 1.25rem;
         gap: 0.75rem;
-        margin-bottom: 1.75rem;
       }
 
-      .eyebrow {
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-shrink: 0;
+      }
+
+      .topbar h1 {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .topbar .eyebrow {
         color: var(--accent);
         text-transform: uppercase;
-        letter-spacing: 0.18em;
-        font-size: 0.78rem;
+        letter-spacing: 0.15em;
+        font-size: 0.72rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
       }
 
-      h1 {
-        margin: 0;
-        font-size: clamp(2.5rem, 5vw, 4.8rem);
-        line-height: 0.92;
-        font-weight: 700;
+      .topbar-sep {
+        width: 1px;
+        height: 1rem;
+        background: var(--line);
       }
 
-      .deck {
-        width: min(44rem, 100%);
-        margin: 0;
-        color: var(--muted);
-        font-size: 1.05rem;
-        line-height: 1.6;
+      #theme-toggle {
+        margin-left: auto;
+        border: 1px solid var(--line);
+        border-radius: 0.5rem;
+        width: 2rem;
+        height: 2rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted2);
+        background: transparent;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+      }
+
+      #theme-toggle:hover {
+        color: var(--accent);
+        border-color: var(--accent);
       }
 
       .shell {
+        flex: 1;
+        min-height: 0;
         display: grid;
-        gap: 1rem;
-        grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
-        padding: 1rem;
+        gap: 0;
+        grid-template-columns: auto minmax(0, 1fr);
         border: 1px solid var(--line);
-        border-radius: 1.5rem;
+        border-radius: 1rem;
         background: var(--panel);
         backdrop-filter: blur(12px);
         box-shadow: var(--shadow);
+        overflow: hidden;
       }
 
       .session-rail {
-        display: grid;
-        gap: 0.85rem;
-        align-content: start;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+        border-right: 1px solid var(--line);
+        width: 15rem;
+        flex-shrink: 0;
+        transition: width 0.2s ease;
+      }
+
+      .session-rail[data-collapsed="true"] {
+        width: 2.75rem;
+      }
+
+      .session-rail[data-collapsed="true"] .tab-panel {
+        display: none;
+      }
+
+      .session-rail[data-collapsed="true"] .tab-label {
+        display: none;
+      }
+
+      .session-rail[data-collapsed="true"] .tab-bar {
+        border-bottom: none;
+        align-items: center;
       }
 
       .session-header {
-        display: grid;
-        gap: 0.35rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-shrink: 0;
+      }
+
+      .session-header #session-select {
+        width: min(22rem, 100%);
       }
 
       .session-kicker {
@@ -113,151 +165,363 @@ pub fn render_index_html() -> String {
         font-size: 0.86rem;
       }
 
-      #session-list {
-        display: grid;
-        gap: 0.85rem;
-      }
-
-      .session-group {
-        display: grid;
-        gap: 0.65rem;
-      }
-
-      .session-group-title {
-        color: var(--accent);
-        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 0.78rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      .session-item {
+      #session-select {
         width: 100%;
-        display: grid;
-        gap: 0.3rem;
-        text-align: left;
         border: 1px solid var(--line);
-        border-radius: 1rem;
-        padding: 0.8rem 0.9rem;
-        background: rgba(255, 255, 255, 0.58);
-        color: var(--ink);
-        cursor: pointer;
-      }
-
-      .session-item[data-selected="true"] {
-        border-color: rgba(201, 98, 47, 0.45);
-        box-shadow: inset 0 0 0 1px rgba(201, 98, 47, 0.24);
-      }
-
-      .session-item-title {
+        border-radius: 0.5rem;
+        padding: 0.5rem 0.75rem;
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.84rem;
+        color: var(--ink);
+        background: var(--input-bg);
+        cursor: pointer;
+        appearance: auto;
       }
 
-      .session-item-preview {
-        color: var(--muted);
-        font-size: 0.9rem;
-        line-height: 1.4;
+      #session-select:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
       }
 
-      .session-item-meta {
-        color: var(--accent);
+      .tab-bar {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        flex-shrink: 0;
+        padding: 0.65rem 0.4rem;
+        background: var(--sidebar-bg);
+      }
+
+      .tab-btn {
+        border: none;
+        border-radius: 0.5rem;
+        padding: 0.5rem 0.55rem;
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.78rem;
+        color: var(--muted);
+        background: transparent;
+        cursor: pointer;
+        text-align: left;
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        transition: color 0.15s, background 0.15s;
+      }
+
+      .tab-btn:hover {
+        color: var(--ink);
+        background: rgba(193, 95, 60, 0.08);
+      }
+
+      .tab-btn[data-active="true"] {
+        color: var(--accent);
+        background: #fdfcfb;
+        font-weight: 600;
+      }
+
+      .tab-bar-header {
+        display: flex;
+        justify-content: flex-end;
+        padding-bottom: 0.4rem;
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 0.2rem;
+      }
+
+      #sidebar-toggle {
+        border: none;
+        border-radius: 0.4rem;
+        padding: 0.35rem;
+        width: 1.75rem;
+        height: 1.75rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+        background: transparent;
+        cursor: pointer;
+        align-self: center;
+        transition: color 0.15s, background 0.15s;
+        flex-shrink: 0;
+      }
+
+      #sidebar-toggle:hover {
+        color: var(--ink);
+        background: rgba(193, 95, 60, 0.08);
+      }
+
+      .tab-panel {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 0.75rem;
+        scrollbar-width: thin;
+        scrollbar-color: var(--line) transparent;
+      }
+
+      .tab-panel[hidden] {
+        display: none;
       }
 
       .account-panel {
-        display: grid;
-        gap: 0.7rem;
-        padding: 0.95rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+        padding: 1.5rem 1.75rem;
         border: 1px solid var(--line);
-        border-radius: 1rem;
-        background: rgba(255, 255, 255, 0.58);
+        border-radius: 0.75rem;
+        background: #fdfcfb;
+        max-width: 36rem;
+      }
+
+      .account-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .account-panel-info {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
       }
 
       .account-status {
-        display: grid;
-        gap: 0.3rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
       }
 
-      .account-status strong,
+      .account-status strong {
+        font-size: 1.05rem;
+        font-weight: 600;
+      }
+
       .account-status span {
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 0.84rem;
+        font-size: 0.82rem;
+        color: var(--muted);
       }
 
       .account-muted {
         color: var(--muted);
-        font-size: 0.9rem;
-        line-height: 1.4;
+        font-size: 0.85rem;
+        line-height: 1.5;
+        text-align: center;
       }
 
       .account-actions {
         display: flex;
-        flex-wrap: wrap;
-        gap: 0.6rem;
+        gap: 0.4rem;
+      }
+
+      .account-actions button {
+        border: 1px solid var(--line);
+        border-radius: 0.5rem;
+        width: 2.1rem;
+        height: 2.1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted2);
+        background: var(--input-bg);
+        cursor: pointer;
+        transition: color 0.15s, background 0.15s, border-color 0.15s;
+      }
+
+      .account-actions button:hover:not([disabled]) {
+        color: var(--accent);
+        border-color: var(--accent);
+        background: rgba(193, 95, 60, 0.06);
+      }
+
+      .account-actions button[disabled] {
+        opacity: 0.35;
+        cursor: not-allowed;
       }
 
       #weixin-qr-panel {
-        display: grid;
-        gap: 0.5rem;
-        padding: 0.75rem;
-        border-radius: 0.9rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 1rem;
+        border-radius: 0.75rem;
         border: 1px dashed var(--line);
-        background: rgba(255, 255, 255, 0.52);
+        background: #f8f7f6;
       }
 
       #weixin-qr-image {
-        width: min(100%, 12rem);
-        border-radius: 0.8rem;
+        width: min(100%, 16rem);
+        border-radius: 0.75rem;
         background: white;
       }
 
       .conversation-pane {
-        display: grid;
-        gap: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        min-height: 0;
+        padding: 0.75rem 1rem;
+      }
+
+      .channels-pane {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 2rem 2.5rem;
+        scrollbar-width: thin;
+        scrollbar-color: var(--line) transparent;
       }
 
       #transcript {
-        min-height: 22rem;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--line) transparent;
         padding: 1rem;
-        border: 1px dashed var(--line);
-        border-radius: 1rem;
-        background: rgba(255, 255, 255, 0.48);
-        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        border: 1px solid var(--line);
+        border-radius: 0.75rem;
+        background: #f8f7f6;
+        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
         display: grid;
         gap: 0.75rem;
         align-content: start;
       }
 
-      .message {
-        max-width: min(46rem, 100%);
-        padding: 0.9rem 1rem;
-        border-radius: 1rem;
-        white-space: pre-wrap;
-        line-height: 1.55;
+      .msg-group {
+        display: flex;
+        gap: 0.6rem;
+        align-items: flex-start;
+        max-width: min(48rem, 100%);
       }
 
-      .message[data-role="user"] {
+      .msg-group[data-role="user"] {
         justify-self: end;
-        color: #fff8ef;
-        background: linear-gradient(135deg, #3a5263, #2a3945);
+        flex-direction: row-reverse;
       }
 
-      .message[data-role="assistant"] {
+      .msg-group[data-role="assistant"] {
         justify-self: start;
-        background: rgba(255, 255, 255, 0.72);
-        border: 1px solid rgba(33, 49, 61, 0.1);
+      }
+
+      .msg-avatar {
+        width: 1.9rem;
+        height: 1.9rem;
+        border-radius: 50%;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 0.1rem;
+      }
+
+      .msg-group[data-role="user"] .msg-avatar {
+        background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+        color: #fff;
+      }
+
+      .msg-group[data-role="assistant"] .msg-avatar {
+        background: var(--sidebar-bg);
+        border: 1px solid var(--line);
+        color: var(--accent);
+      }
+
+      .msg-body {
+        display: flex;
+        flex-direction: column;
+        gap: 0.28rem;
+        min-width: 0;
+      }
+
+      .msg-bubble {
+        padding: 0.75rem 1rem;
+        line-height: 1.6;
+        border-radius: 1rem;
+      }
+
+      .msg-group[data-role="user"] .msg-bubble {
+        color: #ffffff;
+        background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+        white-space: pre-wrap;
+        border-radius: 1rem 0.3rem 1rem 1rem;
+      }
+
+      .msg-group[data-role="assistant"] .msg-bubble {
+        background: #fdfcfb;
+        border: 1px solid var(--line);
+        border-radius: 0.3rem 1rem 1rem 1rem;
+      }
+
+      .msg-footer {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0 0.2rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.7rem;
+        color: var(--muted);
+      }
+
+      .msg-group[data-role="user"] .msg-footer {
+        justify-content: flex-end;
+      }
+
+      .msg-sender {
+        font-weight: 600;
+      }
+
+      .msg-copy {
+        border: none;
+        background: transparent;
+        padding: 0.15rem 0.25rem;
+        border-radius: 0.3rem;
+        cursor: pointer;
+        color: var(--muted);
+        display: flex;
+        align-items: center;
+        opacity: 0;
+        transition: opacity 0.15s, color 0.15s;
+        margin-left: auto;
+      }
+
+      .msg-group:hover .msg-copy {
+        opacity: 1;
+      }
+
+      .msg-copy:hover {
+        color: var(--accent);
+      }
+
+      @keyframes status-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.45; }
       }
 
       #status {
         min-height: 1.4rem;
         color: var(--muted);
         font-size: 0.95rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      #status[data-variant="loading"] {
+        color: var(--accent);
+        animation: status-pulse 1.4s ease-in-out infinite;
       }
 
       #status[data-variant="error"] {
-        color: #9a2f1f;
+        color: var(--error);
       }
 
       #composer {
@@ -267,105 +531,253 @@ pub fn render_index_html() -> String {
 
       .composer-actions {
         display: flex;
-        flex-wrap: wrap;
-        gap: 0.75rem;
+        align-items: center;
+        gap: 0.6rem;
       }
 
       #message-input {
         min-height: 8rem;
         resize: vertical;
         border: 1px solid var(--line);
-        border-radius: 1rem;
-        padding: 1rem;
+        border-radius: 0.5rem;
+        padding: 0.75rem 1rem;
         font: inherit;
         color: var(--ink);
-        background: rgba(255, 255, 255, 0.72);
+        background: var(--input-bg);
       }
 
-      #send-button,
-      #new-chat-button,
-      #duplicate-session-button {
-        border-radius: 999px;
-        padding: 0.85rem 1.15rem;
-        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 0.92rem;
-        cursor: pointer;
+      #message-input::placeholder {
+        color: var(--muted);
       }
 
-      #send-button {
-        justify-self: start;
-        border: 0;
-        padding-inline: 1.35rem;
-        color: #fff8ef;
-        background: linear-gradient(135deg, #c9622f, #a4461f);
+      #message-input:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: -1px;
       }
 
       #new-chat-button,
       #duplicate-session-button {
         border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0.55rem 1rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.82rem;
+        color: var(--muted2);
+        background: var(--input-bg);
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+      }
+
+      #new-chat-button:hover,
+      #duplicate-session-button:hover {
         color: var(--ink);
-        background: rgba(255, 255, 255, 0.72);
+        border-color: var(--accent);
+      }
+
+      #send-button {
+        margin-left: auto;
+        border: 0;
+        border-radius: 999px;
+        width: 2.4rem;
+        height: 2.4rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #ffffff;
+        background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: opacity 0.15s;
       }
 
       #send-button[disabled],
       #new-chat-button[disabled],
       #duplicate-session-button[disabled],
       #message-input[disabled] {
-        opacity: 0.65;
+        opacity: 0.5;
+        cursor: not-allowed;
       }
 
       @media (max-width: 720px) {
+        body {
+          height: 100dvh;
+        }
+
         #app {
-          width: min(94vw, 40rem);
-          padding-top: 2rem;
+          padding: 0.5rem 0.75rem;
         }
 
         .shell {
-          grid-template-columns: 1fr;
-          padding: 0.85rem;
-          border-radius: 1.1rem;
+          border-radius: 0.75rem;
+        }
+
+        .channels-pane {
+          padding: 1.25rem;
+        }
+
+        .account-panel {
+          flex-direction: column;
+          gap: 1.25rem;
+          max-width: 100%;
+        }
+
+        #weixin-qr-image {
+          width: min(100%, 14rem);
         }
       }
+
+      :root[data-theme="light"] {
+        --paper: #faf9f5;
+        --ink: #2c2c2c;
+        --muted: #a19a94;
+        --muted2: #6a6a6a;
+        --accent: #C15F3C;
+        --accent-dark: #A14A2F;
+        --panel: rgba(253, 252, 251, 0.92);
+        --sidebar-bg: #f0efed;
+        --line: #e8e6e3;
+        --shadow: 0 8px 32px rgba(44, 44, 44, 0.1);
+        --input-bg: #ffffff;
+        --error: #d73a49;
+      }
+
+      :root[data-theme="light"] body {
+        background: linear-gradient(160deg, #fdfcfb 0%, #f5f4ed 100%);
+      }
+
+      .dark-vars {
+        --paper: #1e1c1a;
+        --ink: #e8e4de;
+        --muted: #7a746e;
+        --muted2: #9a9490;
+        --accent: #d4724a;
+        --accent-dark: #b85c38;
+        --panel: rgba(30, 28, 26, 0.95);
+        --sidebar-bg: #1a1815;
+        --line: #333028;
+        --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        --input-bg: #252320;
+        --error: #f47067;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]):not([data-theme="dark"]) {
+          --paper: #1e1c1a;
+          --ink: #e8e4de;
+          --muted: #7a746e;
+          --muted2: #9a9490;
+          --accent: #d4724a;
+          --accent-dark: #b85c38;
+          --panel: rgba(30, 28, 26, 0.95);
+          --sidebar-bg: #1a1815;
+          --line: #333028;
+          --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+          --input-bg: #252320;
+          --error: #f47067;
+        }
+
+        :root:not([data-theme="light"]):not([data-theme="dark"]) body {
+          background: linear-gradient(160deg, #201e1b 0%, #181613 100%);
+        }
+
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .account-panel { background: #252320; }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) #weixin-qr-panel { background: #1e1c1a; }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) #transcript { background: #1e1c1a; }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="assistant"] .msg-bubble { background: #252320; }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="assistant"] .msg-avatar { background: #1a1815; }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .tab-btn[data-active="true"] { background: #252320; }
+      }
+
+      :root[data-theme="dark"] {
+        --paper: #1e1c1a;
+        --ink: #e8e4de;
+        --muted: #7a746e;
+        --muted2: #9a9490;
+        --accent: #d4724a;
+        --accent-dark: #b85c38;
+        --panel: rgba(30, 28, 26, 0.95);
+        --sidebar-bg: #1a1815;
+        --line: #333028;
+        --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        --input-bg: #252320;
+        --error: #f47067;
+      }
+
+      :root[data-theme="dark"] body { background: linear-gradient(160deg, #201e1b 0%, #181613 100%); }
+      :root[data-theme="dark"] .account-panel { background: #252320; }
+      :root[data-theme="dark"] #weixin-qr-panel { background: #1e1c1a; }
+      :root[data-theme="dark"] #transcript { background: #1e1c1a; }
+      :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-bubble { background: #252320; }
+      :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-avatar { background: #1a1815; }
+      :root[data-theme="dark"] .tab-btn[data-active="true"] { background: #252320; }
     </style>
   </head>
   <body>
     <main id="app">
-      <header class="hero">
-        <div class="eyebrow">Local Operator Console</div>
-        <h1>nanobot-rs control room</h1>
-        <p class="deck">A minimal browser surface for the Rust agent. Text in, text out, same workspace brain underneath.</p>
+      <header class="topbar">
+        <h1>Pikachu</h1>
+        <div class="topbar-sep"></div>
+        <div class="eyebrow">control room</div>
+        <button id="theme-toggle" title="Toggle theme">
+          <svg id="theme-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        </button>
       </header>
       <section class="shell">
         <aside class="session-rail">
-          <div class="session-header">
-            <div class="session-kicker">Sessions</div>
-            <strong id="active-profile">default</strong>
+          <div class="tab-bar" role="tablist">
+            <div class="tab-bar-header">
+              <button id="sidebar-toggle" title="Toggle sidebar">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+              </button>
+            </div>
+            <button class="tab-btn" data-tab="chat" data-active="true" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span class="tab-label">Chat</span>
+            </button>
+            <button class="tab-btn" data-tab="channels" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+              <span class="tab-label">Channels</span>
+            </button>
           </div>
-          <div id="session-list" aria-live="polite"><section class="session-group" hidden></section></div>
+        </aside>
+        <section class="channels-pane" hidden>
           <section id="weixin-account-panel" class="account-panel">
-            <div class="session-kicker">Weixin</div>
-            <div class="account-status">
-              <strong id="weixin-status-label">Checking account…</strong>
-              <span id="weixin-user-label" class="account-muted">Login from the embedded console.</span>
+            <div class="account-panel-header">
+              <div class="session-kicker">Weixin</div>
+              <div class="account-actions">
+                <button id="weixin-login-button" type="button" title="Login to Weixin">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                </button>
+                <button id="weixin-logout-button" type="button" title="Logout">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="account-panel-info">
+              <div class="account-status">
+                <strong id="weixin-status-label">Checking account…</strong>
+                <span id="weixin-user-label">Login from the embedded console.</span>
+              </div>
             </div>
             <div id="weixin-qr-panel" hidden>
               <img id="weixin-qr-image" alt="Weixin login QR code" />
-              <div id="weixin-qr-note" class="account-muted">Scan this QR code in Weixin to confirm login.</div>
-            </div>
-            <div class="account-actions">
-              <button id="weixin-login-button" type="button">Login to Weixin</button>
-              <button id="weixin-logout-button" type="button">Logout</button>
+              <div id="weixin-qr-note" class="account-muted">Scan in Weixin to confirm login.</div>
             </div>
           </section>
-        </aside>
+        </section>
         <section class="conversation-pane">
-          <section id="transcript" aria-live="polite">
-          </section>
+          <div class="session-header">
+            <select id="session-select" aria-label="Select session"></select>
+            <strong id="active-profile">default</strong>
+          </div>
+          <section id="transcript" aria-live="polite"></section>
           <div id="status" role="status"></div>
           <form id="composer">
-            <textarea id="message-input" placeholder="Ask nanobot-rs to inspect, edit, or research."></textarea>
+            <textarea id="message-input" placeholder="Ask Pikachu to inspect, edit, or research. (Enter to send, Ctrl+Enter for newline)"></textarea>
             <div class="composer-actions">
-              <button id="send-button" type="submit">Send</button>
+              <button id="send-button" type="submit" title="Send (Enter)">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
               <button id="new-chat-button" type="button">New chat</button>
               <button id="duplicate-session-button" type="button" hidden>Duplicate to Web</button>
             </div>
@@ -374,13 +786,13 @@ pub fn render_index_html() -> String {
       </section>
     </main>
     <script>
-      const INITIAL_ASSISTANT_MESSAGE = "Web UI ready. Ask nanobot-rs to inspect the workspace, edit files, or research something.";
-      const SESSION_KEY = "nanobot-rs.sessionId";
-      const SELECTED_CHANNEL_KEY = "nanobot-rs.selectedChannel";
-      const SELECTED_SESSION_KEY = "nanobot-rs.selectedSessionId";
+      const INITIAL_ASSISTANT_MESSAGE = "Web UI ready. Ask Pikachu to inspect the workspace, edit files, or research something.";
+      const SESSION_KEY = "pikachu.sessionId";
+      const SELECTED_CHANNEL_KEY = "pikachu.selectedChannel";
+      const SELECTED_SESSION_KEY = "pikachu.selectedSessionId";
       const composer = document.getElementById("composer");
       const transcript = document.getElementById("transcript");
-      const sessionList = document.getElementById("session-list");
+      const sessionSelect = document.getElementById("session-select");
       const messageInput = document.getElementById("message-input");
       const sendButton = document.getElementById("send-button");
       const newChatButton = document.getElementById("new-chat-button");
@@ -404,21 +816,77 @@ pub fn render_index_html() -> String {
       let weixinPollTimer = null;
       let isBusy = false;
 
+      function formatTime(date) {
+        return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+      const USER_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+      const ASSISTANT_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+      const COPY_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+      const CHECK_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+      function makeMsgGroup(role) {
+        const group = document.createElement("div");
+        group.className = "msg-group";
+        group.dataset.role = role;
+
+        const avatar = document.createElement("div");
+        avatar.className = "msg-avatar";
+        avatar.innerHTML = role === "user" ? USER_AVATAR_SVG : ASSISTANT_AVATAR_SVG;
+
+        const body = document.createElement("div");
+        body.className = "msg-body";
+
+        const bubble = document.createElement("div");
+        bubble.className = "msg-bubble";
+
+        const footer = document.createElement("div");
+        footer.className = "msg-footer";
+
+        const sender = document.createElement("span");
+        sender.className = "msg-sender";
+        sender.textContent = role === "user" ? "You" : "Pikachu";
+
+        const time = document.createElement("span");
+        time.className = "msg-time";
+        time.textContent = formatTime(new Date());
+
+        footer.appendChild(sender);
+        footer.appendChild(time);
+
+        if (role === "assistant") {
+          const copyBtn = document.createElement("button");
+          copyBtn.className = "msg-copy";
+          copyBtn.title = "Copy";
+          copyBtn.innerHTML = COPY_SVG;
+          copyBtn.addEventListener("click", () => {
+            navigator.clipboard.writeText(bubble.innerText || "").then(() => {
+              copyBtn.innerHTML = CHECK_SVG;
+              setTimeout(() => { copyBtn.innerHTML = COPY_SVG; }, 1500);
+            });
+          });
+          footer.appendChild(copyBtn);
+        }
+
+        body.appendChild(bubble);
+        body.appendChild(footer);
+        group.appendChild(avatar);
+        group.appendChild(body);
+
+        return { group, bubble };
+      }
+
       function appendMessage(role, content) {
-        const node = document.createElement("article");
-        node.className = "message";
-        node.dataset.role = role;
-        node.textContent = content;
-        transcript.appendChild(node);
+        const { group, bubble } = makeMsgGroup(role);
+        bubble.textContent = content;
+        transcript.appendChild(group);
         transcript.scrollTop = transcript.scrollHeight;
       }
 
       function appendAssistantMessage(content) {
-        const node = document.createElement("article");
-        node.className = "message";
-        node.dataset.role = "assistant";
-        node.innerHTML = content;
-        transcript.appendChild(node);
+        const { group, bubble } = makeMsgGroup("assistant");
+        bubble.innerHTML = content;
+        transcript.appendChild(group);
         transcript.scrollTop = transcript.scrollHeight;
       }
 
@@ -436,7 +904,6 @@ pub fn render_index_html() -> String {
         sendButton.disabled = busy || currentSessionReadOnly;
         newChatButton.disabled = busy;
         duplicateButton.disabled = busy;
-        sendButton.textContent = busy ? "Working..." : "Send";
       }
 
       function renderTranscript(messages) {
@@ -491,48 +958,27 @@ pub fn render_index_html() -> String {
         }
       }
 
-      function renderSessionList(groups) {
-        sessionList.innerHTML = "";
+      function renderSessionSelect(groups) {
+        const prev = sessionSelect.value;
+        sessionSelect.innerHTML = "";
         for (const group of groups) {
-          const groupNode = document.createElement("section");
-          groupNode.className = "session-group";
-
-          const heading = document.createElement("div");
-          heading.className = "session-group-title";
-          heading.textContent = group.channel;
-          groupNode.appendChild(heading);
-
+          const optgroup = document.createElement("optgroup");
+          optgroup.label = group.channel;
           for (const session of group.sessions || []) {
-            const node = document.createElement("button");
-            node.type = "button";
-            node.className = "session-item";
-            node.dataset.selected = String(
-              session.channel === currentChannel && session.sessionId === currentSessionId
-            );
-
-            const title = document.createElement("div");
-            title.className = "session-item-title";
-            title.textContent = session.sessionId;
-
-            const preview = document.createElement("div");
-            preview.className = "session-item-preview";
-            preview.textContent = session.preview || "New session";
-
-            const meta = document.createElement("div");
-            meta.className = "session-item-meta";
-            meta.textContent = session.activeProfile || "default";
-
-            node.appendChild(title);
-            node.appendChild(preview);
-            node.appendChild(meta);
-            node.addEventListener("click", async () => {
-              await selectSession(session.channel, session.sessionId);
-              messageInput.focus();
-            });
-            groupNode.appendChild(node);
+            const opt = document.createElement("option");
+            opt.value = `${session.channel}::${session.sessionId}`;
+            opt.textContent = session.preview
+              ? `${session.sessionId} — ${session.preview}`
+              : session.sessionId;
+            if (session.channel === currentChannel && session.sessionId === currentSessionId) {
+              opt.selected = true;
+            }
+            optgroup.appendChild(opt);
           }
-
-          sessionList.appendChild(groupNode);
+          sessionSelect.appendChild(optgroup);
+        }
+        if (!sessionSelect.value && prev) {
+          sessionSelect.value = prev;
         }
       }
 
@@ -549,7 +995,7 @@ pub fn render_index_html() -> String {
             };
           }),
         }));
-        renderSessionList(currentSessionGroups);
+        renderSessionSelect(currentSessionGroups);
       }
 
       function findSession(groups, channel, sessionId) {
@@ -616,8 +1062,6 @@ pub fn render_index_html() -> String {
         const loggedIn = account?.loggedIn === true;
         const expired = account?.expired === true;
         const userId = account?.userId || account?.botId || "Login from the embedded console.";
-
-        weixinAccountPanel.hidden = false;
         weixinLoginButton.disabled = !enabled || loggedIn;
         weixinLogoutButton.disabled = !enabled || !loggedIn;
 
@@ -643,9 +1087,13 @@ pub fn render_index_html() -> String {
           clearWeixinPollTimer();
           weixinStatusLabel.textContent = "Login expired";
           weixinUserLabel.textContent = userId;
+          weixinQrPanel.hidden = true;
+          weixinQrImage.src = "";
           return;
         }
 
+        weixinQrPanel.hidden = true;
+        weixinQrImage.src = "";
         weixinStatusLabel.textContent = "Not connected";
         weixinUserLabel.textContent = userId;
       }
@@ -696,7 +1144,7 @@ pub fn render_index_html() -> String {
 
       async function refreshSessions() {
         currentSessionGroups = await fetchSessions();
-        renderSessionList(currentSessionGroups);
+        renderSessionSelect(currentSessionGroups);
         if (
           currentChannel &&
           currentSessionId &&
@@ -782,7 +1230,7 @@ pub fn render_index_html() -> String {
         renderSessionDetail(detail);
         setCurrentProfile(detail.activeProfile || "");
         setComposerAccess(detail.readOnly === true, detail.canDuplicate === true);
-        renderSessionList(currentSessionGroups);
+        renderSessionSelect(currentSessionGroups);
       }
 
       async function bootstrapSessions() {
@@ -791,7 +1239,7 @@ pub fn render_index_html() -> String {
         const restoredSessionId = storedSessionId || legacyStoredSessionId;
         const sessions = await fetchSessions();
         currentSessionGroups = sessions;
-        renderSessionList(currentSessionGroups);
+        renderSessionSelect(currentSessionGroups);
 
         const groups = sessions;
         const storedSession = findSession(groups, storedChannel || "web", restoredSessionId);
@@ -805,6 +1253,71 @@ pub fn render_index_html() -> String {
         }
         await selectSession(initialSession.channel, initialSession.sessionId);
       }
+
+      sessionSelect.addEventListener("change", async () => {
+        const [channel, sessionId] = sessionSelect.value.split("::");
+        if (channel && sessionId) {
+          await selectSession(channel, sessionId);
+          messageInput.focus();
+        }
+      });
+
+      const tabButtons = document.querySelectorAll(".tab-btn");
+      const conversationPane = document.querySelector(".conversation-pane");
+      const channelsPane = document.querySelector(".channels-pane");
+      const sessionRail = document.querySelector(".session-rail");
+      const sidebarToggle = document.getElementById("sidebar-toggle");
+
+      const THEME_KEY = "pikachu.theme";
+      const themeToggle = document.getElementById("theme-toggle");
+      const themeIcon = document.getElementById("theme-icon");
+
+      const SUN_ICON = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
+      const MOON_ICON = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+
+      function applyTheme(theme) {
+        if (theme === "dark") {
+          document.documentElement.setAttribute("data-theme", "dark");
+          themeIcon.innerHTML = SUN_ICON;
+          themeToggle.title = "Switch to light mode";
+        } else {
+          document.documentElement.setAttribute("data-theme", "light");
+          themeIcon.innerHTML = MOON_ICON;
+          themeToggle.title = "Switch to dark mode";
+        }
+        localStorage.setItem(THEME_KEY, theme);
+      }
+
+      const savedTheme = localStorage.getItem(THEME_KEY) ||
+        (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      applyTheme(savedTheme);
+
+      themeToggle.addEventListener("click", () => {
+        const current = document.documentElement.getAttribute("data-theme");
+        applyTheme(current === "dark" ? "light" : "dark");
+      });
+
+      const COLLAPSED_KEY = "pikachu.sidebarCollapsed";
+
+      function setSidebarCollapsed(collapsed) {
+        sessionRail.dataset.collapsed = String(collapsed);
+        localStorage.setItem(COLLAPSED_KEY, String(collapsed));
+      }
+
+      setSidebarCollapsed(localStorage.getItem(COLLAPSED_KEY) === "true");
+
+      sidebarToggle.addEventListener("click", () => {
+        setSidebarCollapsed(sessionRail.dataset.collapsed !== "true");
+      });
+
+      tabButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const tab = btn.dataset.tab;
+          tabButtons.forEach((b) => { b.dataset.active = String(b.dataset.tab === tab); });
+          conversationPane.hidden = tab !== "chat";
+          channelsPane.hidden = tab !== "channels";
+        });
+      });
 
       newChatButton.addEventListener("click", async () => {
         setBusy(true);
@@ -883,7 +1396,7 @@ pub fn render_index_html() -> String {
       });
 
       messageInput.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
           event.preventDefault();
           composer.requestSubmit();
         }
@@ -906,7 +1419,7 @@ pub fn render_index_html() -> String {
         appendMessage("user", message);
         messageInput.value = "";
         setBusy(true);
-        setStatus("nanobot-rs is working...", "loading");
+        setStatus("Pikachu is working...", "loading");
 
         try {
           if (!currentSessionId) {

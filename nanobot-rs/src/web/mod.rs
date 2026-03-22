@@ -321,9 +321,17 @@ impl WeixinRuntime {
             return Err(anyhow::Error::new(WeixinWorkflowError::disabled()));
         }
         let login = self.login.start_login().await?;
+        let qrcode_img_content = {
+            let normalized = normalize_weixin_qr_image_source(&login.qrcode_img_content);
+            if normalized.is_empty() {
+                qr_text_to_svg_data_url(&login.qrcode)
+            } else {
+                normalized
+            }
+        };
         Ok(WeixinLoginStartResponse {
             qrcode: login.qrcode,
-            qrcode_img_content: normalize_weixin_qr_image_source(&login.qrcode_img_content),
+            qrcode_img_content,
         })
     }
 
