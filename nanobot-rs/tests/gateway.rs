@@ -81,7 +81,7 @@ async fn gateway_startup_wires_web_server_with_default_bind_values() {
     let calls = runtime.calls();
     assert_eq!(calls.start_channels, 1);
     assert_eq!(calls.run_agent, 1);
-    assert_eq!(calls.serve_web, vec![("127.0.0.1".to_string(), 3000)]);
+    assert_eq!(calls.serve_web, vec![("127.0.0.1".to_string(), 3456)]);
     assert_eq!(calls.stop_agent, 1);
     assert_eq!(calls.stop_channels, 1);
 }

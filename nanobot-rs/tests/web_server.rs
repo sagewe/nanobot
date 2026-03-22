@@ -346,6 +346,22 @@ async fn weixin_get_bot_qrcode(
     }))
 }
 
+async fn weixin_get_bot_qrcode_page_url(
+    axum::extract::State(state): axum::extract::State<WeixinApiState>,
+) -> axum::Json<serde_json::Value> {
+    state
+        .requests
+        .lock()
+        .await
+        .push("/ilink/bot/get_bot_qrcode".to_string());
+    axum::Json(json!({
+        "data": {
+            "qrcode": "qr-token",
+            "qrcode_img_content": "https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=9318e0bbe626487f169d4cd996b2640a&bot_type=3"
+        }
+    }))
+}
+
 async fn spawn_weixin_api_server() -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
     let state = WeixinApiState::default();
     let requests = state.requests.clone();
@@ -353,6 +369,23 @@ async fn spawn_weixin_api_server() -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
         .route(
             "/ilink/bot/get_bot_qrcode",
             axum::routing::get(weixin_get_bot_qrcode),
+        )
+        .with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    (addr, requests)
+}
+
+async fn spawn_weixin_page_qr_api_server() -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
+    let state = WeixinApiState::default();
+    let requests = state.requests.clone();
+    let app = Router::new()
+        .route(
+            "/ilink/bot/get_bot_qrcode",
+            axum::routing::get(weixin_get_bot_qrcode_page_url),
         )
         .with_state(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -876,6 +909,37 @@ async fn real_agentchatservice_uses_configured_weixin_api_base() {
 
     assert_eq!(response["qrcode"], "qr-token");
     assert_eq!(response["qrcodeImgContent"], "data:image/png;base64,abc");
+    assert_eq!(requests.lock().await.len(), 1);
+    assert_eq!(requests.lock().await[0], "/ilink/bot/get_bot_qrcode");
+}
+
+#[tokio::test]
+async fn real_agentchatservice_converts_weixin_qr_page_urls_to_renderable_images() {
+    let dir = tempdir().expect("tempdir");
+    let (api_addr, requests) = spawn_weixin_page_qr_api_server().await;
+    let mut config = Config::default();
+    config.channels.weixin = WeixinConfig {
+        enabled: true,
+        api_base: format!("http://{api_addr}"),
+        cdn_base: "https://novac2c.cdn.weixin.qq.com/c2c".to_string(),
+    };
+    let app = agent_app_with_config(&dir, config, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let response: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/api/weixin/login/start"))
+        .send()
+        .await
+        .expect("start weixin login")
+        .json()
+        .await
+        .expect("login start payload");
+
+    assert_eq!(response["qrcode"], "qr-token");
+    assert!(response["qrcodeImgContent"]
+        .as_str()
+        .unwrap_or_default()
+        .starts_with("data:image/svg+xml;base64,"));
     assert_eq!(requests.lock().await.len(), 1);
     assert_eq!(requests.lock().await[0], "/ilink/bot/get_bot_qrcode");
 }

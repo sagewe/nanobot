@@ -3,6 +3,7 @@ pub mod page;
 
 use std::error::Error as StdError;
 use std::fmt;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -13,9 +14,11 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
+use qrcodegen::{QrCode, QrCodeEcc};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tracing::{error, info};
+use url::Url;
 use uuid::Uuid;
 
 use crate::agent::AgentLoop;
@@ -320,7 +323,7 @@ impl WeixinRuntime {
         let login = self.login.start_login().await?;
         Ok(WeixinLoginStartResponse {
             qrcode: login.qrcode,
-            qrcode_img_content: login.qrcode_img_content,
+            qrcode_img_content: normalize_weixin_qr_image_source(&login.qrcode_img_content),
         })
     }
 
@@ -685,6 +688,97 @@ fn truncate_preview(text: &str, max_chars: usize) -> String {
         return trimmed.to_string();
     }
     format!("{}…", chars[..max_chars].iter().collect::<String>())
+}
+
+fn normalize_weixin_qr_image_source(source: &str) -> String {
+    let value = source.trim();
+    if value.is_empty() {
+        return String::new();
+    }
+    if value.starts_with("data:") || value.starts_with("blob:") || value.starts_with('/') {
+        return value.to_string();
+    }
+    if looks_like_base64_image_payload(value) {
+        return format!("data:image/png;base64,{}", value.replace(char::is_whitespace, ""));
+    }
+    if looks_like_direct_image_url(value) {
+        return value.to_string();
+    }
+    qr_text_to_svg_data_url(value)
+}
+
+fn looks_like_base64_image_payload(value: &str) -> bool {
+    let compact = value.replace(char::is_whitespace, "");
+    !compact.is_empty()
+        && compact.len() % 4 == 0
+        && compact
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '='))
+}
+
+fn looks_like_direct_image_url(value: &str) -> bool {
+    let Ok(url) = Url::parse(value) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let path = url.path().to_ascii_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"]
+        .iter()
+        .any(|suffix| path.ends_with(suffix))
+}
+
+fn qr_text_to_svg_data_url(text: &str) -> String {
+    let qr = QrCode::encode_text(text, QrCodeEcc::Medium)
+        .expect("weixin qr text should fit within QR capacity");
+    let svg = qr_to_svg_string(&qr, 4);
+    format!("data:image/svg+xml;base64,{}", base64_encode(svg.as_bytes()))
+}
+
+fn qr_to_svg_string(qr: &QrCode, border: i32) -> String {
+    let size = qr.size() + border * 2;
+    let mut path = String::new();
+    for y in 0..qr.size() {
+        for x in 0..qr.size() {
+            if qr.get_module(x, y) {
+                let _ = write!(&mut path, "M{},{}h1v1h-1z", x + border, y + border);
+            }
+        }
+    }
+
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {size} {size}\" shape-rendering=\"crispEdges\"><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/><path d=\"{path}\" fill=\"#000\"/></svg>"
+    )
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let mut chunks = bytes.chunks_exact(3);
+    for chunk in &mut chunks {
+        let triple = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | chunk[2] as u32;
+        out.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 6) & 0x3f) as usize] as char);
+        out.push(TABLE[(triple & 0x3f) as usize] as char);
+    }
+    let rem = chunks.remainder();
+    if !rem.is_empty() {
+        let mut triple = (rem[0] as u32) << 16;
+        if rem.len() == 2 {
+            triple |= (rem[1] as u32) << 8;
+        }
+        out.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
+        if rem.len() == 2 {
+            out.push(TABLE[((triple >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        out.push('=');
+    }
+    out
 }
 
 fn effective_profile(service: &AgentChatService, selected: Option<&str>) -> String {

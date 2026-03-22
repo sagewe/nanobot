@@ -221,7 +221,13 @@ fn page_shell_bootstraps_weixin_account_and_login_polling() {
     assert!(html.contains("await fetch(\"/api/weixin/account\")"));
     assert!(html.contains("await fetch(\"/api/weixin/login/start\", {"));
     assert!(html.contains("await fetch(\"/api/weixin/login/status\")"));
-    assert!(html.contains("weixinQrImage.src = payload.qrcodeImgContent || \"\";"));
+    assert!(html.contains("function normalizeWeixinQrSource(content)"));
+    assert!(html.contains("value.startsWith(\"data:\")"));
+    assert!(html.contains("value.startsWith(\"https://\")"));
+    assert!(html.contains("return `data:image/png;base64,${compact}`;"));
+    assert!(html.contains(
+        "weixinQrImage.src = normalizeWeixinQrSource(payload.qrcodeImgContent || \"\");"
+    ));
     assert!(html.contains("setTimeout(() => pollWeixinLoginStatus(), 1500);"));
     assert!(html.contains("await loadWeixinAccount();"));
 }

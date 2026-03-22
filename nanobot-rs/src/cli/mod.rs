@@ -14,7 +14,7 @@ use crate::providers::build_provider_from_config;
 use crate::web;
 
 pub const DEFAULT_WEB_HOST: &str = "127.0.0.1";
-pub const DEFAULT_WEB_PORT: u16 = 3000;
+pub const DEFAULT_WEB_PORT: u16 = 3456;
 
 #[derive(Debug, Parser)]
 #[command(name = "nanobot-rs")]

@@ -590,6 +590,27 @@ pub fn render_index_html() -> String {
         weixinPollTimer = setTimeout(() => pollWeixinLoginStatus(), 1500);
       }
 
+      function normalizeWeixinQrSource(content) {
+        const value = (content || "").trim();
+        if (!value) {
+          return "";
+        }
+        if (
+          value.startsWith("data:") ||
+          value.startsWith("blob:") ||
+          value.startsWith("http://") ||
+          value.startsWith("https://") ||
+          value.startsWith("/")
+        ) {
+          return value;
+        }
+        const compact = value.replace(/\s+/g, "");
+        if (/^[A-Za-z0-9+/=]+$/.test(compact)) {
+          return `data:image/png;base64,${compact}`;
+        }
+        return value;
+      }
+
       function renderWeixinAccount(account) {
         const enabled = account?.enabled === true;
         const loggedIn = account?.loggedIn === true;
@@ -705,7 +726,7 @@ pub fn render_index_html() -> String {
           throw new Error(payload.error || "Failed to start Weixin login");
         }
         weixinQrPanel.hidden = false;
-        weixinQrImage.src = payload.qrcodeImgContent || "";
+        weixinQrImage.src = normalizeWeixinQrSource(payload.qrcodeImgContent || "");
         weixinStatusLabel.textContent = "Waiting for scan";
         weixinUserLabel.textContent = "Scan the QR code in Weixin.";
         scheduleWeixinPoll();
