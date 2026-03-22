@@ -174,10 +174,16 @@ async fn codex_provider_sends_bearer_and_account_headers() {
         "parameters": {"type": "object"}
     })];
 
-    let _response = provider
+    let err = provider
         .chat_with_request(messages, tools.clone(), &request)
         .await
-        .expect("codex request should succeed");
+        .expect_err("Task 4 should not synthesize a successful LLM response yet");
+
+    assert!(
+        err.to_string()
+            .contains("codex response normalization is not implemented yet"),
+        "{err}"
+    );
 
     let captured = requests.lock().await;
     let sent = captured.last().expect("captured request");

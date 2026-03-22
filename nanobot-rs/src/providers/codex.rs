@@ -117,30 +117,25 @@ impl LlmProvider for CodexProvider {
         let body = build_request_body(messages, tools, request);
         let response = self.send_responses_request(&body).await?;
         let status = response.status();
+
+        if status.is_success() {
+            return Err(ProviderError::fatal(
+                "codex response normalization is not implemented yet",
+            )
+            .into());
+        }
+
         let text = response
             .text()
             .await
             .context("failed to read codex provider body")?;
 
-        if !status.is_success() {
-            let details = if text.trim().is_empty() {
-                "empty response body".to_string()
-            } else {
-                text.trim().to_string()
-            };
-            return Err(ProviderError::fatal(format!(
-                "codex provider error {}: {}",
-                status, details
-            ))
-            .into());
-        }
-
-        Ok(LlmResponse {
-            content: None,
-            tool_calls: Vec::new(),
-            finish_reason: "stop".to_string(),
-            extra: Map::new(),
-        })
+        let details = if text.trim().is_empty() {
+            "empty response body".to_string()
+        } else {
+            text.trim().to_string()
+        };
+        Err(ProviderError::fatal(format!("codex provider error {}: {}", status, details)).into())
     }
 }
 
