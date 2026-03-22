@@ -2,9 +2,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
+use async_trait::async_trait;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::config::CodexProviderConfig;
+use crate::providers::{LlmProvider, LlmResponse, ProviderError, ProviderRequestDescriptor};
 
 #[derive(Debug, Clone)]
 pub struct CodexProvider {
@@ -56,6 +59,39 @@ impl CodexProvider {
     fn auth(&self) -> &CodexAuthFile {
         &self.auth
     }
+}
+
+#[async_trait]
+impl LlmProvider for CodexProvider {
+    fn default_model(&self) -> &str {
+        "codex"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<Value>,
+        _tools: Vec<Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        Err(ProviderError::fatal("codex provider transport not implemented yet").into())
+    }
+
+    async fn chat_with_request(
+        &self,
+        messages: Vec<Value>,
+        tools: Vec<Value>,
+        request: &ProviderRequestDescriptor,
+    ) -> Result<LlmResponse> {
+        self.chat(messages, tools, &request.model_name).await
+    }
+}
+
+pub fn cache_key(config: &CodexProviderConfig) -> String {
+    format!(
+        "codex\n{}\n{}",
+        config.auth_file.trim(),
+        config.api_base.trim_end_matches('/')
+    )
 }
 
 fn resolve_auth_path(raw_path: &str) -> Result<PathBuf> {

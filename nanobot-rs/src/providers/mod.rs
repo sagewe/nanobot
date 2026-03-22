@@ -6,7 +6,7 @@ mod registry;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
@@ -26,7 +26,7 @@ pub type OpenAIProvider = OpenAICompatibleProvider;
 pub struct ProviderPool {
     config: Config,
     registry: ProviderRegistry,
-    clients: Arc<Mutex<HashMap<String, Arc<OpenAICompatibleProvider>>>>,
+    clients: Arc<Mutex<HashMap<String, Arc<dyn LlmProvider>>>>,
     default_model: String,
 }
 
@@ -44,22 +44,33 @@ impl ProviderPool {
     async fn client_for(
         &self,
         request: &ProviderRequestDescriptor,
-    ) -> Result<Arc<OpenAICompatibleProvider>> {
-        let resolved = self.registry.build_config_for_provider(
-            &self.config,
-            &request.provider_name,
-            &request.model_name,
-        )?;
-        if resolved.kind == ProviderKind::Codex {
-            bail!("codex provider runtime is not implemented yet");
-        }
-        let key = provider_cache_key(&resolved);
+    ) -> Result<Arc<dyn LlmProvider>> {
+        let spec = self.registry.resolve(&request.provider_name)?;
+        let resolved = match spec.kind {
+            ProviderKind::Codex => None,
+            _ => Some(self.registry.build_config_for_provider(
+                &self.config,
+                &request.provider_name,
+                &request.model_name,
+            )?),
+        };
+        let key = match (&spec.kind, resolved.as_ref()) {
+            (ProviderKind::Codex, _) => codex_provider_cache_key(&self.config.providers.codex),
+            (_, Some(resolved)) => provider_cache_key(resolved),
+            _ => unreachable!("non-codex provider must have resolved config"),
+        };
 
         if let Some(existing) = self.clients.lock().await.get(&key).cloned() {
             return Ok(existing);
         }
 
-        let client = Arc::new(OpenAICompatibleProvider::from_config(resolved)?);
+        let client: Arc<dyn LlmProvider> = match resolved {
+            None => Arc::new(CodexProvider::from_config(
+                self.config.providers.codex.clone(),
+            )?),
+            Some(resolved) => Arc::new(OpenAICompatibleProvider::from_config(resolved)?),
+        };
+
         let mut clients = self.clients.lock().await;
         Ok(clients.entry(key).or_insert_with(|| client.clone()).clone())
     }
@@ -104,6 +115,10 @@ fn provider_cache_key(config: &ResolvedProviderConfig) -> String {
         "{}\n{}\n{}\n{}",
         config.name, config.api_base, config.api_key, header_blob
     )
+}
+
+fn codex_provider_cache_key(config: &CodexProviderConfig) -> String {
+    codex::cache_key(config)
 }
 
 pub fn build_provider_from_config(config: &Config) -> Result<Arc<dyn LlmProvider>> {

@@ -7,9 +7,10 @@ use async_trait::async_trait;
 use nanobot_rs::config::Config;
 use nanobot_rs::config::load_config;
 use nanobot_rs::providers::{
-    LlmProvider, LlmResponse, ProviderError, ProviderKind, ProviderRegistry,
+    LlmProvider, LlmResponse, ProviderError, ProviderKind, ProviderPool, ProviderRegistry,
+    ProviderRequestDescriptor,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tempfile::tempdir;
 
 #[test]
@@ -161,6 +162,53 @@ fn provider_registry_builds_provider_configs_with_defaults() {
     assert_eq!(built.api_base, "https://api.openai.com/v1");
     assert_eq!(built.default_model, "gpt-4.1-mini");
     assert_eq!(built.api_key, "sk-test");
+}
+
+#[tokio::test]
+async fn provider_pool_routes_codex_profiles_to_codex_provider() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("config.json");
+    let missing_auth_path = dir.path().join("missing-codex-auth.json");
+    fs::write(
+        &path,
+        format!(
+            r#"{{
+  "agents": {{
+    "defaults": {{
+      "workspace": "/tmp/nanobot",
+      "defaultProfile": "codex:gpt-5.4",
+      "maxToolIterations": 20
+    }},
+    "profiles": {{
+      "codex:gpt-5.4": {{
+        "provider": "codex",
+        "model": "gpt-5.4",
+        "request": {{}}
+      }}
+    }}
+  }},
+  "providers": {{
+    "codex": {{
+      "authFile": "{}",
+      "apiBase": "https://chatgpt.com/backend-api"
+    }}
+  }}
+}}"#,
+            missing_auth_path.display()
+        ),
+    )
+    .expect("write config");
+
+    let config = load_config(Some(&path)).expect("load config");
+    let pool = ProviderPool::new(config);
+    let request = ProviderRequestDescriptor::new("codex", "gpt-5.4", Map::new());
+
+    let err = pool
+        .chat_with_request(vec![], vec![], &request)
+        .await
+        .expect_err("missing auth file should fail");
+
+    assert!(err.to_string().contains("auth file"), "{err}");
 }
 
 #[test]
