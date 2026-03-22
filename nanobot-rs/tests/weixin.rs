@@ -39,6 +39,52 @@ fn weixin_account_store_round_trips_account_and_context_tokens() {
 }
 
 #[test]
+fn weixin_account_store_preserves_multiple_context_tokens_on_disk() {
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+
+    store.save_context_token("user@im.wechat", "ctx-1").unwrap();
+    store
+        .save_context_token("friend@im.wechat", "ctx-2")
+        .unwrap();
+
+    let raw = fs::read_to_string(
+        temp.path()
+            .join("channels")
+            .join("weixin")
+            .join("context_tokens.json"),
+    )
+    .unwrap();
+    let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+
+    assert_eq!(json["user@im.wechat"], "ctx-1");
+    assert_eq!(json["friend@im.wechat"], "ctx-2");
+    assert_eq!(
+        json.as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["friend@im.wechat".to_string(), "user@im.wechat".to_string(),])
+    );
+
+    assert_eq!(
+        store
+            .load_context_token("user@im.wechat")
+            .unwrap()
+            .as_deref(),
+        Some("ctx-1")
+    );
+    assert_eq!(
+        store
+            .load_context_token("friend@im.wechat")
+            .unwrap()
+            .as_deref(),
+        Some("ctx-2")
+    );
+}
+
+#[test]
 fn weixin_account_store_clear_all_removes_persisted_state() {
     let temp = tempdir().unwrap();
     let store = WeixinAccountStore::new(temp.path()).unwrap();
@@ -53,6 +99,14 @@ fn weixin_account_store_clear_all_removes_persisted_state() {
             .load_context_token("user@im.wechat")
             .unwrap()
             .is_none()
+    );
+    assert!(
+        !temp
+            .path()
+            .join("channels")
+            .join("weixin")
+            .join("context_tokens.json")
+            .exists()
     );
 }
 

@@ -22,7 +22,6 @@ pub use wecom::{
     ParsedWecomTextCallback, WecomBotChannel, WecomTiming, build_wecom_markdown_reply_request,
     build_wecom_ping_request, build_wecom_subscribe_request, parse_wecom_text_callback,
 };
-pub use weixin::{WeixinAccountState, WeixinAccountStore, WeixinLoginSession};
 
 #[async_trait]
 pub trait Channel: Send + Sync {
