@@ -13,6 +13,7 @@ use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
+use crate::channels::weixin::WeixinAccountStore;
 use crate::config::{Config, TelegramConfig};
 use crate::presentation::{
     render_telegram_html, should_deliver_to_channel, split_telegram_html_chunks,
@@ -22,6 +23,7 @@ pub use wecom::{
     ParsedWecomTextCallback, WecomBotChannel, WecomTiming, build_wecom_markdown_reply_request,
     build_wecom_ping_request, build_wecom_subscribe_request, parse_wecom_text_callback,
 };
+pub use weixin::WeixinChannel;
 
 #[async_trait]
 pub trait Channel: Send + Sync {
@@ -237,6 +239,23 @@ impl ChannelManager {
                     bus.clone(),
                 )),
             );
+        }
+        if config.channels.weixin.enabled {
+            match WeixinAccountStore::new(&config.workspace_path()) {
+                Ok(store) => {
+                    channels.insert(
+                        "weixin".to_string(),
+                        Arc::new(WeixinChannel::new(
+                            config.channels.weixin.clone(),
+                            store,
+                            bus.clone(),
+                        )),
+                    );
+                }
+                Err(error) => {
+                    error!("failed to initialize weixin channel store: {error}");
+                }
+            }
         }
         Self {
             bus,

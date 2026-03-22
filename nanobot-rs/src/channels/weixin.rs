@@ -2,18 +2,28 @@ use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+
+use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
+use crate::channels::Channel;
+use crate::config::WeixinConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WeixinAccountState {
@@ -22,6 +32,8 @@ pub struct WeixinAccountState {
     pub baseurl: String,
     pub ilink_user_id: Option<String>,
     pub get_updates_buf: String,
+    #[serde(default = "default_longpolling_timeout_ms")]
+    pub longpolling_timeout_ms: u64,
     pub status: String,
     pub updated_at: DateTime<Utc>,
 }
@@ -78,8 +90,7 @@ impl WeixinClient {
     }
 
     fn get_with_x_wechat_uin(&self, path: &str) -> reqwest::RequestBuilder {
-        self.get(path)
-            .header("X-WECHAT-UIN", Self::x_wechat_uin())
+        self.get(path).header("X-WECHAT-UIN", Self::x_wechat_uin())
     }
 
     pub async fn fetch_qr_code(&self) -> Result<WeixinQrLoginResponse> {
@@ -128,6 +139,7 @@ struct WeixinLoginStatusPayload {
     baseurl: Option<String>,
     ilink_user_id: Option<String>,
     get_updates_buf: Option<String>,
+    longpolling_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -157,13 +169,12 @@ impl WeixinLoginManager {
         *self
             .session
             .lock()
-            .map_err(|_| anyhow!("weixin login session lock poisoned"))? = Some(
-            WeixinLoginSessionState {
+            .map_err(|_| anyhow!("weixin login session lock poisoned"))? =
+            Some(WeixinLoginSessionState {
                 qrcode: login.qrcode.clone(),
                 _qrcode_img_content: login.qrcode_img_content.clone(),
                 status: "wait".to_string(),
-            },
-        );
+            });
         Ok(login)
     }
 
@@ -207,6 +218,9 @@ impl WeixinLoginManager {
                     .unwrap_or_else(|| self.client.api_base().to_string()),
                 ilink_user_id: payload.ilink_user_id.clone(),
                 get_updates_buf: String::new(),
+                longpolling_timeout_ms: payload
+                    .longpolling_timeout_ms
+                    .unwrap_or_else(default_longpolling_timeout_ms),
                 status: "confirmed".to_string(),
                 updated_at: Utc::now(),
             };
@@ -217,6 +231,270 @@ impl WeixinLoginManager {
             status: payload.status,
         })
     }
+}
+
+#[derive(Clone)]
+pub struct WeixinChannel {
+    config: WeixinConfig,
+    store: WeixinAccountStore,
+    bus: MessageBus,
+    client: reqwest::Client,
+    running: Arc<AtomicBool>,
+}
+
+impl WeixinChannel {
+    pub fn new(config: WeixinConfig, store: WeixinAccountStore, bus: MessageBus) -> Self {
+        Self {
+            config,
+            store,
+            bus,
+            client: reqwest::Client::new(),
+            running: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn api_base(&self, account: &WeixinAccountState) -> String {
+        let base = if account.baseurl.trim().is_empty() {
+            &self.config.api_base
+        } else {
+            &account.baseurl
+        };
+        base.trim_end_matches('/').to_string()
+    }
+
+    fn channel_version(&self) -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+
+    fn getupdates_url(&self, account: &WeixinAccountState) -> String {
+        format!("{}/ilink/bot/getupdates", self.api_base(account))
+    }
+
+    fn getupdates_request(&self, account: &WeixinAccountState) -> reqwest::RequestBuilder {
+        self.client
+            .post(self.getupdates_url(account))
+            .header("AuthorizationType", "ilink_bot_token")
+            .header("Authorization", format!("Bearer {}", account.bot_token))
+            .header("X-WECHAT-UIN", WeixinClient::x_wechat_uin())
+            .json(&serde_json::json!({
+                "base_info": {
+                    "channel_version": self.channel_version(),
+                },
+                "bot_token": account.bot_token.clone(),
+                "ilink_bot_id": account.ilink_bot_id.clone(),
+                "get_updates_buf": account.get_updates_buf.clone(),
+                "longpolling_timeout_ms": account.longpolling_timeout_ms,
+            }))
+    }
+
+    async fn poll_once(&self, account: &mut WeixinAccountState) -> Result<PollOutcome> {
+        let timeout = Duration::from_millis(account.longpolling_timeout_ms.max(1));
+        let response = self
+            .getupdates_request(account)
+            .timeout(timeout)
+            .send()
+            .await;
+
+        let response = match response {
+            Ok(response) => response,
+            Err(error) if error.is_timeout() => {
+                debug!("weixin getupdates poll timed out");
+                return Ok(PollOutcome::Empty);
+            }
+            Err(error) => return Err(error).context("failed to request weixin getupdates"),
+        };
+
+        let response = match response.error_for_status() {
+            Ok(response) => response,
+            Err(error) if error.is_timeout() => {
+                debug!("weixin getupdates poll timed out after status");
+                return Ok(PollOutcome::Empty);
+            }
+            Err(error) => return Err(error).context("weixin getupdates request failed"),
+        };
+
+        let payload = match response.json::<Value>().await {
+            Ok(payload) => payload,
+            Err(error) if error.is_timeout() => {
+                debug!("weixin getupdates response timed out");
+                return Ok(PollOutcome::Empty);
+            }
+            Err(error) => return Err(error).context("failed to parse weixin getupdates response"),
+        };
+
+        let errcode = payload
+            .get("errcode")
+            .or_else(|| payload.get("err_code"))
+            .and_then(Value::as_i64)
+            .unwrap_or_default();
+
+        if errcode == -14 {
+            account.status = "expired".to_string();
+            account.updated_at = Utc::now();
+            self.store.save_account(account)?;
+            warn!("weixin account expired");
+            return Ok(PollOutcome::Expired);
+        }
+
+        let root = payload.get("data").unwrap_or(&payload);
+        let mut should_persist = false;
+
+        if let Some(buf) = root
+            .get("get_updates_buf")
+            .or_else(|| root.get("getUpdatesBuf"))
+            .and_then(Value::as_str)
+        {
+            if account.get_updates_buf != buf {
+                account.get_updates_buf = buf.to_string();
+                should_persist = true;
+            }
+        }
+        if let Some(timeout_ms) = root
+            .get("longpolling_timeout_ms")
+            .or_else(|| root.get("longpollingTimeoutMs"))
+            .and_then(Value::as_u64)
+        {
+            if account.longpolling_timeout_ms != timeout_ms {
+                account.longpolling_timeout_ms = timeout_ms;
+                should_persist = true;
+            }
+        }
+
+        if let Some(items) = root
+            .get("items")
+            .or_else(|| root.get("result"))
+            .and_then(Value::as_array)
+        {
+            for item in items {
+                if let Some(parsed) = parse_weixin_item(item) {
+                    should_persist = true;
+                    if let Some(context_token) = parsed.context_token.as_deref() {
+                        self.store
+                            .save_context_token(&parsed.from_user_id, context_token)?;
+                    }
+                    self.bus
+                        .publish_inbound(InboundMessage {
+                            channel: "weixin".to_string(),
+                            sender_id: parsed.from_user_id.clone(),
+                            chat_id: parsed.from_user_id,
+                            content: parsed.text,
+                            timestamp: Utc::now(),
+                            metadata: Default::default(),
+                            session_key_override: None,
+                        })
+                        .await?;
+                }
+            }
+        }
+
+        if should_persist {
+            account.updated_at = Utc::now();
+            self.store.save_account(account)?;
+        }
+
+        Ok(PollOutcome::Empty)
+    }
+}
+
+#[async_trait]
+impl Channel for WeixinChannel {
+    fn name(&self) -> &'static str {
+        "weixin"
+    }
+
+    async fn start(&self) -> Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+
+        self.running.store(true, Ordering::SeqCst);
+        while self.running.load(Ordering::SeqCst) {
+            let mut account = match self.store.load_account()? {
+                Some(account) => account,
+                None => {
+                    warn!("weixin enabled but no account is configured");
+                    break;
+                }
+            };
+            match self.poll_once(&mut account).await? {
+                PollOutcome::Empty => {}
+                PollOutcome::Expired => {
+                    self.running.store(false, Ordering::SeqCst);
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn stop(&self) -> Result<()> {
+        self.running.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn send(&self, _msg: OutboundMessage) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedWeixinItem {
+    from_user_id: String,
+    text: String,
+    context_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PollOutcome {
+    Empty,
+    Expired,
+}
+
+fn parse_weixin_item(item: &Value) -> Option<ParsedWeixinItem> {
+    let msg_type = item
+        .get("msg_type")
+        .or_else(|| item.get("msgType"))
+        .or_else(|| item.get("type"))
+        .and_then(Value::as_str)?;
+    if msg_type != "text" {
+        debug!("dropping non-text weixin item: {msg_type}");
+        return None;
+    }
+    if item
+        .get("group_id")
+        .and_then(Value::as_str)
+        .is_some_and(|group| !group.is_empty())
+        || item
+            .get("groupId")
+            .and_then(Value::as_str)
+            .is_some_and(|group| !group.is_empty())
+    {
+        debug!("dropping group weixin item");
+        return None;
+    }
+
+    let from_user_id = item
+        .get("from_user_id")
+        .or_else(|| item.get("fromUserId"))
+        .or_else(|| item.pointer("/from/user_id"))
+        .or_else(|| item.pointer("/from/userId"))
+        .and_then(Value::as_str)?;
+    let text = item
+        .get("text")
+        .or_else(|| item.get("content"))
+        .and_then(Value::as_str)?;
+    let context_token = item
+        .get("context_token")
+        .or_else(|| item.get("contextToken"))
+        .or_else(|| item.get("context"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+
+    Some(ParsedWeixinItem {
+        from_user_id: from_user_id.to_string(),
+        text: text.to_string(),
+        context_token,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -323,7 +601,15 @@ fn parse_qr_status_response(payload: &Value) -> Result<WeixinLoginStatusPayload>
         baseurl: json_string(root, &["baseurl", "baseUrl"]),
         ilink_user_id: json_string(root, &["ilink_user_id", "ilinkUserId"]),
         get_updates_buf: json_string(root, &["get_updates_buf", "getUpdatesBuf"]),
+        longpolling_timeout_ms: root
+            .get("longpolling_timeout_ms")
+            .or_else(|| root.get("longpollingTimeoutMs"))
+            .and_then(Value::as_u64),
     })
+}
+
+fn default_longpolling_timeout_ms() -> u64 {
+    35_000
 }
 
 fn json_string(value: &Value, keys: &[&str]) -> Option<String> {
@@ -336,8 +622,7 @@ fn json_string(value: &Value, keys: &[&str]) -> Option<String> {
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     let mut chunks = bytes.chunks_exact(3);
     for chunk in &mut chunks {

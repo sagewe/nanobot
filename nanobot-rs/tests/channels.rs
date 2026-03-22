@@ -66,6 +66,15 @@ async fn channel_manager_registers_wecom_when_enabled() {
 }
 
 #[tokio::test]
+async fn channel_manager_registers_weixin_when_enabled() {
+    let mut config = Config::default();
+    config.channels.weixin.enabled = true;
+
+    let manager = ChannelManager::new(&config, MessageBus::new(32));
+    assert!(manager.enabled_channels().contains(&"weixin".to_string()));
+}
+
+#[tokio::test]
 async fn telegram_channel_receives_allowed_text_messages() {
     let state = TelegramState {
         updates: Arc::new(Mutex::new(vec![json!({
