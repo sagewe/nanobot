@@ -115,7 +115,20 @@ pub fn render_index_html() -> String {
 
       #session-list {
         display: grid;
+        gap: 0.85rem;
+      }
+
+      .session-group {
+        display: grid;
         gap: 0.65rem;
+      }
+
+      .session-group-title {
+        color: var(--accent);
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
 
       .session-item {
@@ -222,32 +235,36 @@ pub fn render_index_html() -> String {
         background: rgba(255, 255, 255, 0.72);
       }
 
-      #send-button {
-        justify-self: start;
-        border: 0;
-        border-radius: 999px;
-        padding: 0.85rem 1.35rem;
-        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 0.92rem;
-        color: #fff8ef;
-        background: linear-gradient(135deg, #c9622f, #a4461f);
-        cursor: pointer;
-      }
-
-      #new-chat-button {
-        border: 1px solid var(--line);
+      #send-button,
+      #new-chat-button,
+      #duplicate-session-button {
         border-radius: 999px;
         padding: 0.85rem 1.15rem;
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.92rem;
-        color: var(--ink);
-        background: rgba(255, 255, 255, 0.72);
         cursor: pointer;
       }
 
-      #send-button[disabled] {
+      #send-button {
+        justify-self: start;
+        border: 0;
+        padding-inline: 1.35rem;
+        color: #fff8ef;
+        background: linear-gradient(135deg, #c9622f, #a4461f);
+      }
+
+      #new-chat-button,
+      #duplicate-session-button {
+        border: 1px solid var(--line);
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      #send-button[disabled],
+      #new-chat-button[disabled],
+      #duplicate-session-button[disabled],
+      #message-input[disabled] {
         opacity: 0.65;
-        cursor: wait;
       }
 
       @media (max-width: 720px) {
@@ -277,7 +294,7 @@ pub fn render_index_html() -> String {
             <div class="session-kicker">Sessions</div>
             <strong id="active-profile">default</strong>
           </div>
-          <div id="session-list" aria-live="polite"></div>
+          <div id="session-list" aria-live="polite"><section class="session-group" hidden></section></div>
         </aside>
         <section class="conversation-pane">
           <section id="transcript" aria-live="polite">
@@ -288,6 +305,7 @@ pub fn render_index_html() -> String {
             <div class="composer-actions">
               <button id="send-button" type="submit">Send</button>
               <button id="new-chat-button" type="button">New chat</button>
+              <button id="duplicate-session-button" type="button" hidden>Duplicate to Web</button>
             </div>
           </form>
         </section>
@@ -296,18 +314,25 @@ pub fn render_index_html() -> String {
     <script>
       const INITIAL_ASSISTANT_MESSAGE = "Web UI ready. Ask nanobot-rs to inspect the workspace, edit files, or research something.";
       const SESSION_KEY = "nanobot-rs.sessionId";
+      const SELECTED_CHANNEL_KEY = "nanobot-rs.selectedChannel";
+      const SELECTED_SESSION_KEY = "nanobot-rs.selectedSessionId";
       const composer = document.getElementById("composer");
       const transcript = document.getElementById("transcript");
       const sessionList = document.getElementById("session-list");
       const messageInput = document.getElementById("message-input");
       const sendButton = document.getElementById("send-button");
       const newChatButton = document.getElementById("new-chat-button");
+      const duplicateButton = document.getElementById("duplicate-session-button");
       const statusNode = document.getElementById("status");
       const currentProfileNode = document.getElementById("active-profile");
-      const storedSessionId = localStorage.getItem(SESSION_KEY);
+      const legacyStoredSessionId = localStorage.getItem(SESSION_KEY);
+      let currentChannel = null;
       let currentSessionId = null;
-      let currentSessions = [];
+      let currentSessionReadOnly = false;
+      let currentSessionCanDuplicate = false;
+      let currentSessionGroups = [];
       let pendingSelectionToken = 0;
+      let isBusy = false;
 
       function appendMessage(role, content) {
         const node = document.createElement("article");
@@ -337,8 +362,10 @@ pub fn render_index_html() -> String {
       }
 
       function setBusy(busy) {
-        sendButton.disabled = busy;
+        isBusy = busy;
+        sendButton.disabled = busy || currentSessionReadOnly;
         newChatButton.disabled = busy;
+        duplicateButton.disabled = busy;
         sendButton.textContent = busy ? "Working..." : "Send";
       }
 
@@ -371,57 +398,114 @@ pub fn render_index_html() -> String {
         }
       }
 
-      function setSelectedSession(sessionId) {
+      function setComposerAccess(readOnly, canDuplicate) {
+        currentSessionReadOnly = readOnly;
+        currentSessionCanDuplicate = canDuplicate;
+        messageInput.disabled = readOnly;
+        sendButton.disabled = isBusy || currentSessionReadOnly;
+        duplicateButton.hidden = !canDuplicate;
+        duplicateButton.disabled = isBusy;
+      }
+
+      function setSelectedSession(channel, sessionId) {
+        currentChannel = channel;
         currentSessionId = sessionId;
-        if (sessionId) {
+        if (channel && sessionId) {
+          localStorage.setItem(SELECTED_CHANNEL_KEY, channel);
+          localStorage.setItem(SELECTED_SESSION_KEY, sessionId);
           localStorage.setItem(SESSION_KEY, sessionId);
         } else {
+          localStorage.removeItem(SELECTED_CHANNEL_KEY);
+          localStorage.removeItem(SELECTED_SESSION_KEY);
           localStorage.removeItem(SESSION_KEY);
         }
       }
 
-      function renderSessionList(sessions) {
+      function renderSessionList(groups) {
         sessionList.innerHTML = "";
-        for (const session of sessions) {
-          const node = document.createElement("button");
-          node.type = "button";
-          node.className = "session-item";
-          node.dataset.selected = String(session.sessionId === currentSessionId);
+        for (const group of groups) {
+          const groupNode = document.createElement("section");
+          groupNode.className = "session-group";
 
-          const title = document.createElement("div");
-          title.className = "session-item-title";
-          title.textContent = session.sessionId;
+          const heading = document.createElement("div");
+          heading.className = "session-group-title";
+          heading.textContent = group.channel;
+          groupNode.appendChild(heading);
 
-          const preview = document.createElement("div");
-          preview.className = "session-item-preview";
-          preview.textContent = session.preview || "New session";
+          for (const session of group.sessions || []) {
+            const node = document.createElement("button");
+            node.type = "button";
+            node.className = "session-item";
+            node.dataset.selected = String(
+              session.channel === currentChannel && session.sessionId === currentSessionId
+            );
 
-          const meta = document.createElement("div");
-          meta.className = "session-item-meta";
-          meta.textContent = session.activeProfile || "default";
+            const title = document.createElement("div");
+            title.className = "session-item-title";
+            title.textContent = session.sessionId;
 
-          node.appendChild(title);
-          node.appendChild(preview);
-          node.appendChild(meta);
-          node.addEventListener("click", async () => {
-            await selectSession(session.sessionId);
-            messageInput.focus();
-          });
-          sessionList.appendChild(node);
+            const preview = document.createElement("div");
+            preview.className = "session-item-preview";
+            preview.textContent = session.preview || "New session";
+
+            const meta = document.createElement("div");
+            meta.className = "session-item-meta";
+            meta.textContent = session.activeProfile || "default";
+
+            node.appendChild(title);
+            node.appendChild(preview);
+            node.appendChild(meta);
+            node.addEventListener("click", async () => {
+              await selectSession(session.channel, session.sessionId);
+              messageInput.focus();
+            });
+            groupNode.appendChild(node);
+          }
+
+          sessionList.appendChild(groupNode);
         }
       }
 
-      function updateSessionMetadata(sessionId, activeProfile) {
-        currentSessions = currentSessions.map((session) => {
-          if (session.sessionId !== sessionId) {
-            return session;
+      function updateSessionMetadata(channel, sessionId, activeProfile) {
+        currentSessionGroups = currentSessionGroups.map((group) => ({
+          ...group,
+          sessions: (group.sessions || []).map((session) => {
+            if (session.channel !== channel || session.sessionId !== sessionId) {
+              return session;
+            }
+            return {
+              ...session,
+              activeProfile: activeProfile || session.activeProfile,
+            };
+          }),
+        }));
+        renderSessionList(currentSessionGroups);
+      }
+
+      function findSession(groups, channel, sessionId) {
+        if (!channel || !sessionId) {
+          return null;
+        }
+        for (const group of groups) {
+          for (const session of group.sessions || []) {
+            if (session.channel === channel && session.sessionId === sessionId) {
+              return session;
+            }
           }
-          return {
-            ...session,
-            activeProfile: activeProfile || session.activeProfile,
-          };
-        });
-        renderSessionList(currentSessions);
+        }
+        return null;
+      }
+
+      function findLatestWritableWebSession(groups) {
+        const webSessions = groups
+          .flatMap((group) =>
+            (group.sessions || []).map((session) => ({
+              ...session,
+              channel: session.channel || group.channel,
+            }))
+          )
+          .filter((session) => session.channel === "web" && session.canSend);
+        return webSessions[0] || null;
       }
 
       async function fetchSessions() {
@@ -430,17 +514,17 @@ pub fn render_index_html() -> String {
         if (!response.ok) {
           throw new Error(payload.error || "Failed to load sessions");
         }
-        return payload.sessions || [];
+        return payload.groups || [];
       }
 
-      async function fetchSessionDetail(sessionId) {
-        const safeSessionId = encodeURIComponent(sessionId);
-        const response = await fetch(`/api/sessions/${sessionId}`);
+      async function fetchSessionDetail(channel, sessionId) {
+        const response = await fetch(`/api/sessions/${channel}/${sessionId}`);
         const detail = await response.json();
         if (!response.ok) {
           throw new Error(detail.error || "Failed to load session");
         }
-        detail.sessionId = detail.sessionId || decodeURIComponent(safeSessionId);
+        detail.channel = detail.channel || channel;
+        detail.sessionId = detail.sessionId || sessionId;
         return detail;
       }
 
@@ -455,50 +539,74 @@ pub fn render_index_html() -> String {
         return payload;
       }
 
-      async function refreshSessions() {
-        currentSessions = await fetchSessions();
-        renderSessionList(currentSessions);
-        return currentSessions;
+      async function duplicateSession() {
+        const response = await fetch("/api/sessions/duplicate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: currentChannel, sessionId: currentSessionId }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Failed to duplicate session");
+        }
+        return payload;
       }
 
-      async function selectSession(sessionId) {
+      async function refreshSessions() {
+        currentSessionGroups = await fetchSessions();
+        renderSessionList(currentSessionGroups);
+        if (
+          currentChannel &&
+          currentSessionId &&
+          !findSession(currentSessionGroups, currentChannel, currentSessionId)
+        ) {
+          setSelectedSession(null, null);
+        }
+        return currentSessionGroups;
+      }
+
+      async function selectSession(channel, sessionId) {
         const selectionToken = ++pendingSelectionToken;
-        const detail = await fetchSessionDetail(sessionId);
+        const detail = await fetchSessionDetail(channel, sessionId);
         if (selectionToken !== pendingSelectionToken) {
           return;
         }
-        setSelectedSession(sessionId);
+        setSelectedSession(channel, sessionId);
         renderSessionDetail(detail);
         setCurrentProfile(detail.activeProfile || "");
-        renderSessionList(currentSessions);
+        setComposerAccess(detail.readOnly === true, detail.canDuplicate === true);
+        renderSessionList(currentSessionGroups);
       }
 
       async function bootstrapSessions() {
-        const storedSessionId = localStorage.getItem(SESSION_KEY);
+        const storedChannel = localStorage.getItem(SELECTED_CHANNEL_KEY);
+        const storedSessionId = localStorage.getItem(SELECTED_SESSION_KEY);
+        const restoredSessionId = storedSessionId || legacyStoredSessionId;
         const sessions = await fetchSessions();
-        currentSessions = sessions;
-        renderSessionList(currentSessions);
+        currentSessionGroups = sessions;
+        renderSessionList(currentSessionGroups);
 
-        const storedSession = sessions.find((session) => session.sessionId === storedSessionId);
-        const initialSession = storedSession || sessions[0];
+        const groups = sessions;
+        const storedSession = findSession(groups, storedChannel || "web", restoredSessionId);
+        const initialSession = storedSession || findLatestWritableWebSession(groups);
         if (!initialSession) {
-          localStorage.removeItem(SESSION_KEY);
+          setSelectedSession(null, null);
           const created = await createSession();
           await refreshSessions();
-          await selectSession(created.sessionId);
+          await selectSession(created.channel || "web", created.sessionId);
           return;
         }
-        await selectSession(initialSession.sessionId);
+        await selectSession(initialSession.channel, initialSession.sessionId);
       }
 
       newChatButton.addEventListener("click", async () => {
         setBusy(true);
         setStatus("Starting a new session...", "loading");
         try {
-          localStorage.removeItem(SESSION_KEY);
+          setSelectedSession(null, null);
           const created = await createSession();
           await refreshSessions();
-          await selectSession(created.sessionId);
+          await selectSession(created.channel || "web", created.sessionId);
           setStatus("New session started.", "idle");
         } catch (error) {
           setStatus(error?.message || "Failed to create session", "error");
@@ -510,6 +618,26 @@ pub fn render_index_html() -> String {
 
       renderTranscript([]);
       setCurrentProfile("");
+      setComposerAccess(false, false);
+
+      duplicateButton.addEventListener("click", async () => {
+        if (!currentSessionId || !currentSessionCanDuplicate) {
+          return;
+        }
+        setBusy(true);
+        setStatus("Duplicating session to Web...", "loading");
+        try {
+          const duplicated = await duplicateSession();
+          await refreshSessions();
+          await selectSession(duplicated.channel, duplicated.sessionId);
+          setStatus("Session duplicated to Web.", "idle");
+        } catch (error) {
+          setStatus(error?.message || "Failed to duplicate session", "error");
+        } finally {
+          setBusy(false);
+          messageInput.focus();
+        }
+      });
 
       messageInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
@@ -527,6 +655,10 @@ pub fn render_index_html() -> String {
           messageInput.focus();
           return;
         }
+        if (currentSessionReadOnly) {
+          setStatus("This session is read-only. Duplicate it to Web to continue.", "error");
+          return;
+        }
 
         appendMessage("user", message);
         messageInput.value = "";
@@ -535,27 +667,31 @@ pub fn render_index_html() -> String {
 
         try {
           if (!currentSessionId) {
-            localStorage.removeItem(SESSION_KEY);
+            setSelectedSession(null, null);
             const created = await createSession();
             await refreshSessions();
-            await selectSession(created.sessionId);
+            await selectSession(created.channel || "web", created.sessionId);
           }
           const response = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message, sessionId: currentSessionId }),
+            body: JSON.stringify({ message, channel: currentChannel, sessionId: currentSessionId }),
           });
           const payload = await response.json();
           if (!response.ok) {
             throw new Error(payload.error || "Request failed");
           }
-          setSelectedSession(payload.sessionId);
+          setSelectedSession(payload.channel || currentChannel, payload.sessionId);
           appendAssistantMessage(payload.replyHtml || "");
           setCurrentProfile(payload.activeProfile || "");
-          updateSessionMetadata(payload.sessionId, payload.activeProfile || "");
+          updateSessionMetadata(
+            payload.channel || currentChannel,
+            payload.sessionId,
+            payload.activeProfile || ""
+          );
           await refreshSessions();
           if (message.startsWith("/new") || message.startsWith("/model")) {
-            await selectSession(currentSessionId);
+            await selectSession(currentChannel, currentSessionId);
           }
           setStatus("", "idle");
         } catch (error) {

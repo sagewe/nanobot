@@ -16,7 +16,7 @@ fn page_shell_includes_backend_session_api_hooks() {
 
     assert!(html.contains("localStorage"));
     assert!(html.contains("await fetch(\"/api/sessions\")"));
-    assert!(html.contains("await fetch(`/api/sessions/${sessionId}`)"));
+    assert!(html.contains("await fetch(`/api/sessions/${channel}/${sessionId}`)"));
     assert!(html.contains("await fetch(\"/api/sessions\", {"));
     assert!(html.contains("/api/chat"));
     assert!(html.contains("aria-live=\"polite\""));
@@ -50,8 +50,10 @@ fn page_shell_uses_backend_session_ids_instead_of_local_uuid_generation() {
 
     assert!(html.contains("id=\"new-chat-button\""));
     assert!(!html.contains("crypto.randomUUID()"));
-    assert!(html.contains("localStorage.setItem(SESSION_KEY, sessionId)"));
-    assert!(html.contains("localStorage.removeItem(SESSION_KEY)"));
+    assert!(html.contains("localStorage.setItem(SELECTED_CHANNEL_KEY, channel)"));
+    assert!(html.contains("localStorage.setItem(SELECTED_SESSION_KEY, sessionId)"));
+    assert!(html.contains("localStorage.removeItem(SELECTED_CHANNEL_KEY)"));
+    assert!(html.contains("localStorage.removeItem(SELECTED_SESSION_KEY)"));
 }
 
 #[test]
@@ -68,12 +70,18 @@ fn page_shell_supports_ctrl_and_cmd_enter_submission() {
 fn page_shell_bootstraps_from_backend_sessions_and_stored_selection() {
     let html = nanobot_rs::web::page::render_index_html();
 
-    assert!(html.contains("const storedSessionId = localStorage.getItem(SESSION_KEY);"));
+    assert!(html.contains("const storedChannel = localStorage.getItem(SELECTED_CHANNEL_KEY);"));
+    assert!(html.contains("const storedSessionId = localStorage.getItem(SELECTED_SESSION_KEY);"));
     assert!(html.contains("const sessions = await fetchSessions();"));
-    assert!(html.contains("sessions.find((session) => session.sessionId === storedSessionId)"));
-    assert!(html.contains("const initialSession = storedSession || sessions[0];"));
+    assert!(html.contains("const restoredSessionId = storedSessionId || legacyStoredSessionId;"));
+    assert!(html.contains(
+        "const storedSession = findSession(groups, storedChannel || \"web\", restoredSessionId);"
+    ));
+    assert!(html.contains(
+        "const initialSession = storedSession || findLatestWritableWebSession(groups);"
+    ));
     assert!(html.contains("await createSession();"));
-    assert!(html.contains("await selectSession(initialSession.sessionId);"));
+    assert!(html.contains("await selectSession(initialSession.channel, initialSession.sessionId);"));
 }
 
 #[test]
@@ -118,11 +126,69 @@ fn page_shell_commits_session_selection_only_after_detail_load() {
     assert!(html.contains("if (selectionToken !== pendingSelectionToken)"));
 
     let fetch_index = html
-        .find("const detail = await fetchSessionDetail(sessionId);")
+        .find("const detail = await fetchSessionDetail(channel, sessionId);")
         .expect("detail fetch");
     let commit_index = html
-        .find("setSelectedSession(sessionId);")
+        .find("setSelectedSession(channel, sessionId);")
         .expect("selection commit");
 
     assert!(fetch_index < commit_index);
+}
+
+#[test]
+fn page_shell_renders_grouped_session_sections() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("class=\"session-group\""));
+    assert!(html.contains("heading.className = \"session-group-title\";"));
+    assert!(html.contains("payload.groups || []"));
+    assert!(html.contains("for (const group of groups)"));
+    assert!(html.contains("group.channel"));
+}
+
+#[test]
+fn page_shell_supports_persisted_cross_channel_selection_and_legacy_migration() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("const SELECTED_CHANNEL_KEY = \"nanobot-rs.selectedChannel\";"));
+    assert!(html.contains("const SELECTED_SESSION_KEY = \"nanobot-rs.selectedSessionId\";"));
+    assert!(html.contains("const legacyStoredSessionId = localStorage.getItem(SESSION_KEY);"));
+    assert!(html.contains("const storedChannel = localStorage.getItem(SELECTED_CHANNEL_KEY);"));
+    assert!(html.contains("const storedSessionId = localStorage.getItem(SELECTED_SESSION_KEY);"));
+    assert!(html.contains("const restoredSessionId = storedSessionId || legacyStoredSessionId;"));
+    assert!(html.contains("storedChannel || \"web\""));
+}
+
+#[test]
+fn page_shell_disables_composer_for_read_only_sessions_and_exposes_duplicate_action() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("const duplicateButton = document.getElementById(\"duplicate-session-button\");"));
+    assert!(html.contains("messageInput.disabled = readOnly;"));
+    assert!(html.contains("sendButton.disabled = busy || currentSessionReadOnly;"));
+    assert!(html.contains("duplicateButton.hidden = !canDuplicate;"));
+    assert!(html.contains("Duplicate to Web"));
+}
+
+#[test]
+fn page_shell_duplicates_non_web_sessions_into_new_web_session_and_switches_selection() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("await fetch(\"/api/sessions/duplicate\", {"));
+    assert!(html.contains("body: JSON.stringify({ channel: currentChannel, sessionId: currentSessionId })"));
+    assert!(html.contains("const duplicated = await duplicateSession();"));
+    assert!(html.contains("await refreshSessions();"));
+    assert!(html.contains("await selectSession(duplicated.channel, duplicated.sessionId);"));
+}
+
+#[test]
+fn page_shell_prefers_writable_web_fallback_and_creates_web_session_when_missing() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("findLatestWritableWebSession(groups)"));
+    assert!(html.contains("const webSessions = groups"));
+    assert!(html.contains(".filter((session) => session.channel === \"web\" && session.canSend)"));
+    assert!(html.contains("if (!initialSession) {"));
+    assert!(html.contains("const created = await createSession();"));
+    assert!(html.contains("await selectSession(created.channel || \"web\", created.sessionId);"));
 }
