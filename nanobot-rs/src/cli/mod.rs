@@ -1,7 +1,9 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use async_trait::async_trait;
+use clap::{Args, Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::agent::AgentLoop;
@@ -11,16 +13,31 @@ use crate::config::{Config, default_workspace_path, load_config, save_config};
 use crate::providers::build_provider_from_config;
 use crate::web;
 
-#[derive(Parser)]
+pub const DEFAULT_WEB_HOST: &str = "127.0.0.1";
+pub const DEFAULT_WEB_PORT: u16 = 3000;
+
+#[derive(Debug, Parser)]
 #[command(name = "nanobot-rs")]
 #[command(about = "A lightweight personal AI assistant in Rust")]
-struct App {
+pub struct App {
     #[command(subcommand)]
-    command: Commands,
+    pub command: Commands,
 }
 
-#[derive(Subcommand)]
-enum Commands {
+#[derive(Debug, Clone, Args)]
+pub struct GatewayArgs {
+    #[arg(long, default_value = DEFAULT_WEB_HOST)]
+    pub web_host: String,
+    #[arg(long, default_value_t = DEFAULT_WEB_PORT)]
+    pub web_port: u16,
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    #[arg(long)]
+    pub workspace: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Commands {
     Onboard {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -37,16 +54,11 @@ enum Commands {
         #[arg(long)]
         workspace: Option<PathBuf>,
     },
-    Gateway {
-        #[arg(long)]
-        config: Option<PathBuf>,
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-    },
+    Gateway(GatewayArgs),
     Web {
-        #[arg(long, default_value = "127.0.0.1")]
+        #[arg(long, default_value = DEFAULT_WEB_HOST)]
         host: String,
-        #[arg(long, default_value_t = 3000)]
+        #[arg(long, default_value_t = DEFAULT_WEB_PORT)]
         port: u16,
         #[arg(long)]
         config: Option<PathBuf>,
@@ -65,7 +77,7 @@ pub async fn run() -> Result<()> {
             config,
             workspace,
         } => agent(message, session, config, workspace).await,
-        Commands::Gateway { config, workspace } => gateway(config, workspace).await,
+        Commands::Gateway(args) => gateway(args).await,
         Commands::Web {
             host,
             port,
@@ -185,23 +197,99 @@ async fn agent(
     Ok(())
 }
 
-async fn gateway(config_path: Option<PathBuf>, workspace_override: Option<PathBuf>) -> Result<()> {
-    let config = load_runtime_config(config_path, workspace_override)?;
+#[async_trait]
+pub trait GatewayRuntime: Send + Sync + 'static {
+    async fn start_channels(&self) -> Result<()>;
+    async fn run_agent(&self);
+    fn stop_agent(&self);
+    async fn stop_channels(&self) -> Result<()>;
+    async fn serve_web(&self, host: &str, port: u16) -> Result<()>;
+
+    async fn wait_for_shutdown(&self) -> Result<()> {
+        tokio::signal::ctrl_c().await?;
+        Ok(())
+    }
+}
+
+struct LiveGatewayRuntime {
+    agent: AgentLoop,
+    manager: ChannelManager,
+}
+
+#[async_trait]
+impl GatewayRuntime for LiveGatewayRuntime {
+    async fn start_channels(&self) -> Result<()> {
+        self.manager.start_all().await;
+        Ok(())
+    }
+
+    async fn run_agent(&self) {
+        self.agent.run().await;
+    }
+
+    fn stop_agent(&self) {
+        self.agent.stop();
+    }
+
+    async fn stop_channels(&self) -> Result<()> {
+        self.manager.stop_all().await;
+        Ok(())
+    }
+
+    async fn serve_web(&self, host: &str, port: u16) -> Result<()> {
+        web::serve(self.agent.clone(), host, port).await
+    }
+}
+
+pub async fn run_gateway_command<R>(runtime: Arc<R>, args: GatewayArgs) -> Result<()>
+where
+    R: GatewayRuntime,
+{
+    runtime.start_channels().await?;
+
+    let mut agent_task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime.run_agent().await;
+        }
+    });
+
+    let mut web_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let host = args.web_host.clone();
+        async move { runtime.serve_web(&host, args.web_port).await }
+    });
+
+    tokio::task::yield_now().await;
+
+    let result = tokio::select! {
+        shutdown = runtime.wait_for_shutdown() => shutdown,
+        web = &mut web_task => web.map_err(anyhow::Error::from)?,
+        agent = &mut agent_task => {
+            agent.map_err(anyhow::Error::from)?;
+            Ok(())
+        }
+    };
+
+    runtime.stop_agent();
+    runtime.stop_channels().await?;
+    agent_task.abort();
+    web_task.abort();
+
+    result
+}
+
+async fn gateway(args: GatewayArgs) -> Result<()> {
+    let config = load_runtime_config(args.config.clone(), args.workspace.clone())?;
     ensure_workspace(&config.workspace_path())?;
     let bus = MessageBus::new(256);
     let provider = build_provider_from_config(&config)?;
     let agent = AgentLoop::from_config(bus.clone(), provider, config.clone()).await?;
-    let manager = ChannelManager::new(&config, bus);
-    let agent_task = {
-        let agent = agent.clone();
-        tokio::spawn(async move { agent.run().await })
-    };
-    manager.start_all().await;
-    tokio::signal::ctrl_c().await?;
-    agent.stop();
-    manager.stop_all().await;
-    agent_task.abort();
-    Ok(())
+    let runtime = Arc::new(LiveGatewayRuntime {
+        agent,
+        manager: ChannelManager::new(&config, bus),
+    });
+    run_gateway_command(runtime, args).await
 }
 
 async fn web_command(
