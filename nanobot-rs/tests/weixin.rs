@@ -415,6 +415,13 @@ fn expired_message() -> Value {
     })
 }
 
+fn unexpected_errcode_message() -> Value {
+    json!({
+        "errcode": 7,
+        "errmsg": "temporary upstream failure",
+    })
+}
+
 async fn weixin_getupdates_strict_response(
     State(state): State<WeixinTestState>,
     Query(query): Query<HashMap<String, String>>,
@@ -789,6 +796,34 @@ async fn poll_loop_recovers_after_request_error() {
         35000,
         vec![text_item("hello")],
     )])
+    .await;
+    let account = sample_account();
+    let (_temp, bus, _, handle) = start_weixin_channel(&server, Some(account)).await;
+
+    let inbound = tokio::time::timeout(std::time::Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("message");
+    handle.abort();
+
+    assert_eq!(inbound.channel, "weixin");
+    assert_eq!(inbound.content, "hello");
+    let requests = server.take_requests().await;
+    assert!(requests.len() >= 2);
+}
+
+#[tokio::test]
+async fn poll_loop_retries_on_unexpected_errcode() {
+    let server = spawn_weixin_test_server(vec![
+        unexpected_errcode_message(),
+        direct_text_message(
+            "alice@im.wechat",
+            "ctx-1",
+            "cursor-2",
+            35000,
+            vec![text_item("hello")],
+        ),
+    ])
     .await;
     let account = sample_account();
     let (_temp, bus, _, handle) = start_weixin_channel(&server, Some(account)).await;

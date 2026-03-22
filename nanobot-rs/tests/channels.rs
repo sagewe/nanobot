@@ -6,9 +6,11 @@ use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
 use nanobot_rs::bus::{MessageBus, OutboundMessage};
+use nanobot_rs::channels::weixin::{WeixinAccountStore, WeixinChannel};
 use nanobot_rs::channels::{Channel, ChannelManager, TelegramChannel};
-use nanobot_rs::config::{Config, TelegramConfig};
+use nanobot_rs::config::{Config, TelegramConfig, WeixinConfig};
 use serde_json::{Value, json};
+use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
@@ -217,5 +219,36 @@ async fn telegram_channel_sends_rendered_html() {
     assert_eq!(
         sent[0].get("text").and_then(Value::as_str),
         Some("<b>hello</b> <code>code</code> <a href=\"https://example.com\">link</a>")
+    );
+}
+
+#[tokio::test]
+async fn weixin_channel_send_returns_error() {
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+    let channel = WeixinChannel::new(
+        WeixinConfig {
+            enabled: true,
+            api_base: "http://localhost:1".to_string(),
+            cdn_base: "https://cdn.example.com".to_string(),
+        },
+        store,
+        MessageBus::new(32),
+    );
+
+    let error = channel
+        .send(OutboundMessage {
+            channel: "weixin".to_string(),
+            chat_id: "user@im.wechat".to_string(),
+            content: "hello".to_string(),
+            metadata: HashMap::new(),
+        })
+        .await
+        .expect_err("send should not be implemented");
+
+    assert!(
+        error
+            .to_string()
+            .contains("weixin outbound send is not implemented yet")
     );
 }

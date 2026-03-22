@@ -337,6 +337,17 @@ impl WeixinChannel {
             warn!("weixin account expired");
             return Ok(PollOutcome::Expired);
         }
+        if errcode != 0 {
+            let errmsg = payload
+                .get("errmsg")
+                .or_else(|| payload.get("err_msg"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown error");
+            warn!("weixin getupdates failed: errcode={errcode} errmsg={errmsg}");
+            return Err(anyhow!(
+                "weixin getupdates failed: errcode={errcode} errmsg={errmsg}"
+            ));
+        }
 
         let root = payload.get("data").unwrap_or(&payload);
         let mut should_persist = false;
@@ -442,7 +453,7 @@ impl Channel for WeixinChannel {
     }
 
     async fn send(&self, _msg: OutboundMessage) -> Result<()> {
-        Ok(())
+        Err(anyhow!("weixin outbound send is not implemented yet"))
     }
 }
 
