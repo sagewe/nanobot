@@ -10,7 +10,7 @@ use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::routing::post;
 use axum::{Json, Router};
 use nanobot_rs::providers::{
-    CodexProvider, CodexProviderConfig, LlmProvider, ProviderRequestDescriptor,
+    CodexProvider, CodexProviderConfig, LlmProvider, ProviderError, ProviderRequestDescriptor,
 };
 use serde_json::{Map, Value, json};
 use tempfile::tempdir;
@@ -314,12 +314,12 @@ async fn codex_provider_retries_transient_5xx_failures_then_succeeds() {
     let auth_file = write_auth_file(&dir, valid_auth_json());
     let (addr, requests) = start_codex_capture_server(vec![
         (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({"error": {"message": "model overloaded"}}),
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": {"message": "rate limited"}}),
         ),
         (
-            StatusCode::BAD_GATEWAY,
-            json!({"error": {"message": "upstream unavailable"}}),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"error": {"message": "model overloaded"}}),
         ),
         (
             StatusCode::OK,
@@ -348,6 +348,36 @@ async fn codex_provider_retries_transient_5xx_failures_then_succeeds() {
     assert_eq!(response.finish_reason, "stop");
     let captured = requests.lock().await;
     assert_eq!(captured.len(), 3);
+}
+
+#[tokio::test]
+async fn codex_provider_fatalizes_malformed_successful_responses() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, requests) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        json!({
+            "id": "resp_bad"
+        }),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let err = provider
+        .chat_with_request(vec![], vec![], &request_descriptor(Map::new()))
+        .await
+        .expect_err("missing output array should fail");
+
+    assert!(
+        err.downcast_ref::<ProviderError>().is_some(),
+        "malformed successful responses should be converted into provider errors"
+    );
+    assert!(!nanobot_rs::providers::should_retry(&err));
+    let message = err.to_string();
+    assert!(message.contains("missing output array"), "{message}");
+
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 1);
 }
 
 #[test]

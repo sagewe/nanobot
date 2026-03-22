@@ -129,6 +129,7 @@ impl LlmProvider for CodexProvider {
         }
 
         parse_success_response(&text)
+            .map_err(|error| ProviderError::fatal(error.to_string()).into())
     }
 }
 
