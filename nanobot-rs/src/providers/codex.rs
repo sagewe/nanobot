@@ -8,7 +8,9 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::config::CodexProviderConfig;
-use crate::providers::{LlmProvider, LlmResponse, ProviderError, ProviderRequestDescriptor};
+use crate::providers::{
+    LlmProvider, LlmResponse, ProviderError, ProviderRequestDescriptor, ToolCall,
+};
 
 #[derive(Debug, Clone)]
 pub struct CodexProvider {
@@ -117,25 +119,16 @@ impl LlmProvider for CodexProvider {
         let body = build_request_body(messages, tools, request);
         let response = self.send_responses_request(&body).await?;
         let status = response.status();
-
-        if status.is_success() {
-            return Err(ProviderError::fatal(
-                "codex response normalization is not implemented yet",
-            )
-            .into());
-        }
-
         let text = response
             .text()
             .await
             .context("failed to read codex provider body")?;
 
-        let details = if text.trim().is_empty() {
-            "empty response body".to_string()
-        } else {
-            text.trim().to_string()
-        };
-        Err(ProviderError::fatal(format!("codex provider error {}: {}", status, details)).into())
+        if !status.is_success() {
+            return Err(classify_http_error(status, &text).into());
+        }
+
+        parse_success_response(&text)
     }
 }
 
@@ -160,6 +153,182 @@ fn build_request_body(
     );
     body.insert("tools".to_string(), Value::Array(tools));
     Value::Object(body)
+}
+
+fn classify_http_error(status: reqwest::StatusCode, body: &str) -> ProviderError {
+    let details = extract_error_message(body);
+    let message = format!("codex provider error {}: {}", status, details);
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        ProviderError::fatal(message)
+    } else if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+        ProviderError::retryable(message)
+    } else {
+        ProviderError::fatal(message)
+    }
+}
+
+fn extract_error_message(body: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        if let Some(message) = value.pointer("/error/message").and_then(Value::as_str) {
+            return message.to_string();
+        }
+        if let Some(message) = value.pointer("/message").and_then(Value::as_str) {
+            return message.to_string();
+        }
+        if let Some(message) = value.pointer("/error").and_then(Value::as_str) {
+            return message.to_string();
+        }
+        return value.to_string();
+    }
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        "empty response body".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn parse_success_response(body: &str) -> Result<LlmResponse> {
+    let parsed: Value = serde_json::from_str(body)
+        .with_context(|| format!("invalid codex response JSON: {body}"))?;
+    parse_response_value(&parsed)
+}
+
+fn parse_response_value(value: &Value) -> Result<LlmResponse> {
+    let output = value
+        .get("output")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("codex response normalization failed: missing output array"))?;
+
+    let mut content_chunks = Vec::new();
+    let mut tool_calls = Vec::new();
+    let mut extra = Map::new();
+    let mut saw_relevant_item = false;
+
+    for item in output {
+        let Some(item_type) = item.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+
+        match item_type {
+            "message" => {
+                if item.get("role").and_then(Value::as_str) != Some("assistant") {
+                    continue;
+                }
+                saw_relevant_item = true;
+                merge_extra_fields(&mut extra, item, &["type", "role", "content"]);
+                content_chunks.extend(extract_message_texts(item.get("content")));
+            }
+            "function_call" => {
+                saw_relevant_item = true;
+                merge_extra_fields(&mut extra, item, &["type", "call_id", "id", "name", "arguments"]);
+                tool_calls.push(parse_function_call(item)?);
+            }
+            _ => {}
+        }
+    }
+
+    if !saw_relevant_item {
+        return Err(anyhow!(
+            "codex response normalization failed: no assistant message or function call items found"
+        ));
+    }
+
+    if content_chunks.is_empty() && tool_calls.is_empty() {
+        return Err(anyhow!(
+            "codex response normalization failed: assistant response did not contain text or tool calls"
+        ));
+    }
+
+    let content = if content_chunks.is_empty() {
+        None
+    } else {
+        Some(content_chunks.join(""))
+    };
+    let finish_reason = if tool_calls.is_empty() {
+        "stop"
+    } else {
+        "tool_calls"
+    }
+    .to_string();
+
+    Ok(LlmResponse {
+        content,
+        tool_calls,
+        finish_reason,
+        extra,
+    })
+}
+
+fn merge_extra_fields(target: &mut Map<String, Value>, source: &Value, excluded: &[&str]) {
+    let Some(object) = source.as_object() else {
+        return;
+    };
+
+    for (key, value) in object {
+        if excluded.iter().any(|excluded| excluded == &key.as_str()) {
+            continue;
+        }
+        target.insert(key.clone(), value.clone());
+    }
+}
+
+fn extract_message_texts(content: Option<&Value>) -> Vec<String> {
+    let Some(content) = content else {
+        return Vec::new();
+    };
+    match content {
+        Value::String(text) => vec![text.clone()],
+        Value::Array(items) => items.iter().filter_map(extract_content_text).collect(),
+        Value::Object(_) => extract_content_text(content).into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn extract_content_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.get("text").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+    if let Some(kind) = value.get("type").and_then(Value::as_str) {
+        if matches!(kind, "output_text" | "text") {
+            if let Some(text) = value.get("text").and_then(Value::as_str) {
+                return Some(text.to_string());
+            }
+        }
+    }
+    match value {
+        Value::String(text) => Some(text.clone()),
+        _ => None,
+    }
+}
+
+fn parse_function_call(item: &Value) -> Result<ToolCall> {
+    let call_id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("codex response normalization failed: function_call missing call_id"))?
+        .to_string();
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("codex response normalization failed: function_call missing name"))?
+        .to_string();
+    let arguments_value = item
+        .get("arguments")
+        .ok_or_else(|| anyhow!("codex response normalization failed: function_call missing arguments"))?;
+    let arguments = match arguments_value {
+        Value::String(text) => serde_json::from_str(text).with_context(|| {
+            format!("codex response normalization failed: invalid function_call arguments for {name}")
+        })?,
+        other => other.clone(),
+    };
+
+    Ok(ToolCall {
+        id: call_id,
+        name,
+        arguments,
+    })
 }
 
 fn map_input_message(message: Value) -> Value {

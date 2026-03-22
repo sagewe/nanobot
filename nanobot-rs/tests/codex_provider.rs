@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::env;
 use std::fs;
 use std::net::SocketAddr;
@@ -49,6 +50,18 @@ fn write_auth_file(dir: &tempfile::TempDir, content: &str) -> String {
     path.display().to_string()
 }
 
+fn valid_auth_json() -> &'static str {
+    r#"{
+  "auth_mode": "chatgpt",
+  "tokens": {
+    "access_token": "access-token",
+    "refresh_token": "refresh-token",
+    "id_token": "id-token",
+    "account_id": "account-id"
+  }
+}"#
+}
+
 fn with_home_dir<F>(home_dir: &str, f: F)
 where
     F: FnOnce(),
@@ -72,6 +85,18 @@ where
     }
 }
 
+fn build_provider(auth_file: String, addr: SocketAddr) -> CodexProvider {
+    CodexProvider::from_config(CodexProviderConfig {
+        auth_file,
+        api_base: format!("http://{addr}/backend-api/"),
+    })
+    .expect("provider")
+}
+
+fn request_descriptor(extras: Map<String, Value>) -> ProviderRequestDescriptor {
+    ProviderRequestDescriptor::new("codex", "gpt-5.4", extras)
+}
+
 #[derive(Clone, Debug)]
 struct CapturedCodexRequest {
     path: String,
@@ -83,6 +108,7 @@ struct CapturedCodexRequest {
 #[derive(Clone)]
 struct CodexCaptureState {
     requests: Arc<tokio::sync::Mutex<Vec<CapturedCodexRequest>>>,
+    responses: Arc<tokio::sync::Mutex<VecDeque<(StatusCode, Value)>>>,
 }
 
 async fn capture_codex_responses_request(
@@ -104,52 +130,58 @@ async fn capture_codex_responses_request(
         body: payload,
     });
 
-    (
-        StatusCode::OK,
-        Json(json!({"id": "resp_123", "status": "completed"})),
-    )
+    let (status, body) = state
+        .responses
+        .lock()
+        .await
+        .pop_front()
+        .expect("unexpected extra codex request");
+    (status, Json(body))
 }
 
-async fn start_codex_capture_server(state: CodexCaptureState) -> SocketAddr {
+async fn start_codex_capture_server(
+    responses: Vec<(StatusCode, Value)>,
+) -> (SocketAddr, Arc<tokio::sync::Mutex<Vec<CapturedCodexRequest>>>) {
+    let requests = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let app = Router::new()
         .route(
             "/backend-api/responses",
             post(capture_codex_responses_request),
         )
-        .with_state(state);
+        .with_state(CodexCaptureState {
+            requests: requests.clone(),
+            responses: Arc::new(tokio::sync::Mutex::new(responses.into_iter().collect())),
+        });
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("serve");
     });
-    addr
+    (addr, requests)
 }
 
 #[tokio::test]
-async fn codex_provider_sends_bearer_and_account_headers() {
+async fn codex_provider_normalizes_plain_text_response_and_sends_bearer_and_account_headers() {
     let dir = tempdir().expect("tempdir");
-    let auth_file = write_auth_file(
-        &dir,
-        r#"{
-  "auth_mode": "chatgpt",
-  "tokens": {
-    "access_token": "access-token",
-    "refresh_token": "refresh-token",
-    "id_token": "id-token",
-    "account_id": "account-id"
-  }
-}"#,
-    );
-    let requests = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let addr = start_codex_capture_server(CodexCaptureState {
-        requests: requests.clone(),
-    })
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, requests) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        json!({
+            "id": "resp_123",
+            "status": "completed",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "id": "msg_123",
+                "status": "completed",
+                "content": [
+                    {"type": "output_text", "text": "captured"}
+                ]
+            }]
+        }),
+    )])
     .await;
-    let provider = CodexProvider::from_config(CodexProviderConfig {
-        auth_file,
-        api_base: format!("http://{addr}/backend-api/"),
-    })
-    .expect("provider");
+    let provider = build_provider(auth_file, addr);
     let request = ProviderRequestDescriptor::new(
         "codex",
         "gpt-5.4",
@@ -174,15 +206,18 @@ async fn codex_provider_sends_bearer_and_account_headers() {
         "parameters": {"type": "object"}
     })];
 
-    let err = provider
+    let response = provider
         .chat_with_request(messages, tools.clone(), &request)
         .await
-        .expect_err("Task 4 should not synthesize a successful LLM response yet");
+        .expect("response");
 
-    assert!(
-        err.to_string()
-            .contains("codex response normalization is not implemented yet"),
-        "{err}"
+    assert_eq!(response.content.as_deref(), Some("captured"));
+    assert!(response.tool_calls.is_empty());
+    assert_eq!(response.finish_reason, "stop");
+    assert_eq!(response.extra.get("id").and_then(Value::as_str), Some("msg_123"));
+    assert_eq!(
+        response.extra.get("status").and_then(Value::as_str),
+        Some("completed")
     );
 
     let captured = requests.lock().await;
@@ -207,6 +242,112 @@ async fn codex_provider_sends_bearer_and_account_headers() {
         ])
     );
     assert_eq!(sent.body["tools"], json!(tools));
+}
+
+#[tokio::test]
+async fn codex_provider_normalizes_tool_call_response() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, requests) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        json!({
+            "id": "resp_456",
+            "status": "completed",
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_1",
+                "id": "fallback_id",
+                "name": "search",
+                "arguments": "{\"query\":\"rust\"}",
+                "status": "completed"
+            }]
+        }),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let response = provider
+        .chat_with_request(vec![], vec![], &request_descriptor(Map::new()))
+        .await
+        .expect("tool-call response");
+
+    assert_eq!(response.content, None);
+    assert_eq!(response.tool_calls.len(), 1);
+    let tool_call = &response.tool_calls[0];
+    assert_eq!(tool_call.id, "call_1");
+    assert_eq!(tool_call.name, "search");
+    assert_eq!(tool_call.arguments, json!({"query":"rust"}));
+    assert_eq!(response.finish_reason, "tool_calls");
+    assert_eq!(
+        response.extra.get("status").and_then(Value::as_str),
+        Some("completed")
+    );
+
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 1);
+}
+
+#[tokio::test]
+async fn codex_provider_does_not_retry_auth_failures() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, requests) = start_codex_capture_server(vec![(
+        StatusCode::UNAUTHORIZED,
+        json!({"error": {"message": "invalid auth"}}),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let err = provider
+        .chat_with_retry(vec![], vec![], "gpt-5.4")
+        .await
+        .expect_err("auth failure should not retry");
+
+    assert!(err.to_string().contains("invalid auth") || err.to_string().contains("401"));
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 1);
+}
+
+#[tokio::test]
+async fn codex_provider_retries_transient_5xx_failures_then_succeeds() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, requests) = start_codex_capture_server(vec![
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"error": {"message": "model overloaded"}}),
+        ),
+        (
+            StatusCode::BAD_GATEWAY,
+            json!({"error": {"message": "upstream unavailable"}}),
+        ),
+        (
+            StatusCode::OK,
+            json!({
+                "id": "resp_789",
+                "status": "completed",
+                "output": [{
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "eventual success"}
+                    ]
+                }]
+            }),
+        ),
+    ])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let response = provider
+        .chat_with_retry(vec![], vec![], "gpt-5.4")
+        .await
+        .expect("retry then succeed");
+
+    assert_eq!(response.content.as_deref(), Some("eventual success"));
+    assert_eq!(response.finish_reason, "stop");
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 3);
 }
 
 #[test]
