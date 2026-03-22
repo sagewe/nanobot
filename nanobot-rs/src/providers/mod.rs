@@ -1,4 +1,5 @@
 mod base;
+mod codex;
 mod openai_compatible;
 mod registry;
 
@@ -11,9 +12,11 @@ use tokio::sync::Mutex;
 
 use crate::config::Config;
 
+pub use crate::config::CodexProviderConfig;
 pub use base::{
     LlmProvider, LlmResponse, ProviderError, ProviderRequestDescriptor, ToolCall, should_retry,
 };
+pub use codex::CodexProvider;
 pub use openai_compatible::OpenAICompatibleProvider;
 pub use registry::{ProviderKind, ProviderRegistry, ProviderSpec, ResolvedProviderConfig};
 
