@@ -11,10 +11,12 @@ use nanobot_rs::bus::MessageBus;
 use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig};
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use nanobot_rs::session::{Session, SessionMessage, SessionStore};
-use nanobot_rs::web::{self, AgentChatService, AppState, ChatService, WebChatReply};
-use serde_json::{Map, json};
+use nanobot_rs::web::{
+    self, AgentChatService, AppState, ChatService, WebChatReply, WebSessionDetail,
+};
+use serde_json::{json, Map};
 use std::collections::VecDeque;
-use tempfile::{TempDir, tempdir};
+use tempfile::{tempdir, TempDir};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
@@ -23,11 +25,24 @@ struct StaticChatService;
 
 #[async_trait]
 impl ChatService for StaticChatService {
-    async fn chat(&self, _message: &str, _session_id: &str) -> Result<WebChatReply> {
+    async fn chat(
+        &self,
+        _message: &str,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebChatReply> {
         Ok(WebChatReply {
             reply: "unused".to_string(),
             active_profile: "openai:mock-model".to_string(),
         })
+    }
+
+    async fn duplicate_session(
+        &self,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebSessionDetail> {
+        anyhow::bail!("unused")
     }
 }
 
@@ -42,11 +57,24 @@ struct ReplyChatService {
 
 #[async_trait]
 impl ChatService for ReplyChatService {
-    async fn chat(&self, _message: &str, _session_id: &str) -> Result<WebChatReply> {
+    async fn chat(
+        &self,
+        _message: &str,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebChatReply> {
         Ok(WebChatReply {
             reply: self.reply.clone(),
             active_profile: "openai:mock-model".to_string(),
         })
+    }
+
+    async fn duplicate_session(
+        &self,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebSessionDetail> {
+        anyhow::bail!("unused")
     }
 }
 
@@ -212,12 +240,10 @@ async fn chat_endpoint_returns_agent_reply() {
         .expect("chat response body");
 
     assert_eq!(response["reply"], "**hello** from agent");
-    assert!(
-        response["replyHtml"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("<strong>hello</strong>")
-    );
+    assert!(response["replyHtml"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("<strong>hello</strong>"));
     assert_eq!(response["sessionId"], "browser-session-1");
 }
 
@@ -239,12 +265,10 @@ async fn chat_endpoint_rejects_blank_messages() {
     let payload: serde_json::Value = response.json().await.expect("blank chat response");
 
     assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
-    assert!(
-        payload["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("message must not be empty")
-    );
+    assert!(payload["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("message must not be empty"));
 }
 
 #[tokio::test]
@@ -294,29 +318,59 @@ async fn chat_endpoint_returns_message_tool_reply() {
 }
 
 #[tokio::test]
-async fn sessions_endpoint_lists_only_web_sessions_with_preview_and_active_profile() {
+async fn sessions_endpoint_returns_channel_grouped_results_with_stable_order_and_capabilities() {
     let dir = tempdir().expect("tempdir");
-    let mut older = Session::new("web:older");
-    older.active_profile = Some("openai:gpt-4.1-mini".to_string());
-    older.messages = vec![text_message("assistant", "Older assistant reply")];
-    older.created_at = Utc::now() - Duration::minutes(10);
-    older.updated_at = Utc::now() - Duration::minutes(5);
-    save_session(dir.path(), &older);
-
     let mut recent = Session::new("web:recent");
     recent.active_profile = Some("openrouter:deepseek-r1".to_string());
     recent.messages = vec![
         text_message("user", "hi"),
         text_message("assistant", "Most recent assistant reply"),
     ];
-    recent.created_at = Utc::now() - Duration::minutes(3);
+    recent.created_at = Utc::now() - Duration::minutes(10);
     recent.updated_at = Utc::now() - Duration::minutes(1);
     save_session(dir.path(), &recent);
 
     let mut telegram = Session::new("telegram:chat-1");
     telegram.active_profile = Some("openai:gpt-4.1-mini".to_string());
-    telegram.messages = vec![text_message("assistant", "Should stay hidden")];
+    telegram.messages = vec![text_message("assistant", "Telegram transcript")];
+    telegram.created_at = Utc::now() - Duration::minutes(9);
+    telegram.updated_at = Utc::now() - Duration::minutes(2);
     save_session(dir.path(), &telegram);
+
+    let mut wecom = Session::new("wecom:room-2");
+    wecom.active_profile = Some("openai:gpt-4.1-mini".to_string());
+    wecom.messages = vec![text_message("assistant", "WeCom transcript")];
+    wecom.created_at = Utc::now() - Duration::minutes(8);
+    wecom.updated_at = Utc::now() - Duration::minutes(3);
+    save_session(dir.path(), &wecom);
+
+    let mut cli = Session::new("cli:terminal-3");
+    cli.active_profile = Some("openai:gpt-4.1-mini".to_string());
+    cli.messages = vec![text_message("assistant", "CLI transcript")];
+    cli.created_at = Utc::now() - Duration::minutes(7);
+    cli.updated_at = Utc::now() - Duration::minutes(4);
+    save_session(dir.path(), &cli);
+
+    let mut system = Session::new("system:job-4");
+    system.active_profile = Some("openai:gpt-4.1-mini".to_string());
+    system.messages = vec![text_message("assistant", "System transcript")];
+    system.created_at = Utc::now() - Duration::minutes(6);
+    system.updated_at = Utc::now() - Duration::minutes(5);
+    save_session(dir.path(), &system);
+
+    let mut alpha = Session::new("alpha:item-5");
+    alpha.active_profile = Some("openai:gpt-4.1-mini".to_string());
+    alpha.messages = vec![text_message("assistant", "Alpha transcript")];
+    alpha.created_at = Utc::now() - Duration::minutes(5);
+    alpha.updated_at = Utc::now() - Duration::minutes(6);
+    save_session(dir.path(), &alpha);
+
+    let mut zeta = Session::new("zeta:item-6");
+    zeta.active_profile = Some("openai:gpt-4.1-mini".to_string());
+    zeta.messages = vec![text_message("assistant", "Zeta transcript")];
+    zeta.created_at = Utc::now() - Duration::minutes(4);
+    zeta.updated_at = Utc::now() - Duration::minutes(7);
+    save_session(dir.path(), &zeta);
 
     let app = agent_app_with_profiles(
         &dir,
@@ -337,19 +391,46 @@ async fn sessions_endpoint_lists_only_web_sessions_with_preview_and_active_profi
         .await
         .expect("sessions payload");
 
-    let sessions = response["sessions"].as_array().expect("sessions array");
-    assert_eq!(sessions.len(), 2);
-    assert_eq!(sessions[0]["sessionId"], "recent");
-    assert_eq!(sessions[0]["activeProfile"], "openrouter:deepseek-r1");
-    assert_eq!(sessions[0]["preview"], "Most recent assistant reply");
-    assert_eq!(sessions[1]["sessionId"], "older");
+    let groups = response["groups"].as_array().expect("groups array");
+    let channels = groups
+        .iter()
+        .map(|group| {
+            group["channel"]
+                .as_str()
+                .expect("group channel")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        channels,
+        vec!["web", "telegram", "wecom", "cli", "system", "alpha", "zeta"]
+    );
+
+    let web_sessions = groups[0]["sessions"].as_array().expect("web sessions");
+    assert_eq!(web_sessions.len(), 1);
+    assert_eq!(web_sessions[0]["sessionId"], "recent");
+    assert_eq!(web_sessions[0]["channel"], "web");
+    assert_eq!(web_sessions[0]["activeProfile"], "openrouter:deepseek-r1");
+    assert_eq!(web_sessions[0]["preview"], "Most recent assistant reply");
+    assert_eq!(web_sessions[0]["readOnly"], false);
+    assert_eq!(web_sessions[0]["canSend"], true);
+    assert_eq!(web_sessions[0]["canDuplicate"], false);
+
+    let telegram_sessions = groups[1]["sessions"].as_array().expect("telegram sessions");
+    assert_eq!(telegram_sessions.len(), 1);
+    assert_eq!(telegram_sessions[0]["sessionId"], "chat-1");
+    assert_eq!(telegram_sessions[0]["channel"], "telegram");
+    assert_eq!(telegram_sessions[0]["readOnly"], true);
+    assert_eq!(telegram_sessions[0]["canSend"], false);
+    assert_eq!(telegram_sessions[0]["canDuplicate"], true);
 }
 
 #[tokio::test]
-async fn session_detail_endpoint_returns_web_transcript_and_active_profile() {
+async fn session_detail_endpoint_returns_channel_capabilities_and_source_session_key() {
     let dir = tempdir().expect("tempdir");
-    let mut session = Session::new("web:focus");
+    let mut session = Session::new("telegram:focus");
     session.active_profile = Some("openrouter:deepseek-r1".to_string());
+    session.source_session_key = Some("wecom:origin-room".to_string());
     session.messages = vec![
         text_message("user", "hello"),
         text_message("assistant", "**hi** back"),
@@ -368,15 +449,21 @@ async fn session_detail_endpoint_returns_web_transcript_and_active_profile() {
     .await;
     let addr = spawn_test_server(app).await;
 
-    let response: serde_json::Value = reqwest::get(format!("http://{addr}/api/sessions/focus"))
-        .await
-        .expect("fetch session detail")
-        .json()
-        .await
-        .expect("detail payload");
+    let response: serde_json::Value =
+        reqwest::get(format!("http://{addr}/api/sessions/telegram/focus"))
+            .await
+            .expect("fetch session detail")
+            .json()
+            .await
+            .expect("detail payload");
 
     assert_eq!(response["sessionId"], "focus");
+    assert_eq!(response["channel"], "telegram");
     assert_eq!(response["activeProfile"], "openrouter:deepseek-r1");
+    assert_eq!(response["readOnly"], true);
+    assert_eq!(response["canSend"], false);
+    assert_eq!(response["canDuplicate"], true);
+    assert_eq!(response["sourceSessionKey"], "wecom:origin-room");
     assert!(response["updatedAt"].as_str().is_some());
     let messages = response["messages"].as_array().expect("messages");
     assert_eq!(messages.len(), 2);
@@ -385,12 +472,10 @@ async fn session_detail_endpoint_returns_web_transcript_and_active_profile() {
     assert!(messages[0]["timestamp"].as_str().is_some());
     assert_eq!(messages[1]["role"], "assistant");
     assert_eq!(messages[1]["content"], "**hi** back");
-    assert!(
-        messages[1]["contentHtml"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("<strong>hi</strong>")
-    );
+    assert!(messages[1]["contentHtml"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("<strong>hi</strong>"));
 }
 
 #[tokio::test]
@@ -409,7 +494,11 @@ async fn create_session_endpoint_initializes_default_profile() {
         .expect("create payload");
 
     assert!(response["sessionId"].as_str().is_some());
+    assert_eq!(response["channel"], "web");
     assert_eq!(response["activeProfile"], "openai:mock-model");
+    assert_eq!(response["readOnly"], false);
+    assert_eq!(response["canSend"], true);
+    assert_eq!(response["canDuplicate"], false);
     assert!(response.get("messages").is_none());
 }
 
@@ -446,6 +535,90 @@ async fn chat_endpoint_includes_active_profile() {
 }
 
 #[tokio::test]
+async fn chat_endpoint_rejects_non_web_sessions_until_duplicated() {
+    let dir = tempdir().expect("tempdir");
+    let mut telegram = Session::new("telegram:outside");
+    telegram.active_profile = Some("openai:gpt-4.1-mini".to_string());
+    telegram.messages = vec![text_message("assistant", "not web")];
+    save_session(dir.path(), &telegram);
+
+    let app = agent_app(&dir, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/api/chat"))
+        .json(&serde_json::json!({
+            "message": "hello",
+            "channel": "telegram",
+            "sessionId": "outside"
+        }))
+        .send()
+        .await
+        .expect("send non-web chat request");
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("non-web payload");
+
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    assert!(payload["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("duplicate"));
+    assert!(payload["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("read-only"));
+}
+
+#[tokio::test]
+async fn duplicate_session_endpoint_returns_new_web_detail_with_copied_history() {
+    let dir = tempdir().expect("tempdir");
+    let mut telegram = Session::new("telegram:outside");
+    telegram.active_profile = Some("openrouter:deepseek-r1".to_string());
+    telegram.messages = vec![
+        text_message("user", "hello from telegram"),
+        text_message("assistant", "reply from telegram"),
+    ];
+    save_session(dir.path(), &telegram);
+
+    let app = agent_app_with_profiles(
+        &dir,
+        Vec::new(),
+        &[(
+            "openrouter:deepseek-r1",
+            "openrouter",
+            "deepseek/deepseek-r1",
+        )],
+    )
+    .await;
+    let addr = spawn_test_server(app).await;
+
+    let response: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/api/sessions/duplicate"))
+        .json(&serde_json::json!({
+            "channel": "telegram",
+            "sessionId": "outside"
+        }))
+        .send()
+        .await
+        .expect("duplicate session")
+        .json()
+        .await
+        .expect("duplicate payload");
+
+    assert_eq!(response["channel"], "web");
+    assert!(response["sessionId"].as_str().is_some());
+    assert_eq!(response["activeProfile"], "openrouter:deepseek-r1");
+    assert_eq!(response["readOnly"], false);
+    assert_eq!(response["canSend"], true);
+    assert_eq!(response["canDuplicate"], false);
+    assert_eq!(response["sourceSessionKey"], "telegram:outside");
+    let messages = response["messages"].as_array().expect("messages");
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["content"], "hello from telegram");
+    assert_eq!(messages[1]["content"], "reply from telegram");
+}
+
+#[tokio::test]
 async fn session_endpoints_reject_invalid_or_missing_ids() {
     let dir = tempdir().expect("tempdir");
     let mut telegram = Session::new("telegram:outside");
@@ -456,29 +629,25 @@ async fn session_endpoints_reject_invalid_or_missing_ids() {
     let app = agent_app(&dir, Vec::new()).await;
     let addr = spawn_test_server(app).await;
 
-    let invalid = reqwest::get(format!("http://{addr}/api/sessions/telegram:outside"))
+    let invalid = reqwest::get(format!("http://{addr}/api/sessions/telegram/bad:id"))
         .await
         .expect("fetch invalid id");
     let invalid_status = invalid.status();
     let invalid_payload: serde_json::Value = invalid.json().await.expect("invalid payload");
     assert_eq!(invalid_status, reqwest::StatusCode::BAD_REQUEST);
-    assert!(
-        invalid_payload["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("invalid session id")
-    );
+    assert!(invalid_payload["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("invalid session id"));
 
-    let missing = reqwest::get(format!("http://{addr}/api/sessions/outside"))
+    let missing = reqwest::get(format!("http://{addr}/api/sessions/telegram/missing"))
         .await
         .expect("fetch missing id");
     let missing_status = missing.status();
     let missing_payload: serde_json::Value = missing.json().await.expect("missing payload");
     assert_eq!(missing_status, reqwest::StatusCode::NOT_FOUND);
-    assert!(
-        missing_payload["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("session not found")
-    );
+    assert!(missing_payload["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("session not found"));
 }

@@ -3,11 +3,11 @@ pub mod page;
 
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use async_trait::async_trait;
 use axum::{
-    Router,
     routing::{get, post},
+    Router,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -17,24 +17,38 @@ use uuid::Uuid;
 
 use crate::agent::AgentLoop;
 use crate::presentation::render_web_html;
-use crate::session::{Session, SessionMessage, SessionSummary};
+use crate::session::{
+    split_session_key, Session, SessionGroupSummary, SessionMessage, SessionSummary,
+};
 
 const WEB_NAMESPACE: &str = "web";
 
 #[async_trait]
 pub trait ChatService: Send + Sync {
-    async fn chat(&self, message: &str, session_id: &str) -> Result<WebChatReply>;
+    async fn chat(&self, message: &str, channel: &str, session_id: &str) -> Result<WebChatReply>;
 
-    async fn list_sessions(&self) -> Result<Vec<WebSessionSummary>> {
+    async fn list_sessions(&self) -> Result<Vec<WebSessionGroup>> {
         bail!("session listing is not implemented for this service")
     }
 
-    async fn get_session(&self, _session_id: &str) -> Result<Option<WebSessionDetail>> {
+    async fn get_session(
+        &self,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<Option<WebSessionDetail>> {
         bail!("session detail is not implemented for this service")
     }
 
     async fn create_session(&self) -> Result<WebSessionSummary> {
         bail!("session creation is not implemented for this service")
+    }
+
+    async fn duplicate_session(
+        &self,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebSessionDetail> {
+        bail!("session duplication is not implemented for this service")
     }
 }
 
@@ -48,10 +62,21 @@ pub struct WebChatReply {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WebSessionSummary {
+    pub channel: String,
     pub session_id: String,
     pub updated_at: DateTime<Utc>,
     pub active_profile: String,
     pub preview: Option<String>,
+    pub read_only: bool,
+    pub can_send: bool,
+    pub can_duplicate: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSessionGroup {
+    pub channel: String,
+    pub sessions: Vec<WebSessionSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -66,10 +91,15 @@ pub struct WebTranscriptMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WebSessionDetail {
+    pub channel: String,
     pub session_id: String,
     pub updated_at: DateTime<Utc>,
     pub active_profile: String,
     pub messages: Vec<WebTranscriptMessage>,
+    pub read_only: bool,
+    pub can_send: bool,
+    pub can_duplicate: bool,
+    pub source_session_key: Option<String>,
 }
 
 #[derive(Clone)]
@@ -91,7 +121,8 @@ pub fn build_router(state: AppState) -> Router {
             "/api/sessions",
             get(api::list_sessions).post(api::create_session),
         )
-        .route("/api/sessions/{id}", get(api::get_session))
+        .route("/api/sessions/duplicate", post(api::duplicate_session))
+        .route("/api/sessions/{channel}/{id}", get(api::get_session))
         .route("/api/chat", post(api::chat))
         .with_state(state)
 }
@@ -109,8 +140,11 @@ impl AgentChatService {
 
 #[async_trait]
 impl ChatService for AgentChatService {
-    async fn chat(&self, message: &str, session_id: &str) -> Result<WebChatReply> {
-        let session_key = web_session_key(session_id);
+    async fn chat(&self, message: &str, channel: &str, session_id: &str) -> Result<WebChatReply> {
+        if channel != WEB_NAMESPACE {
+            bail!("session is read-only; duplicate it into web before sending");
+        }
+        let session_key = session_key(channel, session_id);
         info!(
             session = %session_id,
             preview = %preview(message),
@@ -118,7 +152,7 @@ impl ChatService for AgentChatService {
         );
         let result = self
             .agent
-            .process_direct_logged(message, &session_key, "web", session_id)
+            .process_direct_logged(message, &session_key, channel, session_id)
             .await;
         match &result {
             Ok(reply) => {
@@ -144,24 +178,40 @@ impl ChatService for AgentChatService {
         })
     }
 
-    async fn list_sessions(&self) -> Result<Vec<WebSessionSummary>> {
-        Ok(self
+    async fn list_sessions(&self) -> Result<Vec<WebSessionGroup>> {
+        let groups = self
             .agent
-            .list_sessions_in_namespace(WEB_NAMESPACE)?
+            .list_sessions_grouped_by_channel()?
             .into_iter()
-            .map(|summary| summary_from_session(self, summary))
-            .collect())
+            .map(|group| group_from_sessions(self, group))
+            .collect::<Vec<_>>();
+        Ok(sort_groups(groups))
     }
 
-    async fn get_session(&self, session_id: &str) -> Result<Option<WebSessionDetail>> {
-        let session = self.agent.load_session(&web_session_key(session_id))?;
+    async fn get_session(
+        &self,
+        channel: &str,
+        session_id: &str,
+    ) -> Result<Option<WebSessionDetail>> {
+        let session = self
+            .agent
+            .load_session_by_key(&session_key(channel, session_id))?;
         Ok(session.map(|session| detail_from_session(self, session)))
     }
 
     async fn create_session(&self) -> Result<WebSessionSummary> {
         let session_id = Uuid::new_v4().to_string();
-        let session = self.agent.create_session(&web_session_key(&session_id))?;
+        let session = self
+            .agent
+            .create_session(&session_key(WEB_NAMESPACE, &session_id))?;
         Ok(summary_from_full_session(self, session))
+    }
+
+    async fn duplicate_session(&self, channel: &str, session_id: &str) -> Result<WebSessionDetail> {
+        let session = self
+            .agent
+            .duplicate_session_to_web(&session_key(channel, session_id))?;
+        Ok(detail_from_session(self, session))
     }
 }
 
@@ -182,30 +232,44 @@ fn preview(text: &str) -> String {
     format!("{}…", chars[..LIMIT].iter().collect::<String>())
 }
 
-fn web_session_key(session_id: &str) -> String {
-    format!("{WEB_NAMESPACE}:{session_id}")
+fn session_key(channel: &str, session_id: &str) -> String {
+    format!("{channel}:{session_id}")
 }
 
 fn summary_from_session(service: &AgentChatService, summary: SessionSummary) -> WebSessionSummary {
+    let capabilities = capabilities_for_channel(&summary.channel);
     WebSessionSummary {
+        channel: summary.channel,
         session_id: public_session_id(&summary.key),
         updated_at: summary.updated_at,
         active_profile: effective_profile(service, summary.active_profile.as_deref()),
         preview: summary.preview,
+        read_only: capabilities.read_only,
+        can_send: capabilities.can_send,
+        can_duplicate: capabilities.can_duplicate,
     }
 }
 
 fn summary_from_full_session(service: &AgentChatService, session: Session) -> WebSessionSummary {
+    let (channel, _) = split_session_key(&session.key);
+    let capabilities = capabilities_for_channel(&channel);
     WebSessionSummary {
+        channel,
         session_id: public_session_id(&session.key),
         updated_at: session.updated_at,
         active_profile: effective_profile(service, session.active_profile.as_deref()),
         preview: session_preview(&session.messages),
+        read_only: capabilities.read_only,
+        can_send: capabilities.can_send,
+        can_duplicate: capabilities.can_duplicate,
     }
 }
 
 fn detail_from_session(service: &AgentChatService, session: Session) -> WebSessionDetail {
+    let (channel, _) = split_session_key(&session.key);
+    let capabilities = capabilities_for_channel(&channel);
     WebSessionDetail {
+        channel,
         session_id: public_session_id(&session.key),
         updated_at: session.updated_at,
         active_profile: effective_profile(service, session.active_profile.as_deref()),
@@ -214,7 +278,62 @@ fn detail_from_session(service: &AgentChatService, session: Session) -> WebSessi
             .iter()
             .filter_map(transcript_message)
             .collect(),
+        read_only: capabilities.read_only,
+        can_send: capabilities.can_send,
+        can_duplicate: capabilities.can_duplicate,
+        source_session_key: session.source_session_key,
     }
+}
+
+fn group_from_sessions(service: &AgentChatService, group: SessionGroupSummary) -> WebSessionGroup {
+    WebSessionGroup {
+        channel: group.channel,
+        sessions: group
+            .sessions
+            .into_iter()
+            .map(|summary| summary_from_session(service, summary))
+            .collect(),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SessionCapabilities {
+    read_only: bool,
+    can_send: bool,
+    can_duplicate: bool,
+}
+
+fn capabilities_for_channel(channel: &str) -> SessionCapabilities {
+    if channel == WEB_NAMESPACE {
+        SessionCapabilities {
+            read_only: false,
+            can_send: true,
+            can_duplicate: false,
+        }
+    } else {
+        SessionCapabilities {
+            read_only: true,
+            can_send: false,
+            can_duplicate: true,
+        }
+    }
+}
+
+fn sort_groups(mut groups: Vec<WebSessionGroup>) -> Vec<WebSessionGroup> {
+    groups.sort_by(|a, b| channel_sort_key(&a.channel).cmp(&channel_sort_key(&b.channel)));
+    groups
+}
+
+fn channel_sort_key(channel: &str) -> (usize, &str) {
+    let rank = match channel {
+        "web" => 0,
+        "telegram" => 1,
+        "wecom" => 2,
+        "cli" => 3,
+        "system" => 4,
+        _ => 5,
+    };
+    (rank, channel)
 }
 
 fn transcript_message(message: &SessionMessage) -> Option<WebTranscriptMessage> {
@@ -273,7 +392,6 @@ fn effective_profile(service: &AgentChatService, selected: Option<&str>) -> Stri
 }
 
 fn public_session_id(key: &str) -> String {
-    key.strip_prefix(&format!("{WEB_NAMESPACE}:"))
-        .unwrap_or(key)
-        .to_string()
+    let (_, session_id) = split_session_key(key);
+    session_id
 }

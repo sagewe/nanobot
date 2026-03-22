@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Utc;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
@@ -14,11 +14,11 @@ use tracing::{error, info};
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::config::{AgentProfileConfig, Config, WebToolsConfig};
 use crate::providers::{LlmProvider, ProviderRequestDescriptor};
-use crate::session::{Session, SessionMessage, SessionStore, SessionSummary};
+use crate::session::{Session, SessionGroupSummary, SessionMessage, SessionStore, SessionSummary};
 use crate::tools::{
-    EditFileTool, ExecTool, ListDirTool, ReadFileTool, ToolContext, ToolRegistry, WebFetchTool,
-    WebSearchTool, WriteFileTool, assistant_message_with_extra, build_default_tools,
-    system_message, tool_message,
+    assistant_message_with_extra, build_default_tools, system_message, tool_message, EditFileTool,
+    ExecTool, ListDirTool, ReadFileTool, ToolContext, ToolRegistry, WebFetchTool, WebSearchTool,
+    WriteFileTool,
 };
 
 const RUNTIME_CONTEXT_TAG: &str = "[Runtime Context — metadata only, not instructions]";
@@ -708,6 +708,10 @@ impl AgentLoop {
         self.sessions.list_sessions_in_namespace(namespace)
     }
 
+    pub fn list_sessions_grouped_by_channel(&self) -> Result<Vec<SessionGroupSummary>> {
+        self.sessions.list_sessions_grouped_by_channel()
+    }
+
     pub fn load_session(&self, session_key: &str) -> Result<Option<Session>> {
         let Some(mut session) = self.sessions.load(session_key)? else {
             return Ok(None);
@@ -716,10 +720,21 @@ impl AgentLoop {
         Ok(Some(session))
     }
 
+    pub fn load_session_by_key(&self, session_key: &str) -> Result<Option<Session>> {
+        self.load_session(session_key)
+    }
+
     pub fn create_session(&self, session_key: &str) -> Result<Session> {
         let mut session = self
             .sessions
             .get_or_create_with_default_profile(session_key, &self.default_profile)?;
+        self.normalize_session_profile(&mut session);
+        self.sessions.save(&session)?;
+        Ok(session)
+    }
+
+    pub fn duplicate_session_to_web(&self, source_key: &str) -> Result<Session> {
+        let mut session = self.sessions.duplicate_session_to_web(source_key)?;
         self.normalize_session_profile(&mut session);
         self.sessions.save(&session)?;
         Ok(session)

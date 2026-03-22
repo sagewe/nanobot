@@ -1,16 +1,17 @@
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::{AppState, WebSessionDetail, WebSessionSummary};
+use super::{AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary};
 use crate::presentation::render_web_html;
 
 #[derive(Debug, Deserialize)]
 pub struct ChatRequest {
     pub message: String,
+    pub channel: Option<String>,
     #[serde(rename = "sessionId")]
     pub session_id: Option<String>,
 }
@@ -28,7 +29,14 @@ pub struct ChatResponse {
 
 #[derive(Debug, Serialize)]
 pub struct SessionListResponse {
-    pub sessions: Vec<WebSessionSummary>,
+    pub groups: Vec<WebSessionGroup>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DuplicateSessionRequest {
+    pub channel: String,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
 }
 
 pub async fn healthz() -> &'static str {
@@ -43,17 +51,18 @@ pub async fn list_sessions(
         .list_sessions()
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(SessionListResponse { sessions }))
+    Ok(Json(SessionListResponse { groups: sessions }))
 }
 
 pub async fn get_session(
-    Path(session_id): Path<String>,
+    Path((channel, session_id)): Path<(String, String)>,
     State(state): State<AppState>,
 ) -> Result<Json<WebSessionDetail>, ApiError> {
+    let channel = validate_channel(&channel)?.to_string();
     let session_id = validate_session_id(&session_id)?;
     let session = state
         .chat
-        .get_session(session_id)
+        .get_session(&channel, session_id)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("session not found"))?;
@@ -79,9 +88,11 @@ pub async fn chat(
     if message.is_empty() {
         return Err(ApiError::bad_request("message must not be empty"));
     }
+    let requested_channel = request.channel.as_deref().unwrap_or("web");
+    let channel = validate_channel(requested_channel)?.to_string();
     let session_id = match request.session_id {
         Some(session_id) => validate_session_id(&session_id)?.to_string(),
-        None => {
+        None if channel == "web" => {
             state
                 .chat
                 .create_session()
@@ -89,12 +100,17 @@ pub async fn chat(
                 .map_err(ApiError::internal)?
                 .session_id
         }
+        None => {
+            return Err(ApiError::bad_request(
+                "session is read-only; duplicate it into web before sending",
+            ));
+        }
     };
     let chat = state
         .chat
-        .chat(message, &session_id)
+        .chat(message, &channel, &session_id)
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
     let reply_html = render_web_html(&chat.reply);
     Ok(Json(ChatResponse {
         reply: chat.reply,
@@ -102,6 +118,20 @@ pub async fn chat(
         session_id,
         active_profile: chat.active_profile,
     }))
+}
+
+pub async fn duplicate_session(
+    State(state): State<AppState>,
+    Json(request): Json<DuplicateSessionRequest>,
+) -> Result<Json<WebSessionDetail>, ApiError> {
+    let channel = validate_channel(&request.channel)?.to_string();
+    let session_id = validate_session_id(&request.session_id)?.to_string();
+    let session = state
+        .chat
+        .duplicate_session(&channel, &session_id)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(session))
 }
 
 pub struct ApiError {
@@ -152,6 +182,18 @@ fn validate_session_id(session_id: &str) -> Result<&str, ApiError> {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
     {
         return Err(ApiError::bad_request("invalid session id"));
+    }
+    Ok(trimmed)
+}
+
+fn validate_channel(channel: &str) -> Result<&str, ApiError> {
+    let trimmed = channel.trim();
+    if trimmed.is_empty()
+        || !trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+    {
+        return Err(ApiError::bad_request("invalid channel"));
     }
     Ok(trimmed)
 }
