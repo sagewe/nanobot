@@ -647,7 +647,26 @@ pub fn render_index_html() -> String {
         outline-offset: -1px;
       }
 
-      #new-chat-button,
+      #new-chat-button {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        width: 2.4rem;
+        height: 2.4rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted2);
+        background: var(--input-bg);
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: color 0.15s, border-color 0.15s;
+      }
+
+      #new-chat-button:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+
       #duplicate-session-button {
         border: 1px solid var(--line);
         border-radius: 999px;
@@ -660,7 +679,6 @@ pub fn render_index_html() -> String {
         transition: color 0.15s, border-color 0.15s;
       }
 
-      #new-chat-button:hover,
       #duplicate-session-button:hover {
         color: var(--ink);
         border-color: var(--accent);
@@ -874,7 +892,9 @@ pub fn render_index_html() -> String {
               <button id="send-button" type="submit" title="Send (Enter)">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               </button>
-              <button id="new-chat-button" type="button">New chat</button>
+              <button id="new-chat-button" type="button" title="New chat">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
               <button id="duplicate-session-button" type="button" hidden>Duplicate to Web</button>
             </div>
           </form>
