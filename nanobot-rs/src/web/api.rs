@@ -21,6 +21,7 @@ pub struct ChatResponse {
     pub reply: String,
     #[serde(rename = "replyHtml")]
     pub reply_html: String,
+    pub channel: String,
     #[serde(rename = "sessionId")]
     pub session_id: String,
     #[serde(rename = "activeProfile")]
@@ -115,6 +116,7 @@ pub async fn chat(
     Ok(Json(ChatResponse {
         reply: chat.reply,
         reply_html,
+        channel,
         session_id,
         active_profile: chat.active_profile,
     }))
@@ -130,7 +132,7 @@ pub async fn duplicate_session(
         .chat
         .duplicate_session(&channel, &session_id)
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(|error| map_duplicate_error(error, &channel, &session_id))?;
     Ok(Json(session))
 }
 
@@ -196,4 +198,12 @@ fn validate_channel(channel: &str) -> Result<&str, ApiError> {
         return Err(ApiError::bad_request("invalid channel"));
     }
     Ok(trimmed)
+}
+
+fn map_duplicate_error(error: anyhow::Error, channel: &str, session_id: &str) -> ApiError {
+    let message = error.to_string();
+    if message.contains("not found") {
+        return ApiError::not_found(format!("session {channel}:{session_id} not found"));
+    }
+    ApiError::internal(error)
 }

@@ -244,6 +244,7 @@ async fn chat_endpoint_returns_agent_reply() {
         .as_str()
         .unwrap_or_default()
         .contains("<strong>hello</strong>"));
+    assert_eq!(response["channel"], "web");
     assert_eq!(response["sessionId"], "browser-session-1");
 }
 
@@ -531,6 +532,7 @@ async fn chat_endpoint_includes_active_profile() {
         .expect("chat response body");
 
     assert_eq!(response["reply"], "hello from model");
+    assert_eq!(response["channel"], "web");
     assert_eq!(response["activeProfile"], "openai:mock-model");
 }
 
@@ -616,6 +618,31 @@ async fn duplicate_session_endpoint_returns_new_web_detail_with_copied_history()
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0]["content"], "hello from telegram");
     assert_eq!(messages[1]["content"], "reply from telegram");
+}
+
+#[tokio::test]
+async fn duplicate_session_endpoint_returns_not_found_for_missing_source() {
+    let dir = tempdir().expect("tempdir");
+    let app = agent_app(&dir, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/api/sessions/duplicate"))
+        .json(&serde_json::json!({
+            "channel": "telegram",
+            "sessionId": "missing"
+        }))
+        .send()
+        .await
+        .expect("duplicate missing session");
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("missing duplicate payload");
+
+    assert_eq!(status, reqwest::StatusCode::NOT_FOUND);
+    assert!(payload["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("not found"));
 }
 
 #[tokio::test]
