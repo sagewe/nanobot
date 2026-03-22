@@ -388,9 +388,6 @@ pub fn render_index_html() -> String {
         scrollbar-width: thin;
         scrollbar-color: var(--line) transparent;
         padding: 1rem;
-        border: 1px solid var(--line);
-        border-radius: 0.75rem;
-        background: #f8f7f6;
         font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
         display: grid;
         gap: 0.75rem;
@@ -777,7 +774,6 @@ pub fn render_index_html() -> String {
 
         :root:not([data-theme="light"]):not([data-theme="dark"]) .account-panel { background: #252320; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) #weixin-qr-panel { background: #1e1c1a; }
-        :root:not([data-theme="light"]):not([data-theme="dark"]) #transcript { background: #1e1c1a; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="assistant"] .msg-bubble { background: #252320; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="assistant"] .msg-avatar { background: #1a1815; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="tool"] .msg-bubble { background: #1a1815; }
@@ -804,7 +800,6 @@ pub fn render_index_html() -> String {
       :root[data-theme="dark"] body { background: linear-gradient(160deg, #201e1b 0%, #181613 100%); }
       :root[data-theme="dark"] .account-panel { background: #252320; }
       :root[data-theme="dark"] #weixin-qr-panel { background: #1e1c1a; }
-      :root[data-theme="dark"] #transcript { background: #1e1c1a; }
       :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-bubble { background: #252320; }
       :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-avatar { background: #1a1815; }
       :root[data-theme="dark"] .msg-group[data-role="tool"] .msg-bubble { background: #1a1815; }
