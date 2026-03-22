@@ -105,11 +105,21 @@ pub struct WebSessionGroup {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct WebToolCall {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct WebTranscriptMessage {
     pub role: String,
     pub content: String,
     pub timestamp: Option<DateTime<Utc>>,
     pub content_html: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<WebToolCall>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -652,18 +662,60 @@ fn channel_sort_key(channel: &str) -> (usize, &str) {
 
 fn transcript_message(message: &SessionMessage) -> Option<WebTranscriptMessage> {
     match message.role.as_str() {
-        "user" | "assistant" => {
+        "user" => {
             let content = session_content_text(message)?;
-            let content_html = if message.role == "assistant" {
+            Some(WebTranscriptMessage {
+                role: "user".to_string(),
+                content,
+                timestamp: message.timestamp,
+                content_html: None,
+                tool_calls: None,
+                tool_name: None,
+            })
+        }
+        "assistant" => {
+            let content = session_content_text(message).unwrap_or_default();
+            let tool_calls = message.tool_calls.as_ref().and_then(|calls| {
+                let result: Vec<WebToolCall> = calls
+                    .iter()
+                    .filter_map(|call| {
+                        let name = call
+                            .get("function")?
+                            .get("name")?
+                            .as_str()?
+                            .to_string();
+                        Some(WebToolCall { name })
+                    })
+                    .collect();
+                if result.is_empty() { None } else { Some(result) }
+            });
+            if content.is_empty() && tool_calls.is_none() {
+                return None;
+            }
+            let content_html = if !content.is_empty() {
                 Some(render_web_html(&content))
             } else {
                 None
             };
             Some(WebTranscriptMessage {
-                role: message.role.clone(),
+                role: "assistant".to_string(),
                 content,
                 timestamp: message.timestamp,
                 content_html,
+                tool_calls,
+                tool_name: None,
+            })
+        }
+        "tool" => {
+            let content = session_content_text(message).unwrap_or_default();
+            let tool_name = message.name.clone().unwrap_or_else(|| "tool".to_string());
+            Some(WebTranscriptMessage {
+                role: "tool".to_string(),
+                content,
+                timestamp: message.timestamp,
+                content_html: None,
+                tool_calls: None,
+                tool_name: Some(tool_name),
             })
         }
         _ => None,

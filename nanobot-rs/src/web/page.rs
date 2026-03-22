@@ -501,6 +501,101 @@ pub fn render_index_html() -> String {
         color: var(--accent);
       }
 
+      .msg-tool-calls {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+      }
+
+      .msg-tool-summary {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.78rem;
+        color: var(--muted2);
+        flex-wrap: wrap;
+      }
+
+      .msg-tool-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.1rem 0.4rem;
+        border-radius: 0.25rem;
+        background: rgba(193, 95, 60, 0.12);
+        color: var(--accent);
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.68rem;
+        font-weight: 600;
+      }
+
+      .msg-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.05rem 0.35rem;
+        border-radius: 0.25rem;
+        background: var(--line);
+        color: var(--muted2);
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.65rem;
+      }
+
+      .msg-group[data-role="tool"] .msg-avatar {
+        background: var(--sidebar-bg);
+        border: 1px solid var(--line);
+        color: var(--muted2);
+      }
+
+      .msg-group[data-role="tool"] .msg-bubble {
+        background: var(--sidebar-bg);
+        border: 1px solid var(--line);
+        border-radius: 0.3rem 1rem 1rem 1rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.8rem;
+      }
+
+      .msg-tool-output-header {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        cursor: pointer;
+        user-select: none;
+        color: var(--muted2);
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.78rem;
+      }
+
+      .msg-tool-output-header::before {
+        content: "▶";
+        font-size: 0.55rem;
+        transition: transform 0.15s;
+        flex-shrink: 0;
+      }
+
+      .msg-tool-output-header.open::before {
+        transform: rotate(90deg);
+      }
+
+      .msg-tool-output-content {
+        margin-top: 0.5rem;
+        padding: 0.5rem 0.65rem;
+        background: var(--input-bg);
+        border-radius: 0.4rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.75rem;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 14rem;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: var(--line) transparent;
+        display: none;
+      }
+
+      .msg-tool-output-content.open {
+        display: block;
+      }
+
       @keyframes status-pulse {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.45; }
@@ -685,6 +780,9 @@ pub fn render_index_html() -> String {
         :root:not([data-theme="light"]):not([data-theme="dark"]) #transcript { background: #1e1c1a; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="assistant"] .msg-bubble { background: #252320; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="assistant"] .msg-avatar { background: #1a1815; }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="tool"] .msg-bubble { background: #1a1815; }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="tool"] .msg-avatar { background: #1a1815; }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-tool-output-content { background: #252320; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .tab-btn[data-active="true"] { background: #252320; }
       }
 
@@ -709,6 +807,9 @@ pub fn render_index_html() -> String {
       :root[data-theme="dark"] #transcript { background: #1e1c1a; }
       :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-bubble { background: #252320; }
       :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-avatar { background: #1a1815; }
+      :root[data-theme="dark"] .msg-group[data-role="tool"] .msg-bubble { background: #1a1815; }
+      :root[data-theme="dark"] .msg-group[data-role="tool"] .msg-avatar { background: #1a1815; }
+      :root[data-theme="dark"] .msg-tool-output-content { background: #252320; }
       :root[data-theme="dark"] .tab-btn[data-active="true"] { background: #252320; }
     </style>
   </head>
@@ -822,17 +923,24 @@ pub fn render_index_html() -> String {
 
       const USER_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
       const ASSISTANT_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+      const TOOL_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
       const COPY_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
       const CHECK_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
 
-      function makeMsgGroup(role) {
+      function makeMsgGroup(role, { profile = null, timestamp = null } = {}) {
         const group = document.createElement("div");
         group.className = "msg-group";
         group.dataset.role = role;
 
         const avatar = document.createElement("div");
         avatar.className = "msg-avatar";
-        avatar.innerHTML = role === "user" ? USER_AVATAR_SVG : ASSISTANT_AVATAR_SVG;
+        if (role === "user") {
+          avatar.innerHTML = USER_AVATAR_SVG;
+        } else if (role === "tool") {
+          avatar.innerHTML = TOOL_AVATAR_SVG;
+        } else {
+          avatar.innerHTML = ASSISTANT_AVATAR_SVG;
+        }
 
         const body = document.createElement("div");
         body.className = "msg-body";
@@ -845,14 +953,27 @@ pub fn render_index_html() -> String {
 
         const sender = document.createElement("span");
         sender.className = "msg-sender";
-        sender.textContent = role === "user" ? "You" : "Pikachu";
+        if (role === "user") {
+          sender.textContent = "You";
+        } else if (role === "tool") {
+          sender.textContent = "Tool";
+        } else {
+          sender.textContent = "Pikachu";
+        }
 
         const time = document.createElement("span");
         time.className = "msg-time";
-        time.textContent = formatTime(new Date());
+        time.textContent = formatTime(timestamp ? new Date(timestamp) : new Date());
 
         footer.appendChild(sender);
         footer.appendChild(time);
+
+        if (profile) {
+          const badge = document.createElement("span");
+          badge.className = "msg-badge";
+          badge.textContent = profile;
+          footer.appendChild(badge);
+        }
 
         if (role === "assistant") {
           const copyBtn = document.createElement("button");
@@ -876,6 +997,70 @@ pub fn render_index_html() -> String {
         return { group, bubble };
       }
 
+      function renderMessage(message, activeProfile) {
+        const ts = message.timestamp || null;
+        if (message.role === "user") {
+          const { group, bubble } = makeMsgGroup("user", { timestamp: ts });
+          bubble.textContent = message.content || "";
+          transcript.appendChild(group);
+        } else if (message.role === "assistant") {
+          const { group, bubble } = makeMsgGroup("assistant", { profile: activeProfile || null, timestamp: ts });
+          if (message.toolCalls && message.toolCalls.length > 0) {
+            const toolsDiv = document.createElement("div");
+            toolsDiv.className = "msg-tool-calls";
+            const summary = document.createElement("div");
+            summary.className = "msg-tool-summary";
+            const count = message.toolCalls.length;
+            const label = document.createTextNode(`${count} tool${count > 1 ? "s" : ""}\u00a0`);
+            summary.appendChild(label);
+            for (const tc of message.toolCalls) {
+              const badge = document.createElement("span");
+              badge.className = "msg-tool-badge";
+              badge.textContent = tc.name;
+              summary.appendChild(badge);
+            }
+            toolsDiv.appendChild(summary);
+            bubble.appendChild(toolsDiv);
+          }
+          if (message.contentHtml) {
+            const contentDiv = document.createElement("div");
+            if (message.toolCalls && message.toolCalls.length > 0) {
+              contentDiv.style.marginTop = "0.6rem";
+            }
+            contentDiv.innerHTML = message.contentHtml;
+            bubble.appendChild(contentDiv);
+          } else if (message.content) {
+            const contentDiv = document.createElement("div");
+            contentDiv.textContent = message.content;
+            bubble.appendChild(contentDiv);
+          }
+          transcript.appendChild(group);
+        } else if (message.role === "tool") {
+          const { group, bubble } = makeMsgGroup("tool", { timestamp: ts });
+          const header = document.createElement("div");
+          header.className = "msg-tool-output-header";
+          const headerText = document.createTextNode("Tool output\u00a0");
+          header.appendChild(headerText);
+          if (message.toolName) {
+            const badge = document.createElement("span");
+            badge.className = "msg-tool-badge";
+            badge.textContent = message.toolName;
+            header.appendChild(badge);
+          }
+          const contentEl = document.createElement("div");
+          contentEl.className = "msg-tool-output-content";
+          contentEl.textContent = message.content || "";
+          header.addEventListener("click", () => {
+            header.classList.toggle("open");
+            contentEl.classList.toggle("open");
+          });
+          bubble.appendChild(header);
+          bubble.appendChild(contentEl);
+          transcript.appendChild(group);
+        }
+        transcript.scrollTop = transcript.scrollHeight;
+      }
+
       function appendMessage(role, content) {
         const { group, bubble } = makeMsgGroup(role);
         bubble.textContent = content;
@@ -889,6 +1074,7 @@ pub fn render_index_html() -> String {
         transcript.appendChild(group);
         transcript.scrollTop = transcript.scrollHeight;
       }
+
 
       function setCurrentProfile(profile) {
         currentProfileNode.textContent = profile || "default";
@@ -906,32 +1092,27 @@ pub fn render_index_html() -> String {
         duplicateButton.disabled = busy;
       }
 
-      function renderTranscript(messages) {
+      function renderTranscript(messages, activeProfile) {
         transcript.innerHTML = "";
         if (!messages.length) {
           appendAssistantMessage(INITIAL_ASSISTANT_MESSAGE);
           return;
         }
         for (const message of messages || []) {
-          if (message.role === "assistant") {
-            appendAssistantMessage(message.contentHtml || message.content || "");
-          } else if (message.role === "user") {
-            appendMessage("user", message.content || "");
-          }
+          renderMessage(message, activeProfile || "");
         }
       }
 
       function renderSessionDetail(detail) {
         transcript.innerHTML = "";
-        for (const message of detail.messages || []) {
-          if (message.role === "assistant") {
-            appendAssistantMessage(message.contentHtml || message.content || "");
-          } else if (message.role === "user") {
-            appendMessage("user", message.content || "");
-          }
-        }
-        if (!(detail.messages || []).length) {
+        const activeProfile = detail.activeProfile || "";
+        const messages = detail.messages || [];
+        if (!messages.length) {
           appendAssistantMessage(INITIAL_ASSISTANT_MESSAGE);
+          return;
+        }
+        for (const message of messages) {
+          renderMessage(message, activeProfile);
         }
       }
 
@@ -1438,17 +1619,8 @@ pub fn render_index_html() -> String {
             throw new Error(payload.error || "Request failed");
           }
           setSelectedSession(payload.channel || currentChannel, payload.sessionId);
-          appendAssistantMessage(payload.replyHtml || "");
-          setCurrentProfile(payload.activeProfile || "");
-          updateSessionMetadata(
-            payload.channel || currentChannel,
-            payload.sessionId,
-            payload.activeProfile || ""
-          );
           await refreshSessions();
-          if (message.startsWith("/new") || message.startsWith("/model")) {
-            await selectSession(currentChannel, currentSessionId);
-          }
+          await selectSession(payload.channel || currentChannel, payload.sessionId || currentSessionId);
           setStatus("", "idle");
         } catch (error) {
           if (!messageInput.value.trim()) {
