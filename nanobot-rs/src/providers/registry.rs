@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::config::{Config, ProviderConfig};
+use crate::config::{CodexProviderConfig, Config, ProviderConfig};
 
 use super::{LlmProvider, OpenAICompatibleProvider};
 
@@ -13,6 +13,7 @@ pub enum ProviderKind {
     Custom,
     OpenRouter,
     Ollama,
+    Codex,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +69,13 @@ impl ProviderRegistry {
                 requires_api_key: false,
                 default_headers: HashMap::new(),
             }),
+            "codex" => Ok(ProviderSpec {
+                kind: ProviderKind::Codex,
+                name: "codex",
+                default_api_base: "https://chatgpt.com/backend-api",
+                requires_api_key: false,
+                default_headers: HashMap::new(),
+            }),
             other => bail!("unknown provider '{other}'"),
         }
     }
@@ -89,21 +97,34 @@ impl ProviderRegistry {
         model_name: &str,
     ) -> Result<ResolvedProviderConfig> {
         let spec = self.resolve(provider_name)?;
-        let provider_config = select_provider_config(config, spec.kind);
-        let api_base = if provider_config.api_base.trim().is_empty() {
-            spec.default_api_base.to_string()
-        } else {
-            provider_config.api_base.clone()
+        let (api_key, api_base, extra_headers) = match select_provider_config(config, spec.kind) {
+            ProviderSelection::Standard(provider_config) => {
+                let api_base = if provider_config.api_base.trim().is_empty() {
+                    spec.default_api_base.to_string()
+                } else {
+                    provider_config.api_base.clone()
+                };
+                if spec.requires_api_key && provider_config.api_key.trim().is_empty() {
+                    return Err(anyhow!("provider '{}' requires apiKey", spec.name));
+                }
+                let mut extra_headers = spec.default_headers.clone();
+                extra_headers.extend(provider_config.extra_headers.clone());
+                (provider_config.api_key.clone(), api_base, extra_headers)
+            }
+            ProviderSelection::Codex(codex_config) => (
+                String::new(),
+                if codex_config.api_base.trim().is_empty() {
+                    spec.default_api_base.to_string()
+                } else {
+                    codex_config.api_base.clone()
+                },
+                spec.default_headers.clone(),
+            ),
         };
-        if spec.requires_api_key && provider_config.api_key.trim().is_empty() {
-            return Err(anyhow!("provider '{}' requires apiKey", spec.name));
-        }
-        let mut extra_headers = spec.default_headers.clone();
-        extra_headers.extend(provider_config.extra_headers.clone());
         Ok(ResolvedProviderConfig {
             kind: spec.kind,
             name: spec.name.to_string(),
-            api_key: provider_config.api_key.clone(),
+            api_key,
             api_base,
             default_model: model_name.to_string(),
             extra_headers,
@@ -112,17 +133,26 @@ impl ProviderRegistry {
 
     pub fn build_provider(&self, config: &Config) -> Result<Arc<dyn LlmProvider>> {
         let provider_config = self.build_config(config)?;
+        if provider_config.kind == ProviderKind::Codex {
+            return Err(anyhow!("codex provider runtime is not implemented yet"));
+        }
         Ok(Arc::new(OpenAICompatibleProvider::from_config(
             provider_config,
         )?))
     }
 }
 
-fn select_provider_config<'a>(config: &'a Config, kind: ProviderKind) -> &'a ProviderConfig {
+enum ProviderSelection<'a> {
+    Standard(&'a ProviderConfig),
+    Codex(&'a CodexProviderConfig),
+}
+
+fn select_provider_config<'a>(config: &'a Config, kind: ProviderKind) -> ProviderSelection<'a> {
     match kind {
-        ProviderKind::OpenAi => &config.providers.openai,
-        ProviderKind::Custom => &config.providers.custom,
-        ProviderKind::OpenRouter => &config.providers.openrouter,
-        ProviderKind::Ollama => &config.providers.ollama,
+        ProviderKind::OpenAi => ProviderSelection::Standard(&config.providers.openai),
+        ProviderKind::Custom => ProviderSelection::Standard(&config.providers.custom),
+        ProviderKind::OpenRouter => ProviderSelection::Standard(&config.providers.openrouter),
+        ProviderKind::Ollama => ProviderSelection::Standard(&config.providers.ollama),
+        ProviderKind::Codex => ProviderSelection::Codex(&config.providers.codex),
     }
 }

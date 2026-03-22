@@ -106,6 +106,11 @@ fn provider_registry_resolves_explicit_provider_defaults() {
     assert_eq!(ollama.kind, ProviderKind::Ollama);
     assert!(!ollama.requires_api_key);
     assert_eq!(ollama.default_api_base, "http://localhost:11434/v1");
+
+    let codex = registry.resolve("codex").expect("codex");
+    assert_eq!(codex.kind, ProviderKind::Codex);
+    assert!(!codex.requires_api_key);
+    assert_eq!(codex.default_api_base, "https://chatgpt.com/backend-api");
 }
 
 #[test]
@@ -118,7 +123,7 @@ fn provider_registry_builds_provider_configs_with_defaults() {
   "agents": {
     "defaults": {
       "workspace": "/tmp/nanobot",
-      "defaultProfile": "ollama:llama3.2",
+      "defaultProfile": "openai:gpt-4.1-mini",
       "maxToolIterations": 20
     },
     "profiles": {
@@ -137,22 +142,44 @@ fn provider_registry_builds_provider_configs_with_defaults() {
         }
       }
     }
+  },
+  "providers": {
+    "openai": {
+      "apiKey": "sk-test"
+    }
   }
 }"#,
     )
     .expect("write config");
 
-    let mut config = load_config(Some(&path)).expect("load config");
-    config.agents.defaults.provider = "openai".to_string();
-    config.agents.defaults.model = "gpt-4.1-mini".to_string();
+    let config = load_config(Some(&path)).expect("load config");
 
     let registry = ProviderRegistry::default();
     let built = registry.build_config(&config).expect("build config");
 
-    assert_eq!(built.kind, ProviderKind::Ollama);
-    assert_eq!(built.api_base, "http://localhost:11434/v1");
-    assert_eq!(built.default_model, "llama3.2");
-    assert!(built.api_key.is_empty());
+    assert_eq!(built.kind, ProviderKind::OpenAi);
+    assert_eq!(built.api_base, "https://api.openai.com/v1");
+    assert_eq!(built.default_model, "gpt-4.1-mini");
+    assert_eq!(built.api_key, "sk-test");
+}
+
+#[test]
+fn config_defaults_include_a_concrete_codex_provider_block() {
+    let config = Config::default();
+    let value = serde_json::to_value(&config).expect("serialize default config");
+
+    assert_eq!(
+        value
+            .pointer("/providers/codex/authFile")
+            .and_then(Value::as_str),
+        Some("~/.codex/auth.json")
+    );
+    assert_eq!(
+        value
+            .pointer("/providers/codex/apiBase")
+            .and_then(Value::as_str),
+        Some("https://chatgpt.com/backend-api")
+    );
 }
 
 #[test]

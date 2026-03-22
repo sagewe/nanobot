@@ -453,3 +453,76 @@ fn provider_only_config_still_inherits_the_default_profile() {
         Some("https://models.example.test/v1")
     );
 }
+
+#[test]
+fn codex_profiles_are_accepted_when_the_raw_codex_provider_block_is_present() {
+    let value = load_config_from_json(
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "maxToolIterations": 20,
+      "defaultProfile": "codex:gpt-5-codex"
+    },
+    "profiles": {
+      "codex:gpt-5-codex": {
+        "provider": "codex",
+        "model": "gpt-5-codex",
+        "request": {}
+      }
+    }
+  },
+  "providers": {
+    "codex": {
+      "authFile": "~/.codex/auth.json",
+      "apiBase": "https://chatgpt.com/backend-api"
+    }
+  }
+}"#,
+    )
+    .expect("codex profile should load");
+
+    assert_eq!(
+        value
+            .pointer("/agents/defaults/defaultProfile")
+            .and_then(Value::as_str),
+        Some("codex:gpt-5-codex")
+    );
+    assert_eq!(
+        value
+            .pointer("/agents/profiles/codex:gpt-5-codex/provider")
+            .and_then(Value::as_str),
+        Some("codex")
+    );
+    assert_eq!(
+        value
+            .pointer("/providers/codex/authFile")
+            .and_then(Value::as_str),
+        Some("~/.codex/auth.json")
+    );
+}
+
+#[test]
+fn codex_default_profile_fails_when_the_raw_codex_provider_block_is_missing() {
+    let err = load_config_from_json(
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "maxToolIterations": 20,
+      "defaultProfile": "codex:gpt-5-codex"
+    },
+    "profiles": {
+      "codex:gpt-5-codex": {
+        "provider": "codex",
+        "model": "gpt-5-codex",
+        "request": {}
+      }
+    }
+  }
+}"#,
+    )
+    .expect_err("missing raw codex provider block should fail");
+
+    assert!(err.to_string().contains("providers.codex"));
+}

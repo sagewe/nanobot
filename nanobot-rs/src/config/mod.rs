@@ -69,6 +69,24 @@ pub struct Config {
     pub tools: ToolsConfig,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CodexProviderConfig {
+    #[serde(default = "default_codex_auth_file")]
+    pub auth_file: String,
+    #[serde(default = "default_codex_api_base")]
+    pub api_base: String,
+}
+
+impl Default for CodexProviderConfig {
+    fn default() -> Self {
+        Self {
+            auth_file: default_codex_auth_file(),
+            api_base: default_codex_api_base(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct RawAgentDefaults {
@@ -102,7 +120,7 @@ struct RawAgentsConfig {
 #[serde(default, rename_all = "camelCase")]
 struct RawConfig {
     pub agents: RawAgentsConfig,
-    pub providers: ProvidersConfig,
+    pub providers: RawProvidersConfig,
     pub channels: ChannelsConfig,
     pub tools: ToolsConfig,
 }
@@ -213,6 +231,21 @@ impl RawConfig {
                 "agents.defaults.defaultProfile '{default_profile}' does not match any configured profile"
             )
         })?;
+        let codex_requested = profiles.values().any(|profile| {
+            registry
+                .resolve(&profile.provider)
+                .map(|spec| spec.kind == crate::providers::ProviderKind::Codex)
+                .unwrap_or(false)
+        });
+        let codex = match providers.codex {
+            Some(codex) => codex,
+            None if codex_requested => {
+                bail!(
+                    "agents.profiles or agents.defaults.defaultProfile reference provider 'codex' but providers.codex is missing"
+                );
+            }
+            None => CodexProviderConfig::default(),
+        };
 
         let workspace = if workspace.trim().is_empty() {
             default_workspace_path().display().to_string()
@@ -231,7 +264,13 @@ impl RawConfig {
                 },
                 profiles,
             },
-            providers,
+            providers: ProvidersConfig {
+                openai: providers.openai,
+                custom: providers.custom,
+                openrouter: providers.openrouter,
+                ollama: providers.ollama,
+                codex,
+            },
             channels,
             tools,
         })
@@ -325,6 +364,7 @@ pub struct ProvidersConfig {
     pub custom: ProviderConfig,
     pub openrouter: ProviderConfig,
     pub ollama: ProviderConfig,
+    pub codex: CodexProviderConfig,
 }
 
 impl Default for ProvidersConfig {
@@ -334,8 +374,19 @@ impl Default for ProvidersConfig {
             custom: ProviderConfig::with_base("http://localhost:8000/v1"),
             openrouter: ProviderConfig::with_base("https://openrouter.ai/api/v1"),
             ollama: ProviderConfig::with_base("http://localhost:11434/v1"),
+            codex: CodexProviderConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RawProvidersConfig {
+    pub openai: ProviderConfig,
+    pub custom: ProviderConfig,
+    pub openrouter: ProviderConfig,
+    pub ollama: ProviderConfig,
+    pub codex: Option<CodexProviderConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -572,6 +623,14 @@ fn default_weixin_cdn_base() -> String {
 
 fn default_wecom_ws_base() -> String {
     "wss://openws.work.weixin.qq.com".to_string()
+}
+
+fn default_codex_auth_file() -> String {
+    "~/.codex/auth.json".to_string()
+}
+
+fn default_codex_api_base() -> String {
+    "https://chatgpt.com/backend-api".to_string()
 }
 
 fn profile_key(provider: &str, model: &str) -> String {

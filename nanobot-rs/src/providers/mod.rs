@@ -5,7 +5,7 @@ mod registry;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
@@ -47,6 +47,9 @@ impl ProviderPool {
             &request.provider_name,
             &request.model_name,
         )?;
+        if resolved.kind == ProviderKind::Codex {
+            bail!("codex provider runtime is not implemented yet");
+        }
         let key = provider_cache_key(&resolved);
 
         if let Some(existing) = self.clients.lock().await.get(&key).cloned() {
