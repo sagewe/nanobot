@@ -33,7 +33,7 @@ pub fn render_index_html() -> String {
 
       body {
         margin: 0;
-        height: 100vh;
+        height: 100dvh;
         display: flex;
         flex-direction: column;
         overflow: hidden;
@@ -845,9 +845,98 @@ pub fn render_index_html() -> String {
       :root[data-theme="dark"] .msg-group[data-role="tool"] .msg-avatar { background: #1a1815; }
       :root[data-theme="dark"] .msg-tool-output-content { background: #252320; }
       :root[data-theme="dark"] .tab-btn[data-active="true"] { background: #252320; }
+
+      #sidebar-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        z-index: 199;
+      }
+
+      #sidebar-backdrop.visible {
+        display: block;
+      }
+
+      #mobile-menu-btn {
+        display: none;
+        border: 1px solid var(--line);
+        border-radius: 0.5rem;
+        width: 2.25rem;
+        height: 2.25rem;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted2);
+        background: transparent;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+
+      @media (max-width: 640px) {
+        body {
+          height: 100dvh;
+        }
+
+        .session-rail {
+          position: fixed;
+          top: 0;
+          left: 0;
+          height: 100dvh;
+          width: min(80vw, 18rem);
+          transform: translateX(-100%);
+          transition: transform 0.25s ease;
+          z-index: 200;
+          box-shadow: 4px 0 16px rgba(0, 0, 0, 0.15);
+        }
+
+        .session-rail.mobile-open {
+          transform: translateX(0);
+        }
+
+        .session-rail[data-collapsed="true"] {
+          width: min(80vw, 18rem);
+        }
+
+        .session-rail[data-collapsed="true"] .sidebar-title,
+        .session-rail[data-collapsed="true"] .tab-label {
+          display: initial;
+        }
+
+        .session-rail[data-collapsed="true"] .tab-bar {
+          align-items: initial;
+          border-bottom: 1px solid var(--line);
+        }
+
+        #mobile-menu-btn {
+          display: flex;
+        }
+
+        .session-header {
+          flex-wrap: wrap;
+        }
+
+        .session-header #session-select {
+          flex: 1;
+          min-width: 0;
+        }
+
+        #session-select,
+        #profile-select,
+        #message-input {
+          font-size: 16px;
+        }
+
+        #send-button,
+        #theme-toggle,
+        #lang-toggle {
+          min-width: 2.75rem;
+          min-height: 2.75rem;
+        }
+      }
     </style>
   </head>
   <body>
+    <div id="sidebar-backdrop"></div>
     <main id="app">
       <aside class="session-rail">
           <div class="tab-bar" role="tablist">
@@ -901,6 +990,9 @@ pub fn render_index_html() -> String {
         </section>
         <section class="conversation-pane">
           <div class="session-header">
+            <button id="mobile-menu-btn" aria-label="Open sidebar">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
             <select id="session-select" data-i18n-aria-label="select_session" aria-label="Select session"></select>
             <select id="profile-select" data-i18n-aria-label="select_model" aria-label="Select model"></select>
           </div>
@@ -928,6 +1020,10 @@ pub fn render_index_html() -> String {
           toggle_sidebar: "Toggle sidebar",
           tab_chat: "Chat",
           tab_channels: "Channels",
+          channel_web: "Web",
+          channel_telegram: "Telegram",
+          channel_wecom: "WeCom",
+          channel_weixin: "Weixin",
           weixin: "Weixin",
           login_to_weixin: "Login to Weixin",
           logout: "Logout",
@@ -989,6 +1085,10 @@ pub fn render_index_html() -> String {
           toggle_sidebar: "切换侧栏",
           tab_chat: "对话",
           tab_channels: "频道",
+          channel_web: "Web",
+          channel_telegram: "Telegram",
+          channel_wecom: "企业微信",
+          channel_weixin: "微信",
           weixin: "微信",
           login_to_weixin: "登录微信",
           logout: "退出",
@@ -1050,6 +1150,12 @@ pub fn render_index_html() -> String {
 
       function t(key) {
         return (TRANSLATIONS[currentLang] || TRANSLATIONS.en)[key] || key;
+      }
+
+      function tChannel(name) {
+        const key = "channel_" + (name || "").toLowerCase();
+        const tr = (TRANSLATIONS[currentLang] || TRANSLATIONS.en)[key];
+        return tr || name;
       }
 
       function tToolCount(count) {
@@ -1369,7 +1475,7 @@ pub fn render_index_html() -> String {
         sessionSelect.appendChild(newOpt);
         for (const group of groups) {
           const optgroup = document.createElement("optgroup");
-          optgroup.label = group.channel;
+          optgroup.label = tChannel(group.channel);
           for (const session of group.sessions || []) {
             const opt = document.createElement("option");
             opt.value = `${session.channel}::${session.sessionId}`;
@@ -1681,6 +1787,7 @@ pub fn render_index_html() -> String {
         const [channel, sessionId] = sessionSelect.value.split("::");
         if (channel && sessionId) {
           await selectSession(channel, sessionId);
+          if (isMobile()) closeMobileSidebar();
           messageInput.focus();
         }
       });
@@ -1721,17 +1828,40 @@ pub fn render_index_html() -> String {
       });
 
       const COLLAPSED_KEY = "pikachu.sidebarCollapsed";
+      const backdropEl = document.getElementById("sidebar-backdrop");
+      const mobileMenuBtn = document.getElementById("mobile-menu-btn");
+
+      function isMobile() {
+        return window.matchMedia("(max-width: 640px)").matches;
+      }
 
       function setSidebarCollapsed(collapsed) {
         sessionRail.dataset.collapsed = String(collapsed);
         localStorage.setItem(COLLAPSED_KEY, String(collapsed));
       }
 
+      function openMobileSidebar() {
+        sessionRail.classList.add("mobile-open");
+        backdropEl.classList.add("visible");
+      }
+
+      function closeMobileSidebar() {
+        sessionRail.classList.remove("mobile-open");
+        backdropEl.classList.remove("visible");
+      }
+
       setSidebarCollapsed(localStorage.getItem(COLLAPSED_KEY) === "true");
 
       sidebarToggle.addEventListener("click", () => {
-        setSidebarCollapsed(sessionRail.dataset.collapsed !== "true");
+        if (isMobile()) {
+          closeMobileSidebar();
+        } else {
+          setSidebarCollapsed(sessionRail.dataset.collapsed !== "true");
+        }
       });
+
+      mobileMenuBtn.addEventListener("click", openMobileSidebar);
+      backdropEl.addEventListener("click", closeMobileSidebar);
 
       tabButtons.forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -1800,6 +1930,12 @@ pub fn render_index_html() -> String {
         }
       });
 
+      messageInput.addEventListener("focus", () => {
+        if (isMobile()) {
+          setTimeout(() => messageInput.scrollIntoView({ behavior: "smooth", block: "nearest" }), 300);
+        }
+      });
+
       messageInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
           event.preventDefault();
@@ -1863,6 +1999,7 @@ pub fn render_index_html() -> String {
         localStorage.setItem(LANG_KEY, currentLang);
         applyI18n();
         applyTheme(document.documentElement.getAttribute("data-theme") || "light");
+        renderSessionSelect(currentSessionGroups);
       });
 
       Promise.all([bootstrapSessions(), loadWeixinAccount(), loadProfiles()]).catch((error) => {
