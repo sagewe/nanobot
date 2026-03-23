@@ -421,6 +421,105 @@ async fn codex_provider_rejects_malformed_event_sequences() {
 }
 
 #[tokio::test]
+async fn codex_provider_rejects_function_call_arguments_before_matching_item() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, _) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        codex_event_response(vec![
+            response_function_call_arguments_delta("call_early", "{\"path\":\"src/main.rs\"}"),
+            response_output_item_done(json!({
+                "type": "function_call",
+                "call_id": "call_early",
+                "id": "fallback_id",
+                "name": "read_file",
+                "status": "in_progress"
+            })),
+            response_completed(),
+        ]),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let err = provider
+        .chat_with_request(vec![], vec![], &request_descriptor(Map::new()))
+        .await
+        .expect_err("out-of-order event stream should fail");
+
+    let message = err.to_string();
+    assert!(message.contains("malformed"), "{message}");
+    assert!(
+        message.contains("function_call_arguments.delta"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn codex_provider_rejects_events_after_response_completed() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, _) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        codex_event_response(vec![
+            response_output_item_done(json!({
+                "type": "function_call",
+                "call_id": "call_late",
+                "id": "fallback_id",
+                "name": "read_file",
+                "status": "in_progress"
+            })),
+            response_function_call_arguments_delta("call_late", "{\"path\":\"src/"),
+            response_completed(),
+            response_function_call_arguments_delta("call_late", "main.rs\"}"),
+        ]),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let err = provider
+        .chat_with_request(vec![], vec![], &request_descriptor(Map::new()))
+        .await
+        .expect_err("late event stream should fail");
+
+    let message = err.to_string();
+    assert!(message.contains("malformed"), "{message}");
+    assert!(message.contains("response.completed"), "{message}");
+}
+
+#[tokio::test]
+async fn codex_provider_rejects_conflicting_function_call_arguments_payloads() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, _) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        codex_event_response(vec![
+            response_output_item_done(json!({
+                "type": "function_call",
+                "call_id": "call_conflict",
+                "id": "fallback_id",
+                "name": "read_file",
+                "status": "in_progress"
+            })),
+            response_function_call_arguments_delta("call_conflict", "{\"path\":\"src/"),
+            response_function_call_arguments_delta("call_conflict", "main.rs\"}"),
+            response_function_call_arguments_done("call_conflict", "{\"path\":\"src/lib.rs\"}"),
+            response_completed(),
+        ]),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let err = provider
+        .chat_with_request(vec![], vec![], &request_descriptor(Map::new()))
+        .await
+        .expect_err("conflicting function-call payloads should fail");
+
+    let message = err.to_string();
+    assert!(message.contains("malformed"), "{message}");
+    assert!(message.contains("conflict"), "{message}");
+}
+
+#[tokio::test]
 async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggregates_streamed_content()
  {
     let dir = tempdir().expect("tempdir");

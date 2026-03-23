@@ -26,6 +26,7 @@ struct PendingFunctionCall {
     name: String,
     collected_arguments: String,
     completed_arguments: Option<String>,
+    saw_done: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -273,61 +274,69 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
     let mut saw_response_completed = false;
 
     for event in events {
-        if let CodexEvent::OutputItemDone(item) = event {
-            match item.get("type").and_then(Value::as_str) {
-                Some("message") => {
-                    if item.get("role").and_then(Value::as_str) != Some("assistant") {
-                        continue;
-                    }
-                    merge_extra_fields(&mut extra, item, &["type", "role", "content"]);
-                    content_chunks.extend(extract_message_texts(item.get("content")));
-                }
-                Some("function_call") => {
-                    merge_extra_fields(
-                        &mut extra,
-                        item,
-                        &["type", "call_id", "id", "name", "arguments"],
-                    );
-                    let function_call = parse_function_call_item(item)?;
-                    if let Some(arguments) = function_call.arguments {
-                        let name = function_call.name;
-                        tool_calls.push(ToolCall {
-                            id: function_call.id,
-                            name: name.clone(),
-                            arguments: parse_arguments_value(&name, &arguments)?,
-                        });
-                    } else {
-                        let call_id = function_call.id.clone();
-                        if pending_calls.contains_key(&call_id) {
-                            return Err(malformed_event_error(format!(
-                                "duplicate function_call item for {call_id}"
-                            )));
-                        }
-                        pending_order.push(call_id.clone());
-                        pending_calls.insert(
-                            call_id,
-                            PendingFunctionCall {
-                                name: function_call.name,
-                                collected_arguments: String::new(),
-                                completed_arguments: None,
-                            },
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    for event in events {
         match event {
+            CodexEvent::OutputItemDone(item) => {
+                if saw_response_completed {
+                    return Err(malformed_event_error(
+                        "event arrived after response.completed",
+                    ));
+                }
+                match item.get("type").and_then(Value::as_str) {
+                    Some("message") => {
+                        if item.get("role").and_then(Value::as_str) != Some("assistant") {
+                            continue;
+                        }
+                        merge_extra_fields(&mut extra, item, &["type", "role", "content"]);
+                        content_chunks.extend(extract_message_texts(item.get("content")));
+                    }
+                    Some("function_call") => {
+                        merge_extra_fields(
+                            &mut extra,
+                            item,
+                            &["type", "call_id", "id", "name", "arguments"],
+                        );
+                        let function_call = parse_function_call_item(item)?;
+                        if let Some(arguments) = function_call.arguments {
+                            let name = function_call.name;
+                            tool_calls.push(ToolCall {
+                                id: function_call.id,
+                                name: name.clone(),
+                                arguments: parse_arguments_value(&name, &arguments)?,
+                            });
+                        } else {
+                            let call_id = function_call.id.clone();
+                            if pending_calls.contains_key(&call_id) {
+                                return Err(malformed_event_error(format!(
+                                    "duplicate function_call item for {call_id}"
+                                )));
+                            }
+                            pending_order.push(call_id.clone());
+                            pending_calls.insert(
+                                call_id,
+                                PendingFunctionCall {
+                                    name: function_call.name,
+                                    collected_arguments: String::new(),
+                                    completed_arguments: None,
+                                    saw_done: false,
+                                },
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
             CodexEvent::FunctionCallArgumentsDelta { item_id, delta } => {
+                if saw_response_completed {
+                    return Err(malformed_event_error(
+                        "event arrived after response.completed",
+                    ));
+                }
                 let Some(pending) = pending_calls.get_mut(item_id) else {
                     return Err(malformed_event_error(format!(
                         "function_call_arguments.delta for unknown item_id {item_id}"
                     )));
                 };
-                if pending.completed_arguments.is_some() {
+                if pending.saw_done {
                     return Err(malformed_event_error(format!(
                         "function_call_arguments.delta arrived after completion for {item_id}"
                     )));
@@ -335,12 +344,30 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
                 pending.collected_arguments.push_str(delta);
             }
             CodexEvent::FunctionCallArgumentsDone { item_id, arguments } => {
+                if saw_response_completed {
+                    return Err(malformed_event_error(
+                        "event arrived after response.completed",
+                    ));
+                }
                 let Some(pending) = pending_calls.get_mut(item_id) else {
                     return Err(malformed_event_error(format!(
                         "function_call_arguments.done for unknown item_id {item_id}"
                     )));
                 };
+                if pending.saw_done {
+                    return Err(malformed_event_error(format!(
+                        "duplicate function_call_arguments.done for {item_id}"
+                    )));
+                }
+                pending.saw_done = true;
                 if !arguments.trim().is_empty() {
+                    if !pending.collected_arguments.trim().is_empty()
+                        && !arguments_payloads_match(&pending.collected_arguments, arguments)
+                    {
+                        return Err(malformed_event_error(format!(
+                            "function_call_arguments.done for {item_id} conflicts with collected deltas"
+                        )));
+                    }
                     pending.completed_arguments = Some(arguments.clone());
                 }
             }
@@ -350,7 +377,6 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
                 }
                 saw_response_completed = true;
             }
-            CodexEvent::OutputItemDone(_) => {}
         }
     }
 
@@ -439,6 +465,20 @@ fn parse_arguments_value(name: &str, arguments: &str) -> Result<Value> {
     serde_json::from_str(arguments).with_context(|| {
         format!("codex event aggregation failed: malformed function_call arguments for {name}")
     })
+}
+
+fn arguments_payloads_match(collected: &str, completed: &str) -> bool {
+    if collected == completed {
+        return true;
+    }
+
+    match (
+        serde_json::from_str::<Value>(collected),
+        serde_json::from_str::<Value>(completed),
+    ) {
+        (Ok(collected), Ok(completed)) => collected == completed,
+        _ => false,
+    }
 }
 
 fn normalize_arguments_value(value: &Value) -> Result<Option<String>> {
