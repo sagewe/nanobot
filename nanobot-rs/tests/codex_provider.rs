@@ -159,7 +159,10 @@ async fn capture_codex_responses_request(
 
 async fn start_codex_capture_server(
     responses: Vec<(StatusCode, Value)>,
-) -> (SocketAddr, Arc<tokio::sync::Mutex<Vec<CapturedCodexRequest>>>) {
+) -> (
+    SocketAddr,
+    Arc<tokio::sync::Mutex<Vec<CapturedCodexRequest>>>,
+) {
     let requests = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let app = Router::new()
         .route(
@@ -190,6 +193,41 @@ fn mock_codex_sse_body() -> String {
         "",
     ]
     .join("\n")
+}
+
+fn response_output_item_done(item: Value) -> Value {
+    json!({
+        "type": "response.output_item.done",
+        "item": item,
+    })
+}
+
+fn response_function_call_arguments_delta(item_id: &str, delta: &str) -> Value {
+    json!({
+        "type": "response.function_call_arguments.delta",
+        "item_id": item_id,
+        "delta": delta,
+    })
+}
+
+fn response_function_call_arguments_done(item_id: &str, arguments: &str) -> Value {
+    json!({
+        "type": "response.function_call_arguments.done",
+        "item_id": item_id,
+        "arguments": arguments,
+    })
+}
+
+fn response_completed() -> Value {
+    json!({"type": "response.completed"})
+}
+
+fn codex_event_response(output: Vec<Value>) -> Value {
+    json!({
+        "id": "resp_event_1",
+        "status": "completed",
+        "output": output,
+    })
 }
 
 async fn capture_codex_live_request(
@@ -259,8 +297,132 @@ async fn start_live_codex_capture_server_with_response(
 }
 
 #[tokio::test]
+async fn codex_provider_aggregates_completed_assistant_text_events() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, _) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        codex_event_response(vec![
+            response_output_item_done(json!({
+                "type": "message",
+                "role": "assistant",
+                "id": "msg_1",
+                "status": "completed",
+                "content": [
+                    {"type": "output_text", "text": "hello from codex"}
+                ]
+            })),
+            response_completed(),
+        ]),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let response = provider
+        .chat_with_request(vec![], vec![], &request_descriptor(Map::new()))
+        .await
+        .expect("assistant text response");
+
+    assert_eq!(response.content.as_deref(), Some("hello from codex"));
+    assert!(response.tool_calls.is_empty());
+    assert_eq!(response.finish_reason, "stop");
+}
+
+#[tokio::test]
+async fn codex_provider_aggregates_completed_function_call_events() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, _) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        codex_event_response(vec![
+            response_output_item_done(json!({
+                "type": "function_call",
+                "call_id": "call_1",
+                "id": "fallback_id",
+                "name": "read_file",
+                "arguments": "{\"path\":\"src/main.rs\"}",
+                "status": "completed"
+            })),
+            response_completed(),
+        ]),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let response = provider
+        .chat_with_request(vec![], vec![], &request_descriptor(Map::new()))
+        .await
+        .expect("function call response");
+
+    assert_eq!(response.content, None);
+    assert_eq!(response.tool_calls.len(), 1);
+    assert_eq!(response.tool_calls[0].name, "read_file");
+    assert_eq!(response.finish_reason, "tool_calls");
+}
+
+#[tokio::test]
+async fn codex_provider_assembles_incremental_function_call_arguments() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, _) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        codex_event_response(vec![
+            response_output_item_done(json!({
+                "type": "function_call",
+                "call_id": "call_2",
+                "id": "fallback_id",
+                "name": "read_file",
+                "status": "in_progress"
+            })),
+            response_function_call_arguments_delta("call_2", "{\"path\":\"src/"),
+            response_function_call_arguments_delta("call_2", "main.rs\"}"),
+            response_function_call_arguments_done("call_2", ""),
+            response_completed(),
+        ]),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let response = provider
+        .chat_with_request(vec![], vec![], &request_descriptor(Map::new()))
+        .await
+        .expect("incremental function call response");
+
+    assert_eq!(response.tool_calls.len(), 1);
+    assert_eq!(response.tool_calls[0].name, "read_file");
+    assert_eq!(
+        response.tool_calls[0].arguments,
+        json!({"path":"src/main.rs"})
+    );
+    assert_eq!(response.finish_reason, "tool_calls");
+}
+
+#[tokio::test]
+async fn codex_provider_rejects_malformed_event_sequences() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, _) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        codex_event_response(vec![
+            response_function_call_arguments_delta("missing_call", "{\"path\":\"src/main.rs\"}"),
+            response_completed(),
+        ]),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let err = provider
+        .chat_with_request(vec![], vec![], &request_descriptor(Map::new()))
+        .await
+        .expect_err("malformed event stream should fail");
+
+    let message = err.to_string();
+    assert!(message.contains("malformed"), "{message}");
+}
+
+#[tokio::test]
 async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggregates_streamed_content()
-{
+ {
     let dir = tempdir().expect("tempdir");
     let auth_file = write_auth_file(&dir, valid_auth_json());
     let (addr, requests) = start_live_codex_capture_server().await;
@@ -379,7 +541,10 @@ async fn codex_provider_normalizes_plain_text_response_and_sends_bearer_and_acco
     assert_eq!(response.content.as_deref(), Some("captured"));
     assert!(response.tool_calls.is_empty());
     assert_eq!(response.finish_reason, "stop");
-    assert_eq!(response.extra.get("id").and_then(Value::as_str), Some("msg_123"));
+    assert_eq!(
+        response.extra.get("id").and_then(Value::as_str),
+        Some("msg_123")
+    );
     assert_eq!(
         response.extra.get("status").and_then(Value::as_str),
         Some("completed")
