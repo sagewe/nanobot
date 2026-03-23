@@ -138,11 +138,7 @@ impl LlmProvider for CodexProvider {
         tools: Vec<Value>,
         request: &ProviderRequestDescriptor,
     ) -> Result<LlmResponse> {
-        let mut body = build_request_body(messages, tools, request);
-        if let (Some(tier), Value::Object(map)) = (&self.config.service_tier, &mut body) {
-            map.entry("service_tier".to_string())
-                .or_insert_with(|| json!(tier));
-        }
+        let body = build_request_body(messages, tools, request);
         let response = self.send_responses_request(&body).await?;
         let status = response.status();
         let text = response
@@ -174,6 +170,7 @@ fn build_request_body(
 ) -> Value {
     let (instructions, input_messages) = split_instructions_and_input(messages);
     let mut body = request.request_extras.clone();
+    body.remove("service_tier");
     body.insert("model".to_string(), json!(request.model_name));
     body.insert(
         "input".to_string(),

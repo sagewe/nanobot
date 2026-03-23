@@ -81,7 +81,7 @@ pub struct CodexProviderConfig {
 }
 
 fn default_codex_service_tier() -> Option<String> {
-    Some("fast".to_string())
+    None
 }
 
 impl Default for CodexProviderConfig {

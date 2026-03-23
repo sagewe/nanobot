@@ -799,8 +799,11 @@ async fn model_command_can_switch_a_session_to_a_codex_profile_and_use_the_codex
         ]),
     )])
     .await;
-    let config =
-        codex_agent_config(dir.path(), &auth_file, format!("http://{addr}/backend-api/codex"));
+    let config = codex_agent_config(
+        dir.path(),
+        &auth_file,
+        format!("http://{addr}/backend-api/codex"),
+    );
     let provider: Arc<dyn LlmProvider> = Arc::new(ProviderPool::new(config.clone()));
     let bus = MessageBus::new(32);
     let agent = AgentLoop::from_config(bus, provider, config)
@@ -925,8 +928,11 @@ async fn codex_profile_runs_a_tool_call_second_round_and_sends_tool_results_back
     ])
     .await;
 
-    let config =
-        codex_agent_config(dir.path(), &auth_file, format!("http://{addr}/backend-api/codex"));
+    let config = codex_agent_config(
+        dir.path(),
+        &auth_file,
+        format!("http://{addr}/backend-api/codex"),
+    );
     let provider: Arc<dyn LlmProvider> = Arc::new(ProviderPool::new(config.clone()));
     let bus = MessageBus::new(32);
     let agent = AgentLoop::from_config(bus, provider, config)
@@ -934,7 +940,12 @@ async fn codex_profile_runs_a_tool_call_second_round_and_sends_tool_results_back
         .expect("agent");
 
     let switched = agent
-        .process_direct("/model codex:gpt-5.4", "cli:codex-tool", "cli", "codex-tool")
+        .process_direct(
+            "/model codex:gpt-5.4",
+            "cli:codex-tool",
+            "cli",
+            "codex-tool",
+        )
         .await
         .expect("switch");
     assert!(switched.contains("codex:gpt-5.4"), "{switched}");
@@ -949,7 +960,10 @@ async fn codex_profile_runs_a_tool_call_second_round_and_sends_tool_results_back
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].path, "/backend-api/codex/responses");
     assert_eq!(requests[1].path, "/backend-api/codex/responses");
-    assert_eq!(requests[1].body.get("model").and_then(Value::as_str), Some("gpt-5.4"));
+    assert_eq!(
+        requests[1].body.get("model").and_then(Value::as_str),
+        Some("gpt-5.4")
+    );
     assert!(
         requests[1]
             .accept
@@ -962,15 +976,29 @@ async fn codex_profile_runs_a_tool_call_second_round_and_sends_tool_results_back
         .get("input")
         .and_then(Value::as_array)
         .expect("second request input");
-    let tool_message = second_input
+    let function_call = second_input
         .iter()
-        .find(|item| item.get("role").and_then(Value::as_str) == Some("tool"))
-        .expect("tool result message");
-    let tool_text = tool_message
-        .get("content")
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("text"))
+        .find(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
+        .expect("function_call item");
+    assert_eq!(
+        function_call.get("call_id").and_then(Value::as_str),
+        Some("call_1")
+    );
+    assert_eq!(
+        function_call.get("name").and_then(Value::as_str),
+        Some("list_dir")
+    );
+
+    let tool_output = second_input
+        .iter()
+        .find(|item| item.get("type").and_then(Value::as_str) == Some("function_call_output"))
+        .expect("function_call_output item");
+    assert_eq!(
+        tool_output.get("call_id").and_then(Value::as_str),
+        Some("call_1")
+    );
+    let tool_text = tool_output
+        .get("output")
         .and_then(Value::as_str)
         .expect("tool result text");
     assert!(tool_text.contains("sample.txt"), "{tool_text}");

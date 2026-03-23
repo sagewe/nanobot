@@ -90,6 +90,7 @@ fn build_provider(auth_file: String, addr: SocketAddr) -> CodexProvider {
     CodexProvider::from_config(CodexProviderConfig {
         auth_file,
         api_base: format!("http://{addr}/backend-api/"),
+        service_tier: None,
     })
     .expect("provider")
 }
@@ -98,6 +99,7 @@ fn build_live_provider(auth_file: String, addr: SocketAddr) -> CodexProvider {
     CodexProvider::from_config(CodexProviderConfig {
         auth_file,
         api_base: format!("http://{addr}/backend-api/codex"),
+        service_tier: None,
     })
     .expect("provider")
 }
@@ -218,6 +220,13 @@ fn mock_codex_sse_body() -> String {
 fn response_output_item_done(item: Value) -> Value {
     json!({
         "type": "response.output_item.done",
+        "item": item,
+    })
+}
+
+fn response_output_item_added(item: Value) -> Value {
+    json!({
+        "type": "response.output_item.added",
         "item": item,
     })
 }
@@ -397,9 +406,9 @@ async fn codex_provider_assembles_incremental_function_call_arguments() {
                 "name": "read_file",
                 "status": "in_progress"
             })),
-            response_function_call_arguments_delta("call_2", "{\"path\":\"src/"),
-            response_function_call_arguments_delta("call_2", "main.rs\"}"),
-            response_function_call_arguments_done("call_2", ""),
+            response_function_call_arguments_delta("fallback_id", "{\"path\":\"src/"),
+            response_function_call_arguments_delta("fallback_id", "main.rs\"}"),
+            response_function_call_arguments_done("fallback_id", ""),
             response_completed(),
         ]),
     )])
@@ -416,6 +425,57 @@ async fn codex_provider_assembles_incremental_function_call_arguments() {
     assert_eq!(
         response.tool_calls[0].arguments,
         json!({"path":"src/main.rs"})
+    );
+    assert_eq!(response.finish_reason, "tool_calls");
+}
+
+#[tokio::test]
+async fn codex_provider_accepts_live_function_call_event_order() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let item_id = "fc_live";
+    let arguments = "{\"path\":\".\",\"recursive\":false,\"max_entries\":200}";
+    let (addr, _) = start_codex_capture_server(vec![(
+        StatusCode::OK,
+        codex_event_response(vec![
+            response_output_item_added(json!({
+                "type": "function_call",
+                "call_id": "call_live",
+                "id": item_id,
+                "name": "list_dir",
+                "arguments": "",
+                "status": "in_progress"
+            })),
+            response_function_call_arguments_delta(item_id, "{\"path\":\".\""),
+            response_function_call_arguments_delta(item_id, ",\"recursive\":false"),
+            response_function_call_arguments_delta(item_id, ",\"max_entries\":200}"),
+            response_function_call_arguments_done(item_id, arguments),
+            response_output_item_done(json!({
+                "type": "function_call",
+                "call_id": "call_live",
+                "id": item_id,
+                "name": "list_dir",
+                "arguments": arguments,
+                "status": "completed"
+            })),
+            response_completed(),
+        ]),
+    )])
+    .await;
+    let provider = build_provider(auth_file, addr);
+
+    let response = provider
+        .chat_with_request(vec![], vec![], &request_descriptor(Map::new()))
+        .await
+        .expect("live ordering function call response");
+
+    assert_eq!(response.content, None);
+    assert_eq!(response.tool_calls.len(), 1);
+    assert_eq!(response.tool_calls[0].id, "call_live");
+    assert_eq!(response.tool_calls[0].name, "list_dir");
+    assert_eq!(
+        response.tool_calls[0].arguments,
+        json!({"path":".","recursive":false,"max_entries":200})
     );
     assert_eq!(response.finish_reason, "tool_calls");
 }
@@ -450,7 +510,7 @@ async fn codex_provider_rejects_function_call_arguments_before_matching_item() {
     let (addr, _) = start_codex_capture_server(vec![(
         StatusCode::OK,
         codex_event_response(vec![
-            response_function_call_arguments_delta("call_early", "{\"path\":\"src/main.rs\"}"),
+            response_function_call_arguments_delta("fallback_id", "{\"path\":\"src/main.rs\"}"),
             response_output_item_done(json!({
                 "type": "function_call",
                 "call_id": "call_early",
@@ -491,9 +551,9 @@ async fn codex_provider_rejects_events_after_response_completed() {
                 "name": "read_file",
                 "status": "in_progress"
             })),
-            response_function_call_arguments_delta("call_late", "{\"path\":\"src/"),
+            response_function_call_arguments_delta("fallback_id", "{\"path\":\"src/"),
             response_completed(),
-            response_function_call_arguments_delta("call_late", "main.rs\"}"),
+            response_function_call_arguments_delta("fallback_id", "main.rs\"}"),
         ]),
     )])
     .await;
@@ -523,9 +583,9 @@ async fn codex_provider_rejects_conflicting_function_call_arguments_payloads() {
                 "name": "read_file",
                 "status": "in_progress"
             })),
-            response_function_call_arguments_delta("call_conflict", "{\"path\":\"src/"),
-            response_function_call_arguments_delta("call_conflict", "main.rs\"}"),
-            response_function_call_arguments_done("call_conflict", "{\"path\":\"src/lib.rs\"}"),
+            response_function_call_arguments_delta("fallback_id", "{\"path\":\"src/"),
+            response_function_call_arguments_delta("fallback_id", "main.rs\"}"),
+            response_function_call_arguments_done("fallback_id", "{\"path\":\"src/lib.rs\"}"),
             response_completed(),
         ]),
     )])
@@ -605,7 +665,7 @@ async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggrega
             },
             {
                 "role": "assistant",
-                "content": [{"type": "input_text", "text": "working"}]
+                "content": [{"type": "output_text", "text": "working"}]
             }
         ])
     );
@@ -655,6 +715,105 @@ async fn codex_provider_flattens_openai_function_tool_definitions_for_live_backe
                 "name": "search",
                 "description": "Search docs",
                 "parameters": {"type": "object"}
+            }
+        ])
+    );
+}
+
+#[tokio::test]
+async fn codex_provider_omits_unsupported_service_tier_from_live_requests() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, requests) = start_live_codex_capture_server().await;
+    let provider = build_live_provider(auth_file, addr);
+
+    let response = provider
+        .chat_with_request(
+            vec![json!({"role": "user", "content": "hello"})],
+            vec![],
+            &request_descriptor(
+                [("service_tier".to_string(), json!("priority"))]
+                    .into_iter()
+                    .collect::<Map<String, Value>>(),
+            ),
+        )
+        .await
+        .expect("live SSE response");
+
+    assert_eq!(response.content.as_deref(), Some("streamed content"));
+
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 1);
+    let sent = captured.last().expect("captured request");
+    assert!(
+        sent.body.get("service_tier").is_none(),
+        "unexpected service_tier in request body: {}",
+        sent.body
+    );
+}
+
+#[tokio::test]
+async fn codex_provider_maps_assistant_tool_turns_to_function_call_items() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, requests) = start_live_codex_capture_server().await;
+    let provider = build_live_provider(auth_file, addr);
+
+    let response = provider
+        .chat_with_request(
+            vec![
+                json!({"role": "user", "content": "hello"}),
+                json!({
+                    "role": "assistant",
+                    "content": "planning",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "search",
+                            "arguments": "{\"q\":\"hello\"}"
+                        }
+                    }]
+                }),
+                json!({
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "name": "search",
+                    "content": "tool result"
+                }),
+            ],
+            vec![],
+            &request_descriptor(Map::new()),
+        )
+        .await
+        .expect("live SSE response");
+
+    assert_eq!(response.content.as_deref(), Some("streamed content"));
+
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 1);
+    let sent = captured.last().expect("captured request");
+    assert_eq!(
+        sent.body["input"],
+        json!([
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "planning"}]
+            },
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "search",
+                "arguments": "{\"q\":\"hello\"}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "tool result"
             }
         ])
     );
@@ -773,7 +932,7 @@ async fn codex_provider_normalizes_plain_text_response_and_sends_bearer_and_acco
             },
             {
                 "role": "assistant",
-                "content": [{"type": "input_text", "text": "working"}]
+                "content": [{"type": "output_text", "text": "working"}]
             }
         ])
     );
@@ -922,6 +1081,7 @@ fn codex_provider_rejects_missing_auth_file_and_ignores_openai_api_key() {
         let err = CodexProvider::from_config(CodexProviderConfig {
             auth_file: "/tmp/does-not-exist-codex-auth.json".to_string(),
             api_base: "https://chatgpt.com/backend-api".to_string(),
+            service_tier: None,
         })
         .expect_err("missing auth file should fail");
 
@@ -938,6 +1098,7 @@ fn codex_provider_rejects_malformed_json() {
         let err = CodexProvider::from_config(CodexProviderConfig {
             auth_file,
             api_base: "https://chatgpt.com/backend-api".to_string(),
+            service_tier: None,
         })
         .expect_err("malformed auth json should fail");
 
@@ -954,6 +1115,7 @@ fn codex_provider_rejects_unreadable_existing_auth_path() {
         let err = CodexProvider::from_config(CodexProviderConfig {
             auth_file: dir.path().display().to_string(),
             api_base: "https://chatgpt.com/backend-api".to_string(),
+            service_tier: None,
         })
         .expect_err("directory path should fail to read");
 
@@ -983,6 +1145,7 @@ fn codex_provider_expands_home_directory_in_auth_file_path() {
         let provider = CodexProvider::from_config(CodexProviderConfig {
             auth_file: "~/auth.json".to_string(),
             api_base: "https://chatgpt.com/backend-api".to_string(),
+            service_tier: None,
         })
         .expect("home directory auth path should load");
 
@@ -1011,6 +1174,7 @@ fn codex_provider_rejects_non_chatgpt_auth_mode_and_ignores_openai_api_key() {
         let err = CodexProvider::from_config(CodexProviderConfig {
             auth_file,
             api_base: "https://chatgpt.com/backend-api".to_string(),
+            service_tier: None,
         })
         .expect_err("invalid auth mode should fail");
 
@@ -1076,6 +1240,7 @@ fn codex_provider_rejects_missing_required_token_fields() {
         let err = CodexProvider::from_config(CodexProviderConfig {
             auth_file,
             api_base: "https://chatgpt.com/backend-api".to_string(),
+            service_tier: None,
         })
         .expect_err("missing token field should fail");
 
@@ -1146,6 +1311,7 @@ fn codex_provider_rejects_empty_required_token_fields() {
         let err = CodexProvider::from_config(CodexProviderConfig {
             auth_file,
             api_base: "https://chatgpt.com/backend-api".to_string(),
+            service_tier: None,
         })
         .expect_err("empty token field should fail");
 
@@ -1174,6 +1340,7 @@ fn codex_provider_loads_valid_auth_file() {
     let provider = CodexProvider::from_config(CodexProviderConfig {
         auth_file,
         api_base: "https://chatgpt.com/backend-api".to_string(),
+        service_tier: None,
     })
     .expect("valid auth file should load");
 
