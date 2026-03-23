@@ -610,11 +610,54 @@ async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggrega
         ])
     );
     assert_eq!(sent.body["tools"], json!(tools));
+    assert_eq!(sent.body["store"], json!(false));
 
     let response = result.expect("live SSE response");
     assert_eq!(response.content.as_deref(), Some("streamed content"));
     assert!(response.tool_calls.is_empty());
     assert_eq!(response.finish_reason, "stop");
+}
+
+#[tokio::test]
+async fn codex_provider_flattens_openai_function_tool_definitions_for_live_backend() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, requests) = start_live_codex_capture_server().await;
+    let provider = build_live_provider(auth_file, addr);
+    let tools = vec![json!({
+        "type": "function",
+        "function": {
+            "name": "search",
+            "description": "Search docs",
+            "parameters": {"type": "object"}
+        }
+    })];
+
+    let response = provider
+        .chat_with_request(
+            vec![json!({"role": "user", "content": "hello"})],
+            tools,
+            &request_descriptor(Map::new()),
+        )
+        .await
+        .expect("live SSE response");
+
+    assert_eq!(response.content.as_deref(), Some("streamed content"));
+
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 1);
+    let sent = captured.last().expect("captured request");
+    assert_eq!(
+        sent.body["tools"],
+        json!([
+            {
+                "type": "function",
+                "name": "search",
+                "description": "Search docs",
+                "parameters": {"type": "object"}
+            }
+        ])
+    );
 }
 
 #[tokio::test]

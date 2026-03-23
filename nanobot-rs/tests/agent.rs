@@ -1,15 +1,16 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode, Uri};
-use axum::routing::post;
+use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
+use axum::response::IntoResponse;
+use axum::routing::any;
 use axum::{Json, Router};
 use nanobot_rs::agent::{AgentLoop, SubagentManager};
 use nanobot_rs::bus::{InboundMessage, MessageBus};
@@ -17,7 +18,7 @@ use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig};
 use nanobot_rs::providers::{
     LlmProvider, LlmResponse, ProviderPool, ProviderRequestDescriptor, ToolCall,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify};
@@ -57,25 +58,29 @@ fn mock_provider(responses: Vec<LlmResponse>) -> Arc<dyn LlmProvider> {
 
 #[derive(Clone, Debug)]
 struct CapturedCodexRequest {
+    method: String,
     path: String,
     authorization: Option<String>,
     account_id: Option<String>,
+    accept: Option<String>,
     body: Value,
 }
 
 #[derive(Clone)]
 struct CodexCaptureState {
     requests: Arc<Mutex<Vec<CapturedCodexRequest>>>,
-    responses: Arc<Mutex<VecDeque<(StatusCode, Value)>>>,
+    responses: Arc<Mutex<VecDeque<(StatusCode, String)>>>,
 }
 
 async fn capture_codex_responses_request(
     State(state): State<CodexCaptureState>,
+    method: Method,
     headers: HeaderMap,
     uri: Uri,
     Json(payload): Json<Value>,
-) -> (StatusCode, Json<Value>) {
+) -> impl IntoResponse {
     state.requests.lock().await.push(CapturedCodexRequest {
+        method: method.as_str().to_string(),
         path: uri.path().to_string(),
         authorization: headers
             .get(axum::http::header::AUTHORIZATION)
@@ -83,6 +88,10 @@ async fn capture_codex_responses_request(
             .map(ToString::to_string),
         account_id: headers
             .get("ChatGPT-Account-Id")
+            .and_then(|value| value.to_str().ok())
+            .map(ToString::to_string),
+        accept: headers
+            .get(header::ACCEPT)
             .and_then(|value| value.to_str().ok())
             .map(ToString::to_string),
         body: payload,
@@ -94,17 +103,25 @@ async fn capture_codex_responses_request(
         .await
         .pop_front()
         .expect("unexpected extra codex request");
-    (status, Json(body))
+    (
+        status,
+        [
+            (header::CONTENT_TYPE, "text/event-stream"),
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::CONNECTION, "keep-alive"),
+        ],
+        body,
+    )
 }
 
 async fn start_codex_capture_server(
-    responses: Vec<(StatusCode, Value)>,
+    responses: Vec<(StatusCode, String)>,
 ) -> (SocketAddr, Arc<Mutex<Vec<CapturedCodexRequest>>>) {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let app = Router::new()
         .route(
-            "/backend-api/responses",
-            post(capture_codex_responses_request),
+            "/backend-api/codex/responses",
+            any(capture_codex_responses_request),
         )
         .with_state(CodexCaptureState {
             requests: requests.clone(),
@@ -116,6 +133,37 @@ async fn start_codex_capture_server(
         axum::serve(listener, app).await.expect("serve");
     });
     (addr, requests)
+}
+
+fn codex_sse_body(events: Vec<(&str, Value)>) -> String {
+    let mut lines = Vec::new();
+    for (event_name, payload) in events {
+        lines.push(format!("event: {event_name}"));
+        lines.push(format!("data: {}", payload));
+        lines.push(String::new());
+    }
+    lines.push("data: [DONE]".to_string());
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn response_output_item_done(item: Value) -> Value {
+    json!({
+        "type": "response.output_item.done",
+        "item": item,
+    })
+}
+
+fn response_function_call_arguments_done(item_id: &str, arguments: &str) -> Value {
+    json!({
+        "type": "response.function_call_arguments.done",
+        "item_id": item_id,
+        "arguments": arguments,
+    })
+}
+
+fn response_completed() -> Value {
+    json!({"type": "response.completed"})
 }
 
 fn codex_agent_config(
@@ -469,12 +517,14 @@ async fn agent_process_direct_returns_message_tool_reply() {
         .await
         .expect("process");
     assert_eq!(result, long_chinese);
-    assert!(tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        bus.consume_outbound()
-    )
-    .await
-    .is_err());
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            bus.consume_outbound()
+        )
+        .await
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -542,12 +592,14 @@ async fn agent_bus_mode_suppresses_duplicate_final_reply_after_message_tool() {
         }
     };
     assert_eq!(outbound.content, long_chinese);
-    assert!(tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        bus.consume_outbound()
-    )
-    .await
-    .is_err());
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            bus.consume_outbound()
+        )
+        .await
+        .is_err()
+    );
     agent.stop();
     runner.abort();
 }
@@ -730,22 +782,25 @@ async fn model_command_can_switch_a_session_to_a_codex_profile_and_use_the_codex
     fs::write(&auth_file, valid_codex_auth_json()).expect("write auth file");
     let (addr, requests) = start_codex_capture_server(vec![(
         StatusCode::OK,
-        json!({
-            "id": "resp_123",
-            "status": "completed",
-            "output": [{
-                "type": "message",
-                "role": "assistant",
-                "id": "msg_123",
-                "status": "completed",
-                "content": [
-                    {"type": "output_text", "text": "codex reply"}
-                ]
-            }]
-        }),
+        codex_sse_body(vec![
+            (
+                "response.output_text.delta",
+                json!({"type": "response.output_text.delta", "delta": "codex "}),
+            ),
+            (
+                "response.output_text.delta",
+                json!({"type": "response.output_text.delta", "delta": "reply"}),
+            ),
+            (
+                "response.output_text.done",
+                json!({"type": "response.output_text.done", "text": "codex reply"}),
+            ),
+            ("response.completed", response_completed()),
+        ]),
     )])
     .await;
-    let config = codex_agent_config(dir.path(), &auth_file, format!("http://{addr}/backend-api"));
+    let config =
+        codex_agent_config(dir.path(), &auth_file, format!("http://{addr}/backend-api/codex"));
     let provider: Arc<dyn LlmProvider> = Arc::new(ProviderPool::new(config.clone()));
     let bus = MessageBus::new(32);
     let agent = AgentLoop::from_config(bus, provider, config)
@@ -772,16 +827,24 @@ async fn model_command_can_switch_a_session_to_a_codex_profile_and_use_the_codex
 
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].path, "/backend-api/responses");
+    assert_eq!(requests[0].method, "POST");
+    assert_eq!(requests[0].path, "/backend-api/codex/responses");
     assert_eq!(
         requests[0].authorization.as_deref(),
         Some("Bearer access-token")
     );
     assert_eq!(requests[0].account_id.as_deref(), Some("account-id"));
+    assert!(
+        requests[0]
+            .accept
+            .as_deref()
+            .is_some_and(|value| value.contains("text/event-stream"))
+    );
     assert_eq!(
         requests[0].body.get("model").and_then(Value::as_str),
         Some("gpt-5.4")
     );
+    assert_eq!(requests[0].body.get("stream"), Some(&json!(true)));
 }
 
 #[tokio::test]
@@ -791,7 +854,7 @@ async fn codex_default_profile_fails_without_falling_back_to_openai() {
     let config = codex_agent_config(
         dir.path(),
         &missing_auth_file,
-        "https://chatgpt.com/backend-api".to_string(),
+        "https://chatgpt.com/backend-api/codex".to_string(),
     );
     let mut config = config;
     config.agents.defaults.default_profile = "codex:gpt-5.4".to_string();
@@ -808,6 +871,109 @@ async fn codex_default_profile_fails_without_falling_back_to_openai() {
         .expect_err("missing auth file should fail");
 
     assert!(err.to_string().contains("auth file"), "{err}");
+}
+
+#[tokio::test]
+async fn codex_profile_runs_a_tool_call_second_round_and_sends_tool_results_back() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = dir.path().join("codex-auth.json");
+    fs::write(&auth_file, valid_codex_auth_json()).expect("write auth file");
+    fs::write(dir.path().join("sample.txt"), "hello from workspace").expect("write sample");
+
+    let (addr, requests) = start_codex_capture_server(vec![
+        (
+            StatusCode::OK,
+            codex_sse_body(vec![
+                (
+                    "response.output_item.done",
+                    response_output_item_done(json!({
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "id": "call_1",
+                        "name": "list_dir",
+                        "status": "completed"
+                    })),
+                ),
+                (
+                    "response.function_call_arguments.done",
+                    response_function_call_arguments_done(
+                        "call_1",
+                        &json!({"path": dir.path().display().to_string()}).to_string(),
+                    ),
+                ),
+                ("response.completed", response_completed()),
+            ]),
+        ),
+        (
+            StatusCode::OK,
+            codex_sse_body(vec![
+                (
+                    "response.output_text.delta",
+                    json!({"type": "response.output_text.delta", "delta": "final codex "}),
+                ),
+                (
+                    "response.output_text.delta",
+                    json!({"type": "response.output_text.delta", "delta": "answer"}),
+                ),
+                (
+                    "response.output_text.done",
+                    json!({"type": "response.output_text.done", "text": "final codex answer"}),
+                ),
+                ("response.completed", response_completed()),
+            ]),
+        ),
+    ])
+    .await;
+
+    let config =
+        codex_agent_config(dir.path(), &auth_file, format!("http://{addr}/backend-api/codex"));
+    let provider: Arc<dyn LlmProvider> = Arc::new(ProviderPool::new(config.clone()));
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus, provider, config)
+        .await
+        .expect("agent");
+
+    let switched = agent
+        .process_direct("/model codex:gpt-5.4", "cli:codex-tool", "cli", "codex-tool")
+        .await
+        .expect("switch");
+    assert!(switched.contains("codex:gpt-5.4"), "{switched}");
+
+    let reply = agent
+        .process_direct("list the workspace", "cli:codex-tool", "cli", "codex-tool")
+        .await
+        .expect("reply");
+    assert_eq!(reply, "final codex answer");
+
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].path, "/backend-api/codex/responses");
+    assert_eq!(requests[1].path, "/backend-api/codex/responses");
+    assert_eq!(requests[1].body.get("model").and_then(Value::as_str), Some("gpt-5.4"));
+    assert!(
+        requests[1]
+            .accept
+            .as_deref()
+            .is_some_and(|value| value.contains("text/event-stream"))
+    );
+
+    let second_input = requests[1]
+        .body
+        .get("input")
+        .and_then(Value::as_array)
+        .expect("second request input");
+    let tool_message = second_input
+        .iter()
+        .find(|item| item.get("role").and_then(Value::as_str) == Some("tool"))
+        .expect("tool result message");
+    let tool_text = tool_message
+        .get("content")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("text"))
+        .and_then(Value::as_str)
+        .expect("tool result text");
+    assert!(tool_text.contains("sample.txt"), "{tool_text}");
 }
 
 #[tokio::test]

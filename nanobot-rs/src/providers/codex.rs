@@ -173,9 +173,13 @@ fn build_request_body(
         "input".to_string(),
         Value::Array(input_messages.into_iter().map(map_input_message).collect()),
     );
-    body.insert("tools".to_string(), Value::Array(tools));
+    body.insert(
+        "tools".to_string(),
+        Value::Array(tools.into_iter().map(normalize_tool_definition).collect()),
+    );
     body.insert("instructions".to_string(), Value::String(instructions));
     body.insert("stream".to_string(), Value::Bool(true));
+    body.insert("store".to_string(), Value::Bool(false));
     Value::Object(body)
 }
 
@@ -721,6 +725,30 @@ fn map_input_content_item(item: Value) -> Value {
         }
         other => json!({"type": "input_text", "text": other.to_string()}),
     }
+}
+
+fn normalize_tool_definition(tool: Value) -> Value {
+    let Value::Object(mut tool_map) = tool else {
+        return tool;
+    };
+
+    let Some(Value::Object(function_map)) = tool_map.remove("function") else {
+        return Value::Object(tool_map);
+    };
+
+    let mut normalized = Map::new();
+    if let Some(tool_type) = tool_map.remove("type") {
+        normalized.insert("type".to_string(), tool_type);
+    }
+    for field in ["name", "description", "parameters"] {
+        if let Some(value) = function_map.get(field) {
+            normalized.insert(field.to_string(), value.clone());
+        }
+    }
+    for (key, value) in tool_map {
+        normalized.insert(key, value);
+    }
+    Value::Object(normalized)
 }
 
 fn resolve_auth_path(raw_path: &str) -> Result<PathBuf> {
