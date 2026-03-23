@@ -16,6 +16,8 @@ use crate::providers::{
 #[derive(Debug, Clone)]
 enum CodexEvent {
     OutputItemDone(Value),
+    OutputTextDelta(String),
+    OutputTextDone(String),
     FunctionCallArgumentsDelta { item_id: String, delta: String },
     FunctionCallArgumentsDone { item_id: String, arguments: String },
     ResponseCompleted,
@@ -103,6 +105,7 @@ impl CodexProvider {
                 self.config.api_base.trim_end_matches('/')
             ))
             .bearer_auth(self.auth.tokens.access_token())
+            .header(reqwest::header::ACCEPT, "text/event-stream")
             .header("ChatGPT-Account-Id", self.auth.tokens.account_id())
             .json(body)
             .send()
@@ -163,14 +166,42 @@ fn build_request_body(
     tools: Vec<Value>,
     request: &ProviderRequestDescriptor,
 ) -> Value {
+    let (instructions, input_messages) = split_instructions_and_input(messages);
     let mut body = request.request_extras.clone();
     body.insert("model".to_string(), json!(request.model_name));
     body.insert(
         "input".to_string(),
-        Value::Array(messages.into_iter().map(map_input_message).collect()),
+        Value::Array(input_messages.into_iter().map(map_input_message).collect()),
     );
     body.insert("tools".to_string(), Value::Array(tools));
+    body.insert("instructions".to_string(), Value::String(instructions));
+    body.insert("stream".to_string(), Value::Bool(true));
     Value::Object(body)
+}
+
+fn split_instructions_and_input(messages: Vec<Value>) -> (String, Vec<Value>) {
+    let mut instructions = Vec::new();
+    let mut input_messages = Vec::new();
+
+    for message in messages {
+        if message.get("role").and_then(Value::as_str) == Some("system") {
+            let text = extract_message_texts(message.get("content")).join("\n");
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                instructions.push(trimmed.to_string());
+            }
+        } else {
+            input_messages.push(message);
+        }
+    }
+
+    let instructions = if instructions.is_empty() {
+        "You are Codex, a helpful AI assistant.".to_string()
+    } else {
+        instructions.join("\n\n")
+    };
+
+    (instructions, input_messages)
 }
 
 fn classify_http_error(status: reqwest::StatusCode, body: &str) -> ProviderError {
@@ -190,6 +221,9 @@ fn extract_error_message(body: &str) -> String {
         if let Some(message) = value.pointer("/error/message").and_then(Value::as_str) {
             return message.to_string();
         }
+        if let Some(message) = value.pointer("/detail").and_then(Value::as_str) {
+            return message.to_string();
+        }
         if let Some(message) = value.pointer("/message").and_then(Value::as_str) {
             return message.to_string();
         }
@@ -207,9 +241,65 @@ fn extract_error_message(body: &str) -> String {
 }
 
 fn parse_success_response(body: &str) -> Result<LlmResponse> {
-    let parsed: Value = serde_json::from_str(body)
-        .with_context(|| format!("invalid codex response JSON: {body}"))?;
-    parse_response_value(&parsed)
+    let trimmed = body.trim_start();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        let parsed: Value = serde_json::from_str(body)
+            .with_context(|| format!("invalid codex response JSON: {body}"))?;
+        parse_response_value(&parsed)
+    } else {
+        parse_sse_response(body)
+    }
+}
+
+fn parse_sse_response(body: &str) -> Result<LlmResponse> {
+    let mut events = Vec::new();
+    let mut event_name: Option<String> = None;
+    let mut data_lines = Vec::new();
+
+    for raw_line in body.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        if line.is_empty() {
+            flush_sse_event(&mut events, event_name.take(), &mut data_lines)?;
+            continue;
+        }
+        if line.starts_with(':') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("event:") {
+            event_name = Some(rest.trim_start().to_string());
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("data:") {
+            data_lines.push(rest.trim_start().to_string());
+        }
+    }
+
+    flush_sse_event(&mut events, event_name.take(), &mut data_lines)?;
+    aggregate_events(&events)
+}
+
+fn flush_sse_event(
+    events: &mut Vec<CodexEvent>,
+    event_name: Option<String>,
+    data_lines: &mut Vec<String>,
+) -> Result<()> {
+    if event_name.is_none() && data_lines.is_empty() {
+        return Ok(());
+    }
+
+    let data = data_lines.join("\n");
+    data_lines.clear();
+    let trimmed = data.trim();
+    if trimmed.is_empty() || trimmed == "[DONE]" {
+        return Ok(());
+    }
+
+    let payload: Value = serde_json::from_str(trimmed)
+        .with_context(|| format!("invalid codex SSE payload JSON: {trimmed}"))?;
+    if let Some(event) = parse_event_value(&payload, event_name.as_deref())? {
+        events.push(event);
+    }
+    Ok(())
 }
 
 fn parse_response_value(value: &Value) -> Result<LlmResponse> {
@@ -221,40 +311,11 @@ fn parse_response_value(value: &Value) -> Result<LlmResponse> {
     let mut events = Vec::new();
     let mut saw_response_completed = false;
     for item in output {
-        let Some(item_type) = item.get("type").and_then(Value::as_str) else {
-            continue;
-        };
-
-        match item_type {
-            "response.output_item.done" => {
-                let item = item.get("item").ok_or_else(|| {
-                    malformed_event_error("response.output_item.done missing item")
-                })?;
-                events.push(CodexEvent::OutputItemDone(item.clone()));
-            }
-            "response.function_call_arguments.delta" => {
-                events.push(CodexEvent::FunctionCallArgumentsDelta {
-                    item_id: required_string_field(item, "item_id")?,
-                    delta: required_string_field(item, "delta")?,
-                });
-            }
-            "response.function_call_arguments.done" => {
-                events.push(CodexEvent::FunctionCallArgumentsDone {
-                    item_id: required_string_field(item, "item_id")?,
-                    arguments: required_string_field(item, "arguments")?,
-                });
-            }
-            "response.completed" => {
+        if let Some(event) = parse_event_value(item, None)? {
+            if matches!(event, CodexEvent::ResponseCompleted) {
                 saw_response_completed = true;
-                events.push(CodexEvent::ResponseCompleted);
             }
-            "message" => {
-                events.push(CodexEvent::OutputItemDone(item.clone()));
-            }
-            "function_call" => {
-                events.push(CodexEvent::OutputItemDone(item.clone()));
-            }
-            _ => {}
+            events.push(event);
         }
     }
 
@@ -271,6 +332,8 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
     let mut extra = Map::new();
     let mut pending_calls: HashMap<String, PendingFunctionCall> = HashMap::new();
     let mut pending_order = Vec::new();
+    let mut streamed_text = String::new();
+    let mut saw_output_text_delta = false;
     let mut saw_response_completed = false;
 
     for event in events {
@@ -287,7 +350,9 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
                             continue;
                         }
                         merge_extra_fields(&mut extra, item, &["type", "role", "content"]);
-                        content_chunks.extend(extract_message_texts(item.get("content")));
+                        if !saw_output_text_delta {
+                            content_chunks.extend(extract_message_texts(item.get("content")));
+                        }
                     }
                     Some("function_call") => {
                         merge_extra_fields(
@@ -323,6 +388,25 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
                         }
                     }
                     _ => {}
+                }
+            }
+            CodexEvent::OutputTextDelta(delta) => {
+                if saw_response_completed {
+                    return Err(malformed_event_error(
+                        "event arrived after response.completed",
+                    ));
+                }
+                saw_output_text_delta = true;
+                streamed_text.push_str(delta);
+            }
+            CodexEvent::OutputTextDone(text) => {
+                if saw_response_completed {
+                    return Err(malformed_event_error(
+                        "event arrived after response.completed",
+                    ));
+                }
+                if !saw_output_text_delta && !text.is_empty() {
+                    streamed_text.push_str(text);
                 }
             }
             CodexEvent::FunctionCallArgumentsDelta { item_id, delta } => {
@@ -406,15 +490,19 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
     }
 
     if content_chunks.is_empty() && tool_calls.is_empty() {
-        return Err(malformed_event_error(
-            "assistant response did not contain text or tool calls",
-        ));
+        if streamed_text.is_empty() {
+            return Err(malformed_event_error(
+                "assistant response did not contain text or tool calls",
+            ));
+        }
     }
 
-    let content = if content_chunks.is_empty() {
+    let content = if content_chunks.is_empty() && streamed_text.is_empty() {
         None
     } else {
-        Some(content_chunks.join(""))
+        let mut content = content_chunks.join("");
+        content.push_str(&streamed_text);
+        Some(content)
     };
     let finish_reason = if tool_calls.is_empty() {
         "stop"
@@ -429,6 +517,55 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
         finish_reason,
         extra,
     })
+}
+
+fn parse_event_value(value: &Value, event_name: Option<&str>) -> Result<Option<CodexEvent>> {
+    let event_type = event_name.or_else(|| value.get("type").and_then(Value::as_str));
+    let Some(event_type) = event_type else {
+        return Ok(None);
+    };
+
+    let event = match event_type {
+        "response.output_item.done" => {
+            let item = value
+                .get("item")
+                .ok_or_else(|| malformed_event_error("response.output_item.done missing item"))?;
+            CodexEvent::OutputItemDone(item.clone())
+        }
+        "response.output_text.delta" => CodexEvent::OutputTextDelta(
+            value
+                .get("delta")
+                .and_then(Value::as_str)
+                .or_else(|| value.get("text").and_then(Value::as_str))
+                .ok_or_else(|| malformed_event_error("response.output_text.delta missing delta"))?
+                .to_string(),
+        ),
+        "response.output_text.done" => CodexEvent::OutputTextDone(
+            value
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        ),
+        "response.function_call_arguments.delta" => CodexEvent::FunctionCallArgumentsDelta {
+            item_id: required_string_field(value, "item_id")?,
+            delta: required_string_field(value, "delta")?,
+        },
+        "response.function_call_arguments.done" => CodexEvent::FunctionCallArgumentsDone {
+            item_id: required_string_field(value, "item_id")?,
+            arguments: required_string_field(value, "arguments")?,
+        },
+        "response.completed" => CodexEvent::ResponseCompleted,
+        "message" | "function_call" => CodexEvent::OutputItemDone(value.clone()),
+        "response.created"
+        | "response.in_progress"
+        | "response.output_item.added"
+        | "response.content_part.added"
+        | "response.content_part.done" => return Ok(None),
+        _ => return Ok(None),
+    };
+
+    Ok(Some(event))
 }
 
 #[derive(Debug, Clone)]

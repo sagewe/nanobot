@@ -94,6 +94,14 @@ fn build_provider(auth_file: String, addr: SocketAddr) -> CodexProvider {
     .expect("provider")
 }
 
+fn build_live_provider(auth_file: String, addr: SocketAddr) -> CodexProvider {
+    CodexProvider::from_config(CodexProviderConfig {
+        auth_file,
+        api_base: format!("http://{addr}/backend-api/codex"),
+    })
+    .expect("provider")
+}
+
 fn request_descriptor(extras: Map<String, Value>) -> ProviderRequestDescriptor {
     ProviderRequestDescriptor::new("codex", "gpt-5.4", extras)
 }
@@ -183,10 +191,22 @@ async fn start_codex_capture_server(
 
 fn mock_codex_sse_body() -> String {
     [
+        "event: response.created",
+        "data: {\"type\":\"response.created\"}",
+        "",
+        "event: response.in_progress",
+        "data: {\"type\":\"response.in_progress\"}",
+        "",
+        "event: response.output_text.delta",
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"streamed \"}",
         "",
+        "event: response.output_text.delta",
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"content\"}",
         "",
+        "event: response.output_text.done",
+        "data: {\"type\":\"response.output_text.done\",\"text\":\"streamed content\"}",
+        "",
+        "event: response.completed",
         "data: {\"type\":\"response.completed\"}",
         "",
         "data: [DONE]",
@@ -282,7 +302,10 @@ async fn start_live_codex_capture_server_with_response(
 ) {
     let requests = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let app = Router::new()
-        .route("/backend-api/{segment}", any(capture_codex_live_request))
+        .route(
+            "/backend-api/codex/responses",
+            any(capture_codex_live_request),
+        )
         .with_state(LiveCodexCaptureState {
             requests: requests.clone(),
             response_status,
@@ -525,7 +548,7 @@ async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggrega
     let dir = tempdir().expect("tempdir");
     let auth_file = write_auth_file(&dir, valid_auth_json());
     let (addr, requests) = start_live_codex_capture_server().await;
-    let provider = build_provider(auth_file, addr);
+    let provider = build_live_provider(auth_file, addr);
     let request = ProviderRequestDescriptor::new(
         "codex",
         "gpt-5.4",
@@ -533,11 +556,14 @@ async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggrega
             ("model".to_string(), json!("wrong-model")),
             ("input".to_string(), json!(["wrong-input"])),
             ("tools".to_string(), json!(["wrong-tool"])),
+            ("instructions".to_string(), json!("wrong-instructions")),
+            ("stream".to_string(), json!(false)),
         ]
         .into_iter()
         .collect::<Map<String, Value>>(),
     );
     let messages = vec![
+        json!({"role": "system", "content": "You are the Codex test system prompt."}),
         json!({"role": "user", "content": "hello"}),
         json!({"role": "assistant", "content": "working"}),
     ];
@@ -556,7 +582,7 @@ async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggrega
     assert_eq!(captured.len(), 1);
     let sent = captured.last().expect("captured request");
     assert_eq!(sent.method, "POST");
-    assert_eq!(sent.path, "/backend-api/codex");
+    assert_eq!(sent.path, "/backend-api/codex/responses");
     assert_eq!(sent.authorization.as_deref(), Some("Bearer access-token"));
     assert_eq!(sent.account_id.as_deref(), Some("account-id"));
     assert!(
@@ -565,6 +591,11 @@ async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggrega
             .is_some_and(|value| value.contains("text/event-stream"))
     );
     assert_eq!(sent.body["model"], json!("gpt-5.4"));
+    assert_eq!(sent.body["stream"], json!(true));
+    assert_eq!(
+        sent.body["instructions"],
+        json!("You are the Codex test system prompt.")
+    );
     assert_eq!(
         sent.body["input"],
         json!([
