@@ -76,6 +76,12 @@ pub struct CodexProviderConfig {
     pub auth_file: String,
     #[serde(default = "default_codex_api_base")]
     pub api_base: String,
+    #[serde(default = "default_codex_service_tier")]
+    pub service_tier: Option<String>,
+}
+
+fn default_codex_service_tier() -> Option<String> {
+    Some("fast".to_string())
 }
 
 impl Default for CodexProviderConfig {
@@ -83,6 +89,7 @@ impl Default for CodexProviderConfig {
         Self {
             auth_file: default_codex_auth_file(),
             api_base: default_codex_api_base(),
+            service_tier: default_codex_service_tier(),
         }
     }
 }
@@ -584,17 +591,39 @@ pub fn expand_tilde(path: &Path) -> PathBuf {
 }
 
 pub fn load_config(path: Option<&Path>) -> Result<Config> {
-    let config_path = Config::config_path(path);
+    let config_path = resolve_config_path(path);
     if !config_path.exists() {
         return Ok(Config::default());
     }
     let raw = std::fs::read_to_string(&config_path)
         .with_context(|| format!("failed to read config {}", config_path.display()))?;
-    let raw_config: RawConfig = serde_json::from_str(&raw)
-        .map_err(|err| anyhow!("failed to parse config {}: {err}", config_path.display()))?;
+    let raw_config: RawConfig = parse_config_str(&config_path, &raw)?;
     raw_config
         .into_config()
         .map_err(|err| anyhow!("failed to validate config {}: {err}", config_path.display()))
+}
+
+fn resolve_config_path(path: Option<&Path>) -> PathBuf {
+    if path.is_some() {
+        return Config::config_path(path);
+    }
+    let base = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".nanobot-rs");
+    let toml_path = base.join("config.toml");
+    if toml_path.exists() {
+        return toml_path;
+    }
+    base.join("config.json")
+}
+
+fn parse_config_str(path: &Path, raw: &str) -> Result<RawConfig> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("toml") => toml::from_str(raw)
+            .map_err(|err| anyhow!("failed to parse config {}: {err}", path.display())),
+        _ => serde_json::from_str(raw)
+            .map_err(|err| anyhow!("failed to parse config {}: {err}", path.display())),
+    }
 }
 
 pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
@@ -603,8 +632,12 @@ pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let json = serde_json::to_string_pretty(config)?;
-    std::fs::write(&config_path, json)
+    let content = match config_path.extension().and_then(|e| e.to_str()) {
+        Some("toml") => toml::to_string_pretty(config)
+            .map_err(|err| anyhow!("failed to serialize config: {err}"))?,
+        _ => serde_json::to_string_pretty(config)?,
+    };
+    std::fs::write(&config_path, content)
         .with_context(|| format!("failed to write config {}", config_path.display()))?;
     Ok(config_path)
 }

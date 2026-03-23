@@ -15,6 +15,7 @@ use crate::providers::{
 
 #[derive(Debug, Clone)]
 enum CodexEvent {
+    OutputItemAdded(Value),
     OutputItemDone(Value),
     OutputTextDelta(String),
     OutputTextDone(String),
@@ -25,6 +26,7 @@ enum CodexEvent {
 
 #[derive(Debug, Clone)]
 struct PendingFunctionCall {
+    id: String,
     name: String,
     collected_arguments: String,
     completed_arguments: Option<String>,
@@ -136,7 +138,11 @@ impl LlmProvider for CodexProvider {
         tools: Vec<Value>,
         request: &ProviderRequestDescriptor,
     ) -> Result<LlmResponse> {
-        let body = build_request_body(messages, tools, request);
+        let mut body = build_request_body(messages, tools, request);
+        if let (Some(tier), Value::Object(map)) = (&self.config.service_tier, &mut body) {
+            map.entry("service_tier".to_string())
+                .or_insert_with(|| json!(tier));
+        }
         let response = self.send_responses_request(&body).await?;
         let status = response.status();
         let text = response
@@ -171,7 +177,12 @@ fn build_request_body(
     body.insert("model".to_string(), json!(request.model_name));
     body.insert(
         "input".to_string(),
-        Value::Array(input_messages.into_iter().map(map_input_message).collect()),
+        Value::Array(
+            input_messages
+                .into_iter()
+                .flat_map(map_input_message)
+                .collect(),
+        ),
     );
     body.insert(
         "tools".to_string(),
@@ -328,7 +339,7 @@ fn parse_response_value(value: &Value) -> Result<LlmResponse> {
 
 fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
     let mut content_chunks = Vec::new();
-    let mut tool_calls = Vec::new();
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut extra = Map::new();
     let mut pending_calls: HashMap<String, PendingFunctionCall> = HashMap::new();
     let mut pending_order = Vec::new();
@@ -338,6 +349,36 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
 
     for event in events {
         match event {
+            CodexEvent::OutputItemAdded(item) => {
+                if saw_response_completed {
+                    return Err(malformed_event_error(
+                        "event arrived after response.completed",
+                    ));
+                }
+                if item.get("type").and_then(Value::as_str) == Some("function_call") {
+                    let function_call = parse_function_call_item(item)?;
+                    let item_id = function_call.item_id.clone();
+                    if tool_calls.iter().any(|call| call.id == function_call.id)
+                        || pending_calls.contains_key(&item_id)
+                    {
+                        return Err(malformed_event_error(format!(
+                            "duplicate function_call item for {}",
+                            function_call.id
+                        )));
+                    }
+                    pending_order.push(item_id.clone());
+                    pending_calls.insert(
+                        item_id,
+                        PendingFunctionCall {
+                            id: function_call.id,
+                            name: function_call.name,
+                            collected_arguments: String::new(),
+                            completed_arguments: function_call.arguments,
+                            saw_done: false,
+                        },
+                    );
+                }
+            }
             CodexEvent::OutputItemDone(item) => {
                 if saw_response_completed {
                     return Err(malformed_event_error(
@@ -361,7 +402,37 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
                             &["type", "call_id", "id", "name", "arguments"],
                         );
                         let function_call = parse_function_call_item(item)?;
-                        if let Some(arguments) = function_call.arguments {
+                        if let Some(pending) = pending_calls.get_mut(&function_call.item_id) {
+                            if pending.name != function_call.name {
+                                return Err(malformed_event_error(format!(
+                                    "function_call name changed for {}",
+                                    pending.id
+                                )));
+                            }
+                            if let Some(arguments) = function_call.arguments {
+                                if !pending.collected_arguments.trim().is_empty()
+                                    && !arguments_payloads_match(
+                                        &pending.collected_arguments,
+                                        &arguments,
+                                    )
+                                {
+                                    return Err(malformed_event_error(format!(
+                                        "function_call arguments for {} conflict with collected deltas",
+                                        pending.id
+                                    )));
+                                }
+                                if let Some(completed) = &pending.completed_arguments {
+                                    if !arguments_payloads_match(completed, &arguments) {
+                                        return Err(malformed_event_error(format!(
+                                            "function_call arguments for {} conflict with completed payload",
+                                            pending.id
+                                        )));
+                                    }
+                                }
+                                pending.completed_arguments = Some(arguments);
+                            }
+                            pending.saw_done = true;
+                        } else if let Some(arguments) = function_call.arguments {
                             let name = function_call.name;
                             tool_calls.push(ToolCall {
                                 id: function_call.id,
@@ -369,16 +440,18 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
                                 arguments: parse_arguments_value(&name, &arguments)?,
                             });
                         } else {
-                            let call_id = function_call.id.clone();
-                            if pending_calls.contains_key(&call_id) {
+                            let item_id = function_call.item_id.clone();
+                            if pending_calls.contains_key(&item_id) {
                                 return Err(malformed_event_error(format!(
-                                    "duplicate function_call item for {call_id}"
+                                    "duplicate function_call item for {}",
+                                    function_call.id
                                 )));
                             }
-                            pending_order.push(call_id.clone());
+                            pending_order.push(item_id.clone());
                             pending_calls.insert(
-                                call_id,
+                                item_id,
                                 PendingFunctionCall {
+                                    id: function_call.id,
                                     name: function_call.name,
                                     collected_arguments: String::new(),
                                     completed_arguments: None,
@@ -468,9 +541,9 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
         return Err(malformed_event_error("missing response.completed event"));
     }
 
-    for call_id in pending_order {
-        let pending = pending_calls.remove(&call_id).ok_or_else(|| {
-            malformed_event_error(format!("missing pending function call for {call_id}"))
+    for item_id in pending_order {
+        let pending = pending_calls.remove(&item_id).ok_or_else(|| {
+            malformed_event_error(format!("missing pending function call for {item_id}"))
         })?;
         let arguments = pending
             .completed_arguments
@@ -478,12 +551,13 @@ fn aggregate_events(events: &[CodexEvent]) -> Result<LlmResponse> {
             .unwrap_or(pending.collected_arguments);
         if arguments.trim().is_empty() {
             return Err(malformed_event_error(format!(
-                "function call {call_id} missing completed arguments"
+                "function call {} missing completed arguments",
+                pending.id
             )));
         }
         let name = pending.name;
         tool_calls.push(ToolCall {
-            id: call_id,
+            id: pending.id,
             name: name.clone(),
             arguments: parse_arguments_value(&name, &arguments)?,
         });
@@ -526,6 +600,12 @@ fn parse_event_value(value: &Value, event_name: Option<&str>) -> Result<Option<C
     };
 
     let event = match event_type {
+        "response.output_item.added" => {
+            let item = value
+                .get("item")
+                .ok_or_else(|| malformed_event_error("response.output_item.added missing item"))?;
+            CodexEvent::OutputItemAdded(item.clone())
+        }
         "response.output_item.done" => {
             let item = value
                 .get("item")
@@ -559,7 +639,6 @@ fn parse_event_value(value: &Value, event_name: Option<&str>) -> Result<Option<C
         "message" | "function_call" => CodexEvent::OutputItemDone(value.clone()),
         "response.created"
         | "response.in_progress"
-        | "response.output_item.added"
         | "response.content_part.added"
         | "response.content_part.done" => return Ok(None),
         _ => return Ok(None),
@@ -571,6 +650,7 @@ fn parse_event_value(value: &Value, event_name: Option<&str>) -> Result<Option<C
 #[derive(Debug, Clone)]
 struct ParsedFunctionCall {
     id: String,
+    item_id: String,
     name: String,
     arguments: Option<String>,
 }
@@ -581,6 +661,12 @@ fn parse_function_call_item(item: &Value) -> Result<ParsedFunctionCall> {
         .or_else(|| item.get("id"))
         .and_then(Value::as_str)
         .ok_or_else(|| malformed_event_error("function_call missing call_id"))?
+        .to_string();
+    let item_id = item
+        .get("id")
+        .or_else(|| item.get("call_id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| malformed_event_error("function_call missing id"))?
         .to_string();
     let name = item
         .get("name")
@@ -593,6 +679,7 @@ fn parse_function_call_item(item: &Value) -> Result<ParsedFunctionCall> {
     };
     Ok(ParsedFunctionCall {
         id,
+        item_id,
         name,
         arguments,
     })
@@ -678,7 +765,7 @@ fn extract_content_text(value: &Value) -> Option<String> {
         return Some(text.to_string());
     }
     if let Some(kind) = value.get("type").and_then(Value::as_str) {
-        if matches!(kind, "output_text" | "text") {
+        if matches!(kind, "input_text" | "output_text" | "text") {
             if let Some(text) = value.get("text").and_then(Value::as_str) {
                 return Some(text.to_string());
             }
@@ -690,40 +777,127 @@ fn extract_content_text(value: &Value) -> Option<String> {
     }
 }
 
-fn map_input_message(message: Value) -> Value {
+fn map_input_message(message: Value) -> Vec<Value> {
     let role = message
         .get("role")
         .and_then(Value::as_str)
         .unwrap_or("user")
         .to_string();
-    let content = map_input_content(message.get("content").cloned().unwrap_or(Value::Null));
-    json!({
-        "role": role,
-        "content": content,
-    })
-}
-
-fn map_input_content(content: Value) -> Vec<Value> {
-    match content {
-        Value::Null => Vec::new(),
-        Value::String(text) => vec![json!({"type": "input_text", "text": text})],
-        Value::Array(items) => items.into_iter().map(map_input_content_item).collect(),
-        other => vec![json!({"type": "input_text", "text": other.to_string()})],
+    match role.as_str() {
+        "assistant" => map_assistant_message(message),
+        "tool" => map_tool_output_message(message).into_iter().collect(),
+        _ => vec![json!({
+            "role": role,
+            "content": map_input_content(
+                message.get("content").cloned().unwrap_or(Value::Null),
+                "input_text",
+            ),
+        })],
     }
 }
 
-fn map_input_content_item(item: Value) -> Value {
+fn map_assistant_message(message: Value) -> Vec<Value> {
+    let mut mapped = Vec::new();
+    let content = map_input_content(
+        message.get("content").cloned().unwrap_or(Value::Null),
+        "output_text",
+    );
+    if !content.is_empty() {
+        mapped.push(json!({
+            "role": "assistant",
+            "content": content,
+        }));
+    }
+
+    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        mapped.extend(tool_calls.iter().filter_map(map_function_call_item));
+    }
+
+    mapped
+}
+
+fn map_tool_output_message(message: Value) -> Option<Value> {
+    let call_id = message.get("tool_call_id").and_then(Value::as_str)?;
+    let output = extract_message_texts(message.get("content")).join("\n");
+    Some(json!({
+        "type": "function_call_output",
+        "call_id": call_id,
+        "output": output,
+    }))
+}
+
+fn map_function_call_item(tool_call: &Value) -> Option<Value> {
+    let call_id = tool_call
+        .get("id")
+        .or_else(|| tool_call.get("call_id"))
+        .and_then(Value::as_str)?;
+    let function = tool_call
+        .get("function")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let name = function
+        .get("name")
+        .or_else(|| tool_call.get("name"))
+        .and_then(Value::as_str)?;
+    let arguments = function
+        .get("arguments")
+        .or_else(|| tool_call.get("arguments"))
+        .map(stringify_function_arguments)?;
+    Some(json!({
+        "type": "function_call",
+        "call_id": call_id,
+        "name": name,
+        "arguments": arguments,
+    }))
+}
+
+fn stringify_function_arguments(arguments: &Value) -> Option<String> {
+    match arguments {
+        Value::String(text) => Some(text.clone()),
+        Value::Null => Some("{}".to_string()),
+        other => serde_json::to_string(other).ok(),
+    }
+}
+
+fn map_input_content(content: Value, text_type: &str) -> Vec<Value> {
+    match content {
+        Value::Null => Vec::new(),
+        Value::String(text) => vec![json!({"type": text_type, "text": text})],
+        Value::Array(items) => items
+            .into_iter()
+            .map(|item| map_input_content_item(item, text_type))
+            .collect(),
+        other => vec![json!({"type": text_type, "text": other.to_string()})],
+    }
+}
+
+fn map_input_content_item(item: Value, text_type: &str) -> Value {
     match item {
-        Value::String(text) => json!({"type": "input_text", "text": text}),
-        Value::Object(map) if map.get("type").is_some() => Value::Object(map),
-        Value::Object(map) => {
+        Value::String(text) => json!({"type": text_type, "text": text}),
+        Value::Object(map) if map.get("type").is_some() => {
             if let Some(text) = map.get("text").and_then(Value::as_str) {
-                json!({"type": "input_text", "text": text})
+                if map
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|kind| matches!(kind, "input_text" | "output_text" | "text"))
+                {
+                    json!({"type": text_type, "text": text})
+                } else {
+                    Value::Object(map)
+                }
             } else {
-                json!({"type": "input_text", "text": Value::Object(map).to_string()})
+                Value::Object(map)
             }
         }
-        other => json!({"type": "input_text", "text": other.to_string()}),
+        Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                json!({"type": text_type, "text": text})
+            } else {
+                json!({"type": text_type, "text": Value::Object(map).to_string()})
+            }
+        }
+        other => json!({"type": text_type, "text": other.to_string()}),
     }
 }
 
