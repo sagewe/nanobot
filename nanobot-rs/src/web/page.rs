@@ -46,42 +46,11 @@ pub fn render_index_html() -> String {
         flex: 1;
         min-height: 0;
         display: flex;
-        flex-direction: column;
+        flex-direction: row;
         width: 100%;
-        padding: 0.75rem 1.25rem;
-        gap: 0.75rem;
-      }
-
-      .topbar {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        flex-shrink: 0;
-      }
-
-      .topbar h1 {
-        margin: 0;
-        font-size: 1.05rem;
-        font-weight: 700;
-        line-height: 1;
-      }
-
-      .topbar .eyebrow {
-        color: var(--accent);
-        text-transform: uppercase;
-        letter-spacing: 0.15em;
-        font-size: 0.72rem;
-        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-      }
-
-      .topbar-sep {
-        width: 1px;
-        height: 1rem;
-        background: var(--line);
       }
 
       #theme-toggle {
-        margin-left: auto;
         border: 1px solid var(--line);
         border-radius: 0.5rem;
         width: 2rem;
@@ -100,18 +69,36 @@ pub fn render_index_html() -> String {
         border-color: var(--accent);
       }
 
+      #lang-toggle {
+        border: 1px solid var(--line);
+        border-radius: 0.5rem;
+        width: 2rem;
+        height: 2rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted2);
+        background: transparent;
+        cursor: pointer;
+        font-size: 0.78rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-weight: 600;
+        transition: color 0.15s, border-color 0.15s;
+      }
+
+      #lang-toggle:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+
       .shell {
         flex: 1;
         min-height: 0;
-        display: grid;
-        gap: 0;
-        grid-template-columns: auto minmax(0, 1fr);
-        border: 1px solid var(--line);
-        border-radius: 1rem;
+        display: flex;
         background: var(--panel);
-        backdrop-filter: blur(12px);
-        box-shadow: var(--shadow);
         overflow: hidden;
+        padding: 0.75rem 1.25rem;
+        gap: 0.75rem;
       }
 
       .session-rail {
@@ -120,9 +107,12 @@ pub fn render_index_html() -> String {
         min-height: 0;
         overflow: hidden;
         border-right: 1px solid var(--line);
+        box-shadow: 2px 0 8px rgba(44, 44, 44, 0.08);
+        background: var(--sidebar-bg);
         width: 15rem;
         flex-shrink: 0;
         transition: width 0.2s ease;
+        z-index: 1;
       }
 
       .session-rail[data-collapsed="true"] {
@@ -135,6 +125,24 @@ pub fn render_index_html() -> String {
 
       .session-rail[data-collapsed="true"] .tab-label {
         display: none;
+      }
+
+      .session-rail[data-collapsed="true"] .sidebar-title {
+        display: none;
+      }
+
+      .sidebar-footer {
+        margin-top: auto;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.65rem 0.4rem;
+        border-top: 1px solid var(--line);
+        flex-shrink: 0;
+      }
+
+      .session-rail[data-collapsed="true"] .sidebar-footer {
+        flex-direction: column;
       }
 
       .session-rail[data-collapsed="true"] .tab-bar {
@@ -239,9 +247,19 @@ pub fn render_index_html() -> String {
         font-weight: 600;
       }
 
+      .sidebar-title {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 700;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+
       .tab-bar-header {
         display: flex;
-        justify-content: flex-end;
+        align-items: center;
+        justify-content: space-between;
         padding-bottom: 0.4rem;
         border-bottom: 1px solid var(--line);
         margin-bottom: 0.2rem;
@@ -636,22 +654,27 @@ pub fn render_index_html() -> String {
       }
 
       #composer {
-        display: grid;
-        gap: 0.8rem;
+        margin-top: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
       }
 
       .composer-actions {
         display: flex;
         align-items: center;
-        gap: 0.6rem;
+        gap: 0.4rem;
+        justify-content: flex-end;
       }
 
       #message-input {
-        min-height: 8rem;
+        display: block;
+        width: 100%;
+        min-height: 4.5rem;
         resize: vertical;
         border: 1px solid var(--line);
         border-radius: 0.5rem;
-        padding: 0.75rem 1rem;
+        padding: 0.65rem 1rem;
         font: inherit;
         color: var(--ink);
         background: var(--input-bg);
@@ -666,25 +689,6 @@ pub fn render_index_html() -> String {
         outline-offset: -1px;
       }
 
-      #new-chat-button {
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        width: 2.4rem;
-        height: 2.4rem;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--muted2);
-        background: var(--input-bg);
-        cursor: pointer;
-        flex-shrink: 0;
-        transition: color 0.15s, border-color 0.15s;
-      }
-
-      #new-chat-button:hover {
-        color: var(--accent);
-        border-color: var(--accent);
-      }
 
       #duplicate-session-button {
         border: 1px solid var(--line);
@@ -704,11 +708,10 @@ pub fn render_index_html() -> String {
       }
 
       #send-button {
-        margin-left: auto;
         border: 0;
         border-radius: 999px;
-        width: 2.4rem;
-        height: 2.4rem;
+        width: 2rem;
+        height: 2rem;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -720,7 +723,6 @@ pub fn render_index_html() -> String {
       }
 
       #send-button[disabled],
-      #new-chat-button[disabled],
       #duplicate-session-button[disabled],
       #message-input[disabled] {
         opacity: 0.5;
@@ -847,81 +849,237 @@ pub fn render_index_html() -> String {
   </head>
   <body>
     <main id="app">
-      <header class="topbar">
-        <h1>Pikachu</h1>
-        <div class="topbar-sep"></div>
-        <div class="eyebrow">control room</div>
-        <button id="theme-toggle" title="Toggle theme">
-          <svg id="theme-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-        </button>
-      </header>
-      <section class="shell">
-        <aside class="session-rail">
+      <aside class="session-rail">
           <div class="tab-bar" role="tablist">
             <div class="tab-bar-header">
-              <button id="sidebar-toggle" title="Toggle sidebar">
+              <h1 class="sidebar-title" data-i18n="app_name">Pikachu</h1>
+              <button id="sidebar-toggle" data-i18n-title="toggle_sidebar" title="Toggle sidebar">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
               </button>
             </div>
             <button class="tab-btn" data-tab="chat" data-active="true" role="tab">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span class="tab-label">Chat</span>
+              <span class="tab-label" data-i18n="tab_chat">Chat</span>
             </button>
             <button class="tab-btn" data-tab="channels" role="tab">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-              <span class="tab-label">Channels</span>
+              <span class="tab-label" data-i18n="tab_channels">Channels</span>
             </button>
           </div>
+          <div class="sidebar-footer">
+            <button id="theme-toggle" data-i18n-title="toggle_theme" title="Toggle theme">
+              <svg id="theme-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            </button>
+            <button id="lang-toggle">EN</button>
+          </div>
         </aside>
+        <section class="shell">
         <section class="channels-pane" hidden>
           <section id="weixin-account-panel" class="account-panel">
             <div class="account-panel-header">
-              <div class="session-kicker">Weixin</div>
+              <div class="session-kicker" data-i18n="weixin">Weixin</div>
               <div class="account-actions">
-                <button id="weixin-login-button" type="button" title="Login to Weixin">
+                <button id="weixin-login-button" type="button" data-i18n-title="login_to_weixin" title="Login to Weixin">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
                 </button>
-                <button id="weixin-logout-button" type="button" title="Logout">
+                <button id="weixin-logout-button" type="button" data-i18n-title="logout" title="Logout">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                 </button>
               </div>
             </div>
             <div class="account-panel-info">
               <div class="account-status">
-                <strong id="weixin-status-label">Checking account…</strong>
-                <span id="weixin-user-label">Login from the embedded console.</span>
+                <strong id="weixin-status-label" data-i18n="checking_account">Checking account…</strong>
+                <span id="weixin-user-label" data-i18n="login_from_console">Login from the embedded console.</span>
               </div>
             </div>
             <div id="weixin-qr-panel" hidden>
-              <img id="weixin-qr-image" alt="Weixin login QR code" />
-              <div id="weixin-qr-note" class="account-muted">Scan in Weixin to confirm login.</div>
+              <img id="weixin-qr-image" data-i18n-alt="weixin_qr_alt" alt="Weixin login QR code" />
+              <div id="weixin-qr-note" class="account-muted" data-i18n="scan_to_confirm">Scan in Weixin to confirm login.</div>
             </div>
           </section>
         </section>
         <section class="conversation-pane">
           <div class="session-header">
-            <select id="session-select" aria-label="Select session"></select>
-            <select id="profile-select" aria-label="Select model"></select>
+            <select id="session-select" data-i18n-aria-label="select_session" aria-label="Select session"></select>
+            <select id="profile-select" data-i18n-aria-label="select_model" aria-label="Select model"></select>
           </div>
           <section id="transcript" aria-live="polite"></section>
           <div id="status" role="status"></div>
           <form id="composer">
-            <textarea id="message-input" placeholder="Ask Pikachu to inspect, edit, or research. (Enter to send, Ctrl+Enter for newline)"></textarea>
+            <textarea id="message-input" data-i18n-placeholder="input_placeholder" placeholder="Ask Pikachu to inspect, edit, or research. (Enter to send, Ctrl+Enter for newline)"></textarea>
             <div class="composer-actions">
-              <button id="send-button" type="submit" title="Send (Enter)">
+              <button id="duplicate-session-button" type="button" data-i18n="duplicate_to_web" hidden>Duplicate to Web</button>
+              <button id="send-button" type="submit" data-i18n-title="send_button" title="Send (Enter)">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               </button>
-              <button id="new-chat-button" type="button" title="New chat">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              </button>
-              <button id="duplicate-session-button" type="button" hidden>Duplicate to Web</button>
             </div>
           </form>
         </section>
       </section>
     </main>
     <script>
-      const INITIAL_ASSISTANT_MESSAGE = "Web UI ready. Ask Pikachu to inspect the workspace, edit files, or research something.";
+      const TRANSLATIONS = {
+        en: {
+          app_name: "Pikachu",
+          page_title: "Pikachu control room",
+          control_room: "control room",
+          toggle_theme: "Toggle theme",
+          toggle_sidebar: "Toggle sidebar",
+          tab_chat: "Chat",
+          tab_channels: "Channels",
+          weixin: "Weixin",
+          login_to_weixin: "Login to Weixin",
+          logout: "Logout",
+          checking_account: "Checking account\u2026",
+          login_from_console: "Login from the embedded console.",
+          weixin_disabled: "Weixin channel disabled",
+          enable_weixin: "Enable channels.weixin to use QR login.",
+          connected: "Connected",
+          login_expired: "Login expired",
+          not_connected: "Not connected",
+          waiting_for_scan: "Waiting for scan",
+          scan_qr_weixin: "Scan the QR code in Weixin.",
+          qr_scanned: "QR scanned",
+          confirm_login_weixin: "Confirm login in Weixin.",
+          refresh_qr: "Refresh the QR code to try again.",
+          weixin_qr_alt: "Weixin login QR code",
+          scan_to_confirm: "Scan in Weixin to confirm login.",
+          select_session: "Select session",
+          select_model: "Select model",
+          input_placeholder: "Ask Pikachu to inspect, edit, or research. (Enter to send, Ctrl+Enter for newline)",
+          send_button: "Send (Enter)",
+          new_chat: "New chat",
+          duplicate_to_web: "Duplicate to Web",
+          initial_message: "Web UI ready. Ask Pikachu to inspect the workspace, edit files, or research something.",
+          sender_you: "You",
+          sender_tool: "Tool",
+          sender_pikachu: "Pikachu",
+          copy: "Copy",
+          tool_output: "Tool output",
+          starting_session: "Starting a new session...",
+          session_started: "New session started.",
+          failed_create_session: "Failed to create session",
+          duplicating_session: "Duplicating session to Web...",
+          session_duplicated: "Session duplicated to Web.",
+          failed_duplicate_session: "Failed to duplicate session",
+          starting_weixin_login: "Starting Weixin login...",
+          scan_weixin_qr_continue: "Scan the Weixin QR code to continue.",
+          failed_start_weixin: "Failed to start Weixin login",
+          disconnecting_weixin: "Disconnecting Weixin...",
+          weixin_disconnected: "Weixin disconnected.",
+          failed_logout_weixin: "Failed to logout Weixin",
+          enter_message: "Enter a message before sending.",
+          readonly_session: "This session is read-only. Duplicate it to Web to continue.",
+          pikachu_working: "Pikachu is working...",
+          failed_load_sessions: "Failed to load sessions",
+          failed_load_session: "Failed to load session",
+          failed_load_weixin_account: "Failed to load Weixin account",
+          failed_poll_weixin: "Failed to poll Weixin login",
+          request_failed: "Request failed",
+          switch_light: "Switch to light mode",
+          switch_dark: "Switch to dark mode",
+          lang_toggle_label: "中",
+        },
+        zh: {
+          app_name: "皮卡丘",
+          page_title: "皮卡丘控制台",
+          control_room: "控制台",
+          toggle_theme: "切换主题",
+          toggle_sidebar: "切换侧栏",
+          tab_chat: "对话",
+          tab_channels: "频道",
+          weixin: "微信",
+          login_to_weixin: "登录微信",
+          logout: "退出",
+          checking_account: "账号检测中…",
+          login_from_console: "请从嵌入控制台登录。",
+          weixin_disabled: "微信频道未启用",
+          enable_weixin: "启用 channels.weixin 以使用二维码登录。",
+          connected: "已连接",
+          login_expired: "登录已过期",
+          not_connected: "未连接",
+          waiting_for_scan: "等待扫码",
+          scan_qr_weixin: "请在微信中扫描二维码。",
+          qr_scanned: "已扫码",
+          confirm_login_weixin: "请在微信中确认登录。",
+          refresh_qr: "请刷新二维码重试。",
+          weixin_qr_alt: "微信登录二维码",
+          scan_to_confirm: "在微信中扫描以确认登录。",
+          select_session: "选择会话",
+          select_model: "选择模型",
+          input_placeholder: "让皮卡丘检查、编辑或研究。（Enter 发送，Ctrl+Enter 换行）",
+          send_button: "发送 (Enter)",
+          new_chat: "新对话",
+          duplicate_to_web: "复制到 Web",
+          initial_message: "Web UI 已就绪。让皮卡丘检查工作区、编辑文件或研究内容。",
+          sender_you: "你",
+          sender_tool: "工具",
+          sender_pikachu: "皮卡丘",
+          copy: "复制",
+          tool_output: "工具输出",
+          starting_session: "正在开始新会话...",
+          session_started: "新会话已开始。",
+          failed_create_session: "创建会话失败",
+          duplicating_session: "正在复制会话到 Web...",
+          session_duplicated: "会话已复制到 Web。",
+          failed_duplicate_session: "复制会话失败",
+          starting_weixin_login: "正在启动微信登录...",
+          scan_weixin_qr_continue: "扫描微信二维码以继续。",
+          failed_start_weixin: "启动微信登录失败",
+          disconnecting_weixin: "正在断开微信...",
+          weixin_disconnected: "微信已断开。",
+          failed_logout_weixin: "退出微信失败",
+          enter_message: "请先输入消息。",
+          readonly_session: "此会话为只读。请复制到 Web 以继续。",
+          pikachu_working: "皮卡丘正在处理...",
+          failed_load_sessions: "加载会话列表失败",
+          failed_load_session: "加载会话失败",
+          failed_load_weixin_account: "加载微信账号失败",
+          failed_poll_weixin: "轮询微信登录失败",
+          request_failed: "请求失败",
+          switch_light: "切换至浅色模式",
+          switch_dark: "切换至深色模式",
+          lang_toggle_label: "E",
+        },
+      };
+
+      const LANG_KEY = "pikachu.lang";
+      let currentLang = localStorage.getItem(LANG_KEY) ||
+        (navigator.language && navigator.language.startsWith("zh") ? "zh" : "en");
+
+      function t(key) {
+        return (TRANSLATIONS[currentLang] || TRANSLATIONS.en)[key] || key;
+      }
+
+      function tToolCount(count) {
+        if (currentLang === "zh") return `工具 ${count} 个\u00a0`;
+        return `${count} tool${count > 1 ? "s" : ""}\u00a0`;
+      }
+
+      function applyI18n() {
+        document.documentElement.lang = currentLang;
+        document.title = t("page_title");
+        document.querySelectorAll("[data-i18n]").forEach((el) => {
+          el.textContent = t(el.dataset.i18n);
+        });
+        document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+          el.title = t(el.dataset.i18nTitle);
+        });
+        document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+          el.placeholder = t(el.dataset.i18nPlaceholder);
+        });
+        document.querySelectorAll("[data-i18n-aria-label]").forEach((el) => {
+          el.setAttribute("aria-label", t(el.dataset.i18nAriaLabel));
+        });
+        document.querySelectorAll("[data-i18n-alt]").forEach((el) => {
+          el.alt = t(el.dataset.i18nAlt);
+        });
+        const langToggle = document.getElementById("lang-toggle");
+        if (langToggle) langToggle.textContent = t("lang_toggle_label");
+      }
+
+      applyI18n();
       const SESSION_KEY = "pikachu.sessionId";
       const SELECTED_CHANNEL_KEY = "pikachu.selectedChannel";
       const SELECTED_SESSION_KEY = "pikachu.selectedSessionId";
@@ -930,7 +1088,6 @@ pub fn render_index_html() -> String {
       const sessionSelect = document.getElementById("session-select");
       const messageInput = document.getElementById("message-input");
       const sendButton = document.getElementById("send-button");
-      const newChatButton = document.getElementById("new-chat-button");
       const duplicateButton = document.getElementById("duplicate-session-button");
       const statusNode = document.getElementById("status");
       const profileSelect = document.getElementById("profile-select");
@@ -988,11 +1145,11 @@ pub fn render_index_html() -> String {
         const sender = document.createElement("span");
         sender.className = "msg-sender";
         if (role === "user") {
-          sender.textContent = "You";
+          sender.textContent = t("sender_you");
         } else if (role === "tool") {
-          sender.textContent = "Tool";
+          sender.textContent = t("sender_tool");
         } else {
-          sender.textContent = "Pikachu";
+          sender.textContent = t("sender_pikachu");
         }
 
         const time = document.createElement("span");
@@ -1012,7 +1169,7 @@ pub fn render_index_html() -> String {
         if (role === "assistant") {
           const copyBtn = document.createElement("button");
           copyBtn.className = "msg-copy";
-          copyBtn.title = "Copy";
+          copyBtn.title = t("copy");
           copyBtn.innerHTML = COPY_SVG;
           copyBtn.addEventListener("click", () => {
             navigator.clipboard.writeText(bubble.innerText || "").then(() => {
@@ -1045,7 +1202,7 @@ pub fn render_index_html() -> String {
             const summary = document.createElement("div");
             summary.className = "msg-tool-summary";
             const count = message.toolCalls.length;
-            const label = document.createTextNode(`${count} tool${count > 1 ? "s" : ""}\u00a0`);
+            const label = document.createTextNode(tToolCount(count));
             summary.appendChild(label);
             for (const tc of message.toolCalls) {
               const badge = document.createElement("span");
@@ -1073,7 +1230,7 @@ pub fn render_index_html() -> String {
           const { group, bubble } = makeMsgGroup("tool", { timestamp: ts });
           const header = document.createElement("div");
           header.className = "msg-tool-output-header";
-          const headerText = document.createTextNode("Tool output\u00a0");
+          const headerText = document.createTextNode(t("tool_output") + "\u00a0");
           header.appendChild(headerText);
           if (message.toolName) {
             const badge = document.createElement("span");
@@ -1152,14 +1309,14 @@ pub fn render_index_html() -> String {
       function setBusy(busy) {
         isBusy = busy;
         sendButton.disabled = busy || currentSessionReadOnly;
-        newChatButton.disabled = busy;
+        sessionSelect.disabled = busy;
         duplicateButton.disabled = busy;
       }
 
       function renderTranscript(messages, activeProfile) {
         transcript.innerHTML = "";
         if (!messages.length) {
-          appendAssistantMessage(INITIAL_ASSISTANT_MESSAGE);
+          appendAssistantMessage(t("initial_message"));
           return;
         }
         for (const message of messages || []) {
@@ -1172,7 +1329,7 @@ pub fn render_index_html() -> String {
         const activeProfile = detail.activeProfile || "";
         const messages = detail.messages || [];
         if (!messages.length) {
-          appendAssistantMessage(INITIAL_ASSISTANT_MESSAGE);
+          appendAssistantMessage(t("initial_message"));
           return;
         }
         for (const message of messages) {
@@ -1206,6 +1363,10 @@ pub fn render_index_html() -> String {
       function renderSessionSelect(groups) {
         const prev = sessionSelect.value;
         sessionSelect.innerHTML = "";
+        const newOpt = document.createElement("option");
+        newOpt.value = "__new__";
+        newOpt.textContent = t("new_chat");
+        sessionSelect.appendChild(newOpt);
         for (const group of groups) {
           const optgroup = document.createElement("optgroup");
           optgroup.label = group.channel;
@@ -1306,14 +1467,14 @@ pub fn render_index_html() -> String {
         const enabled = account?.enabled === true;
         const loggedIn = account?.loggedIn === true;
         const expired = account?.expired === true;
-        const userId = account?.userId || account?.botId || "Login from the embedded console.";
+        const userId = account?.userId || account?.botId || t("login_from_console");
         weixinLoginButton.disabled = !enabled || loggedIn;
         weixinLogoutButton.disabled = !enabled || !loggedIn;
 
         if (!enabled) {
           clearWeixinPollTimer();
-          weixinStatusLabel.textContent = "Weixin channel disabled";
-          weixinUserLabel.textContent = "Enable channels.weixin to use QR login.";
+          weixinStatusLabel.textContent = t("weixin_disabled");
+          weixinUserLabel.textContent = t("enable_weixin");
           weixinQrPanel.hidden = true;
           weixinQrImage.src = "";
           return;
@@ -1321,7 +1482,7 @@ pub fn render_index_html() -> String {
 
         if (loggedIn && !expired) {
           clearWeixinPollTimer();
-          weixinStatusLabel.textContent = "Connected";
+          weixinStatusLabel.textContent = t("connected");
           weixinUserLabel.textContent = userId;
           weixinQrPanel.hidden = true;
           weixinQrImage.src = "";
@@ -1330,7 +1491,7 @@ pub fn render_index_html() -> String {
 
         if (expired) {
           clearWeixinPollTimer();
-          weixinStatusLabel.textContent = "Login expired";
+          weixinStatusLabel.textContent = t("login_expired");
           weixinUserLabel.textContent = userId;
           weixinQrPanel.hidden = true;
           weixinQrImage.src = "";
@@ -1339,7 +1500,7 @@ pub fn render_index_html() -> String {
 
         weixinQrPanel.hidden = true;
         weixinQrImage.src = "";
-        weixinStatusLabel.textContent = "Not connected";
+        weixinStatusLabel.textContent = t("not_connected");
         weixinUserLabel.textContent = userId;
       }
 
@@ -1347,7 +1508,7 @@ pub fn render_index_html() -> String {
         const response = await fetch("/api/sessions");
         const payload = await response.json();
         if (!response.ok) {
-          throw new Error(payload.error || "Failed to load sessions");
+          throw new Error(payload.error || t("failed_load_sessions"));
         }
         return payload.groups || [];
       }
@@ -1356,7 +1517,7 @@ pub fn render_index_html() -> String {
         const response = await fetch(`/api/sessions/${channel}/${sessionId}`);
         const detail = await response.json();
         if (!response.ok) {
-          throw new Error(detail.error || "Failed to load session");
+          throw new Error(detail.error || t("failed_load_session"));
         }
         detail.channel = detail.channel || channel;
         detail.sessionId = detail.sessionId || sessionId;
@@ -1369,7 +1530,7 @@ pub fn render_index_html() -> String {
         });
         const payload = await response.json();
         if (!response.ok) {
-          throw new Error(payload.error || "Failed to create session");
+          throw new Error(payload.error || t("failed_create_session"));
         }
         return payload;
       }
@@ -1382,7 +1543,7 @@ pub fn render_index_html() -> String {
         });
         const payload = await response.json();
         if (!response.ok) {
-          throw new Error(payload.error || "Failed to duplicate session");
+          throw new Error(payload.error || t("failed_duplicate_session"));
         }
         return payload;
       }
@@ -1404,7 +1565,7 @@ pub fn render_index_html() -> String {
         const response = await fetch("/api/weixin/account");
         const payload = await response.json();
         if (!response.ok) {
-          throw new Error(payload.error || "Failed to load Weixin account");
+          throw new Error(payload.error || t("failed_load_weixin_account"));
         }
         renderWeixinAccount(payload);
         return payload;
@@ -1416,12 +1577,12 @@ pub fn render_index_html() -> String {
         });
         const payload = await response.json();
         if (!response.ok) {
-          throw new Error(payload.error || "Failed to start Weixin login");
+          throw new Error(payload.error || t("failed_start_weixin"));
         }
         weixinQrPanel.hidden = false;
         weixinQrImage.src = normalizeWeixinQrSource(payload.qrcodeImgContent || "");
-        weixinStatusLabel.textContent = "Waiting for scan";
-        weixinUserLabel.textContent = "Scan the QR code in Weixin.";
+        weixinStatusLabel.textContent = t("waiting_for_scan");
+        weixinUserLabel.textContent = t("scan_qr_weixin");
         scheduleWeixinPoll();
       }
 
@@ -1430,11 +1591,11 @@ pub fn render_index_html() -> String {
           const response = await fetch("/api/weixin/login/status");
           const payload = await response.json();
           if (!response.ok) {
-            throw new Error(payload.error || "Failed to poll Weixin login");
+            throw new Error(payload.error || t("failed_poll_weixin"));
           }
 
           if (payload.status === "confirmed") {
-            weixinStatusLabel.textContent = "Connected";
+            weixinStatusLabel.textContent = t("connected");
             weixinQrPanel.hidden = true;
             clearWeixinPollTimer();
             await loadWeixinAccount();
@@ -1443,24 +1604,24 @@ pub fn render_index_html() -> String {
           }
 
           if (payload.expired === true || payload.status === "expired") {
-            weixinStatusLabel.textContent = "Login expired";
-            weixinUserLabel.textContent = "Refresh the QR code to try again.";
+            weixinStatusLabel.textContent = t("login_expired");
+            weixinUserLabel.textContent = t("refresh_qr");
             clearWeixinPollTimer();
             await loadWeixinAccount();
             return;
           }
 
           if (payload.status === "scaned") {
-            weixinStatusLabel.textContent = "QR scanned";
-            weixinUserLabel.textContent = "Confirm login in Weixin.";
+            weixinStatusLabel.textContent = t("qr_scanned");
+            weixinUserLabel.textContent = t("confirm_login_weixin");
           } else {
-            weixinStatusLabel.textContent = "Waiting for scan";
+            weixinStatusLabel.textContent = t("waiting_for_scan");
           }
 
           scheduleWeixinPoll();
         } catch (error) {
           clearWeixinPollTimer();
-          setStatus(error?.message || "Failed to poll Weixin login", "error");
+          setStatus(error?.message || t("failed_poll_weixin"), "error");
           await loadWeixinAccount().catch(() => {});
         }
       }
@@ -1500,6 +1661,23 @@ pub fn render_index_html() -> String {
       }
 
       sessionSelect.addEventListener("change", async () => {
+        if (sessionSelect.value === "__new__") {
+          setBusy(true);
+          setStatus(t("starting_session"), "loading");
+          try {
+            setSelectedSession(null, null);
+            const created = await createSession();
+            await refreshSessions();
+            await selectSession(created.channel || "web", created.sessionId);
+            setStatus(t("session_started"), "idle");
+          } catch (error) {
+            setStatus(error?.message || t("failed_create_session"), "error");
+          } finally {
+            setBusy(false);
+            messageInput.focus();
+          }
+          return;
+        }
         const [channel, sessionId] = sessionSelect.value.split("::");
         if (channel && sessionId) {
           await selectSession(channel, sessionId);
@@ -1524,11 +1702,11 @@ pub fn render_index_html() -> String {
         if (theme === "dark") {
           document.documentElement.setAttribute("data-theme", "dark");
           themeIcon.innerHTML = SUN_ICON;
-          themeToggle.title = "Switch to light mode";
+          themeToggle.title = t("switch_light");
         } else {
           document.documentElement.setAttribute("data-theme", "light");
           themeIcon.innerHTML = MOON_ICON;
-          themeToggle.title = "Switch to dark mode";
+          themeToggle.title = t("switch_dark");
         }
         localStorage.setItem(THEME_KEY, theme);
       }
@@ -1564,23 +1742,6 @@ pub fn render_index_html() -> String {
         });
       });
 
-      newChatButton.addEventListener("click", async () => {
-        setBusy(true);
-        setStatus("Starting a new session...", "loading");
-        try {
-          setSelectedSession(null, null);
-          const created = await createSession();
-          await refreshSessions();
-          await selectSession(created.channel || "web", created.sessionId);
-          setStatus("New session started.", "idle");
-        } catch (error) {
-          setStatus(error?.message || "Failed to create session", "error");
-        } finally {
-          setBusy(false);
-          messageInput.focus();
-        }
-      });
-
       renderTranscript([]);
       setComposerAccess(false, false);
 
@@ -1589,14 +1750,14 @@ pub fn render_index_html() -> String {
           return;
         }
         setBusy(true);
-        setStatus("Duplicating session to Web...", "loading");
+        setStatus(t("duplicating_session"), "loading");
         try {
           const duplicated = await duplicateSession();
           await refreshSessions();
           await selectSession(duplicated.channel, duplicated.sessionId);
-          setStatus("Session duplicated to Web.", "idle");
+          setStatus(t("session_duplicated"), "idle");
         } catch (error) {
-          setStatus(error?.message || "Failed to duplicate session", "error");
+          setStatus(error?.message || t("failed_duplicate_session"), "error");
         } finally {
           setBusy(false);
           messageInput.focus();
@@ -1607,12 +1768,12 @@ pub fn render_index_html() -> String {
         clearWeixinPollTimer();
         weixinQrPanel.hidden = true;
         try {
-          setStatus("Starting Weixin login...", "loading");
+          setStatus(t("starting_weixin_login"), "loading");
           await startWeixinLogin();
-          setStatus("Scan the Weixin QR code to continue.", "idle");
+          setStatus(t("scan_weixin_qr_continue"), "idle");
         } catch (error) {
           weixinQrPanel.hidden = true;
-          setStatus(error?.message || "Failed to start Weixin login", "error");
+          setStatus(error?.message || t("failed_start_weixin"), "error");
           await loadWeixinAccount().catch(() => {});
         }
       });
@@ -1620,22 +1781,22 @@ pub fn render_index_html() -> String {
       weixinLogoutButton.addEventListener("click", async () => {
         clearWeixinPollTimer();
         try {
-          setStatus("Disconnecting Weixin...", "loading");
+          setStatus(t("disconnecting_weixin"), "loading");
           const response = await fetch("/api/weixin/logout", {
             method: "POST",
           });
           const payload = await response.json();
           if (!response.ok) {
-            throw new Error(payload.error || "Failed to logout Weixin");
+            throw new Error(payload.error || t("failed_logout_weixin"));
           }
           weixinQrPanel.hidden = true;
           weixinQrImage.src = "";
           renderWeixinAccount(payload);
           await loadWeixinAccount();
           await refreshSessions();
-          setStatus("Weixin disconnected.", "idle");
+          setStatus(t("weixin_disconnected"), "idle");
         } catch (error) {
-          setStatus(error?.message || "Failed to logout Weixin", "error");
+          setStatus(error?.message || t("failed_logout_weixin"), "error");
         }
       });
 
@@ -1651,19 +1812,19 @@ pub fn render_index_html() -> String {
         const draft = messageInput.value;
         const message = draft.trim();
         if (!message) {
-          setStatus("Enter a message before sending.", "error");
+          setStatus(t("enter_message"), "error");
           messageInput.focus();
           return;
         }
         if (currentSessionReadOnly) {
-          setStatus("This session is read-only. Duplicate it to Web to continue.", "error");
+          setStatus(t("readonly_session"), "error");
           return;
         }
 
         appendMessage("user", message);
         messageInput.value = "";
         setBusy(true);
-        setStatus("Pikachu is working...", "loading");
+        setStatus(t("pikachu_working"), "loading");
 
         try {
           if (!currentSessionId) {
@@ -1679,7 +1840,7 @@ pub fn render_index_html() -> String {
           });
           const payload = await response.json();
           if (!response.ok) {
-            throw new Error(payload.error || "Request failed");
+            throw new Error(payload.error || t("request_failed"));
           }
           setSelectedSession(payload.channel || currentChannel, payload.sessionId);
           await refreshSessions();
@@ -1689,16 +1850,24 @@ pub fn render_index_html() -> String {
           if (!messageInput.value.trim()) {
             messageInput.value = draft;
           }
-          setStatus(error?.message || "Request failed", "error");
+          setStatus(error?.message || t("request_failed"), "error");
         } finally {
           setBusy(false);
           messageInput.focus();
         }
       });
 
+      const langToggleBtn = document.getElementById("lang-toggle");
+      langToggleBtn.addEventListener("click", () => {
+        currentLang = currentLang === "en" ? "zh" : "en";
+        localStorage.setItem(LANG_KEY, currentLang);
+        applyI18n();
+        applyTheme(document.documentElement.getAttribute("data-theme") || "light");
+      });
+
       Promise.all([bootstrapSessions(), loadWeixinAccount(), loadProfiles()]).catch((error) => {
         clearWeixinPollTimer();
-        setStatus(error?.message || "Failed to load sessions", "error");
+        setStatus(error?.message || t("failed_load_sessions"), "error");
       });
     </script>
   </body>
