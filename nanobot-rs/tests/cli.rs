@@ -83,7 +83,7 @@ fn onboard_generates_config_with_provider_and_web_defaults() {
         value
             .pointer("/providers/codex/apiBase")
             .and_then(Value::as_str),
-        Some("https://chatgpt.com/backend-api")
+        Some("https://chatgpt.com/backend-api/codex")
     );
     assert_eq!(
         value

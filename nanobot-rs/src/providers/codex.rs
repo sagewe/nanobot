@@ -195,11 +195,7 @@ fn split_instructions_and_input(messages: Vec<Value>) -> (String, Vec<Value>) {
         }
     }
 
-    let instructions = if instructions.is_empty() {
-        "You are Codex, a helpful AI assistant.".to_string()
-    } else {
-        instructions.join("\n\n")
-    };
+    let instructions = instructions.join("\n\n");
 
     (instructions, input_messages)
 }

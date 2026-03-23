@@ -111,7 +111,10 @@ fn provider_registry_resolves_explicit_provider_defaults() {
     let codex = registry.resolve("codex").expect("codex");
     assert_eq!(codex.kind, ProviderKind::Codex);
     assert!(!codex.requires_api_key);
-    assert_eq!(codex.default_api_base, "https://chatgpt.com/backend-api");
+    assert_eq!(
+        codex.default_api_base,
+        "https://chatgpt.com/backend-api/codex"
+    );
 }
 
 #[test]
@@ -272,8 +275,22 @@ fn config_defaults_include_a_concrete_codex_provider_block() {
         value
             .pointer("/providers/codex/apiBase")
             .and_then(Value::as_str),
-        Some("https://chatgpt.com/backend-api")
+        Some("https://chatgpt.com/backend-api/codex")
     );
+}
+
+#[test]
+fn provider_registry_builds_codex_configs_with_the_correct_default_base() {
+    let registry = ProviderRegistry::default();
+    let config = Config::default();
+
+    let built = registry
+        .build_config_for_provider(&config, "codex", "gpt-5-codex")
+        .expect("build codex config");
+
+    assert_eq!(built.kind, ProviderKind::Codex);
+    assert_eq!(built.api_base, "https://chatgpt.com/backend-api/codex");
+    assert_eq!(built.default_model, "gpt-5-codex");
 }
 
 #[test]

@@ -618,6 +618,39 @@ async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggrega
 }
 
 #[tokio::test]
+async fn codex_provider_sends_empty_instructions_when_no_system_messages_are_present() {
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, requests) = start_live_codex_capture_server().await;
+    let provider = build_live_provider(auth_file, addr);
+
+    let response = provider
+        .chat_with_request(
+            vec![json!({"role": "user", "content": "hello"})],
+            vec![],
+            &request_descriptor(Map::new()),
+        )
+        .await
+        .expect("live SSE response");
+
+    assert_eq!(response.content.as_deref(), Some("streamed content"));
+
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 1);
+    let sent = captured.last().expect("captured request");
+    assert_eq!(sent.body["instructions"], json!(""));
+    assert_eq!(
+        sent.body["input"],
+        json!([
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }
+        ])
+    );
+}
+
+#[tokio::test]
 async fn codex_provider_normalizes_plain_text_response_and_sends_bearer_and_account_headers() {
     let dir = tempdir().expect("tempdir");
     let auth_file = write_auth_file(&dir, valid_auth_json());
