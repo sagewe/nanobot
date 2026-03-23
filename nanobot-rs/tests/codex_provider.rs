@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 use axum::routing::{any, post};
 use axum::{Json, Router};
@@ -114,6 +114,7 @@ struct CodexCaptureState {
 
 #[derive(Clone, Debug)]
 struct CapturedLiveCodexRequest {
+    method: String,
     path: String,
     authorization: Option<String>,
     account_id: Option<String>,
@@ -124,6 +125,8 @@ struct CapturedLiveCodexRequest {
 #[derive(Clone)]
 struct LiveCodexCaptureState {
     requests: Arc<tokio::sync::Mutex<Vec<CapturedLiveCodexRequest>>>,
+    response_status: StatusCode,
+    response_body: String,
 }
 
 async fn capture_codex_responses_request(
@@ -191,11 +194,13 @@ fn mock_codex_sse_body() -> String {
 
 async fn capture_codex_live_request(
     State(state): State<LiveCodexCaptureState>,
+    method: Method,
     headers: HeaderMap,
     uri: Uri,
     Json(payload): Json<Value>,
 ) -> impl IntoResponse {
     state.requests.lock().await.push(CapturedLiveCodexRequest {
+        method: method.as_str().to_string(),
         path: uri.path().to_string(),
         authorization: headers
             .get(axum::http::header::AUTHORIZATION)
@@ -213,17 +218,27 @@ async fn capture_codex_live_request(
     });
 
     (
-        StatusCode::OK,
+        state.response_status,
         [
             (header::CONTENT_TYPE, "text/event-stream"),
             (header::CACHE_CONTROL, "no-cache"),
             (header::CONNECTION, "keep-alive"),
         ],
-        mock_codex_sse_body(),
+        state.response_body,
     )
 }
 
 async fn start_live_codex_capture_server() -> (
+    SocketAddr,
+    Arc<tokio::sync::Mutex<Vec<CapturedLiveCodexRequest>>>,
+) {
+    start_live_codex_capture_server_with_response(StatusCode::OK, mock_codex_sse_body()).await
+}
+
+async fn start_live_codex_capture_server_with_response(
+    response_status: StatusCode,
+    response_body: impl Into<String>,
+) -> (
     SocketAddr,
     Arc<tokio::sync::Mutex<Vec<CapturedLiveCodexRequest>>>,
 ) {
@@ -232,6 +247,8 @@ async fn start_live_codex_capture_server() -> (
         .route("/backend-api/{segment}", any(capture_codex_live_request))
         .with_state(LiveCodexCaptureState {
             requests: requests.clone(),
+            response_status,
+            response_body: response_body.into(),
         });
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
@@ -277,10 +294,15 @@ async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggrega
     let captured = requests.lock().await;
     assert_eq!(captured.len(), 1);
     let sent = captured.last().expect("captured request");
+    assert_eq!(sent.method, "POST");
     assert_eq!(sent.path, "/backend-api/codex");
     assert_eq!(sent.authorization.as_deref(), Some("Bearer access-token"));
     assert_eq!(sent.account_id.as_deref(), Some("account-id"));
-    assert_eq!(sent.accept.as_deref(), Some("text/event-stream"));
+    assert!(
+        sent.accept
+            .as_deref()
+            .is_some_and(|value| value.contains("text/event-stream"))
+    );
     assert_eq!(sent.body["model"], json!("gpt-5.4"));
     assert_eq!(
         sent.body["input"],
