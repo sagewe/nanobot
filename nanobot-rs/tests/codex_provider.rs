@@ -6,8 +6,9 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode, Uri};
-use axum::routing::post;
+use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::response::IntoResponse;
+use axum::routing::{any, post};
 use axum::{Json, Router};
 use nanobot_rs::providers::{
     CodexProvider, CodexProviderConfig, LlmProvider, ProviderError, ProviderRequestDescriptor,
@@ -111,6 +112,20 @@ struct CodexCaptureState {
     responses: Arc<tokio::sync::Mutex<VecDeque<(StatusCode, Value)>>>,
 }
 
+#[derive(Clone, Debug)]
+struct CapturedLiveCodexRequest {
+    path: String,
+    authorization: Option<String>,
+    account_id: Option<String>,
+    accept: Option<String>,
+    body: Value,
+}
+
+#[derive(Clone)]
+struct LiveCodexCaptureState {
+    requests: Arc<tokio::sync::Mutex<Vec<CapturedLiveCodexRequest>>>,
+}
+
 async fn capture_codex_responses_request(
     State(state): State<CodexCaptureState>,
     headers: HeaderMap,
@@ -158,6 +173,134 @@ async fn start_codex_capture_server(
         axum::serve(listener, app).await.expect("serve");
     });
     (addr, requests)
+}
+
+fn mock_codex_sse_body() -> String {
+    [
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"streamed \"}",
+        "",
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"content\"}",
+        "",
+        "data: {\"type\":\"response.completed\"}",
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n")
+}
+
+async fn capture_codex_live_request(
+    State(state): State<LiveCodexCaptureState>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(payload): Json<Value>,
+) -> impl IntoResponse {
+    state.requests.lock().await.push(CapturedLiveCodexRequest {
+        path: uri.path().to_string(),
+        authorization: headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(ToString::to_string),
+        account_id: headers
+            .get("ChatGPT-Account-Id")
+            .and_then(|value| value.to_str().ok())
+            .map(ToString::to_string),
+        accept: headers
+            .get(header::ACCEPT)
+            .and_then(|value| value.to_str().ok())
+            .map(ToString::to_string),
+        body: payload,
+    });
+
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "text/event-stream"),
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::CONNECTION, "keep-alive"),
+        ],
+        mock_codex_sse_body(),
+    )
+}
+
+async fn start_live_codex_capture_server() -> (
+    SocketAddr,
+    Arc<tokio::sync::Mutex<Vec<CapturedLiveCodexRequest>>>,
+) {
+    let requests = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route("/backend-api/{segment}", any(capture_codex_live_request))
+        .with_state(LiveCodexCaptureState {
+            requests: requests.clone(),
+        });
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    (addr, requests)
+}
+
+#[tokio::test]
+async fn codex_provider_live_sse_contract_hits_codex_rooted_endpoint_and_aggregates_streamed_content()
+{
+    let dir = tempdir().expect("tempdir");
+    let auth_file = write_auth_file(&dir, valid_auth_json());
+    let (addr, requests) = start_live_codex_capture_server().await;
+    let provider = build_provider(auth_file, addr);
+    let request = ProviderRequestDescriptor::new(
+        "codex",
+        "gpt-5.4",
+        [
+            ("model".to_string(), json!("wrong-model")),
+            ("input".to_string(), json!(["wrong-input"])),
+            ("tools".to_string(), json!(["wrong-tool"])),
+        ]
+        .into_iter()
+        .collect::<Map<String, Value>>(),
+    );
+    let messages = vec![
+        json!({"role": "user", "content": "hello"}),
+        json!({"role": "assistant", "content": "working"}),
+    ];
+    let tools = vec![json!({
+        "type": "function",
+        "name": "search",
+        "description": "Search docs",
+        "parameters": {"type": "object"}
+    })];
+
+    let result = provider
+        .chat_with_request(messages, tools.clone(), &request)
+        .await;
+
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 1);
+    let sent = captured.last().expect("captured request");
+    assert_eq!(sent.path, "/backend-api/codex");
+    assert_eq!(sent.authorization.as_deref(), Some("Bearer access-token"));
+    assert_eq!(sent.account_id.as_deref(), Some("account-id"));
+    assert_eq!(sent.accept.as_deref(), Some("text/event-stream"));
+    assert_eq!(sent.body["model"], json!("gpt-5.4"));
+    assert_eq!(
+        sent.body["input"],
+        json!([
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "input_text", "text": "working"}]
+            }
+        ])
+    );
+    assert_eq!(sent.body["tools"], json!(tools));
+
+    let response = result.expect("live SSE response");
+    assert_eq!(response.content.as_deref(), Some("streamed content"));
+    assert!(response.tool_calls.is_empty());
+    assert_eq!(response.finish_reason, "stop");
 }
 
 #[tokio::test]
