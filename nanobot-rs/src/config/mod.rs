@@ -630,7 +630,7 @@ fn default_codex_auth_file() -> String {
 }
 
 fn default_codex_api_base() -> String {
-    "https://chatgpt.com/backend-api".to_string()
+    "https://chatgpt.com/backend-api/codex".to_string()
 }
 
 fn profile_key(provider: &str, model: &str) -> String {

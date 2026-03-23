@@ -475,7 +475,7 @@ fn codex_profiles_are_accepted_when_the_raw_codex_provider_block_is_present() {
   "providers": {
     "codex": {
       "authFile": "~/.codex/auth.json",
-      "apiBase": "https://chatgpt.com/backend-api"
+      "apiBase": "https://chatgpt.com/backend-api/codex"
     }
   }
 }"#,
@@ -499,6 +499,12 @@ fn codex_profiles_are_accepted_when_the_raw_codex_provider_block_is_present() {
             .pointer("/providers/codex/authFile")
             .and_then(Value::as_str),
         Some("~/.codex/auth.json")
+    );
+    assert_eq!(
+        value
+            .pointer("/providers/codex/apiBase")
+            .and_then(Value::as_str),
+        Some("https://chatgpt.com/backend-api/codex")
     );
 }
 

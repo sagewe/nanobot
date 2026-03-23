@@ -72,7 +72,7 @@ impl ProviderRegistry {
             "codex" => Ok(ProviderSpec {
                 kind: ProviderKind::Codex,
                 name: "codex",
-                default_api_base: "https://chatgpt.com/backend-api",
+                default_api_base: "https://chatgpt.com/backend-api/codex",
                 requires_api_key: false,
                 default_headers: HashMap::new(),
             }),
