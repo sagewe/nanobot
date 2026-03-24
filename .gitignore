@@ -26,3 +26,5 @@ uv.lock
 .idea
 target/
 nanobot-rs/target/
+nanobot-rs/frontend/node_modules/
+nanobot-rs/frontend/dist/
