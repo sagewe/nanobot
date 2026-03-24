@@ -2,9 +2,10 @@
 fn page_shell_contains_core_ui_regions() {
     let html = nanobot_rs::web::page::render_index_html();
 
-    assert!(html.contains("nanobot-rs control room"));
+    assert!(html.contains("Pikachu control room"));
     assert!(html.contains("id=\"transcript\""));
-    assert!(html.contains("id=\"session-list\""));
+    assert!(html.contains("id=\"session-select\""));
+    assert!(html.contains("id=\"profile-select\""));
     assert!(html.contains("id=\"composer\""));
     assert!(html.contains("id=\"message-input\""));
     assert!(html.contains("id=\"send-button\""));
@@ -15,20 +16,21 @@ fn page_shell_includes_backend_session_api_hooks() {
     let html = nanobot_rs::web::page::render_index_html();
 
     assert!(html.contains("localStorage"));
-    assert!(html.contains("await fetch(\"/api/sessions\")"));
-    assert!(html.contains("await fetch(`/api/sessions/${channel}/${sessionId}`)"));
+    assert!(html.contains("const response = await fetch(\"/api/sessions\")"));
+    assert!(html.contains("const response = await fetch(`/api/sessions/${channel}/${sessionId}`)"));
     assert!(html.contains("await fetch(\"/api/sessions\", {"));
     assert!(html.contains("/api/chat"));
     assert!(html.contains("aria-live=\"polite\""));
-    assert!(html.contains("data-role=\"assistant\""));
-    assert!(html.contains("payload.activeProfile"));
+    assert!(html.contains("group.dataset.role = role;"));
+    assert!(html.contains("detail.activeProfile || \"\""));
 }
 
 #[test]
 fn page_shell_trims_message_before_submit() {
     let html = nanobot_rs::web::page::render_index_html();
 
-    assert!(html.contains("messageInput.value.trim()"));
+    assert!(html.contains("const draft = messageInput.value;"));
+    assert!(html.contains("const message = draft.trim();"));
     assert!(html.contains("id=\"status\""));
 }
 
@@ -39,7 +41,7 @@ fn page_shell_clears_input_before_network_round_trip() {
     let clear_index = html
         .find("messageInput.value = \"\";")
         .expect("clear input statement");
-    let fetch_index = html.find("await fetch(\"/api/chat\"").expect("fetch call");
+    let fetch_index = html.find("const response = await fetch(\"/api/chat\"").expect("fetch call");
 
     assert!(clear_index < fetch_index);
 }
@@ -48,7 +50,7 @@ fn page_shell_clears_input_before_network_round_trip() {
 fn page_shell_uses_backend_session_ids_instead_of_local_uuid_generation() {
     let html = nanobot_rs::web::page::render_index_html();
 
-    assert!(html.contains("id=\"new-chat-button\""));
+    assert!(html.contains("newOpt.value = \"__new__\";"));
     assert!(!html.contains("crypto.randomUUID()"));
     assert!(html.contains("localStorage.setItem(SELECTED_CHANNEL_KEY, channel)"));
     assert!(html.contains("localStorage.setItem(SELECTED_SESSION_KEY, sessionId)"));
@@ -57,12 +59,12 @@ fn page_shell_uses_backend_session_ids_instead_of_local_uuid_generation() {
 }
 
 #[test]
-fn page_shell_supports_ctrl_and_cmd_enter_submission() {
+fn page_shell_submits_on_enter_and_keeps_ctrl_cmd_enter_for_newlines() {
     let html = nanobot_rs::web::page::render_index_html();
 
     assert!(html.contains("messageInput.addEventListener(\"keydown\""));
     assert!(html.contains("event.key === \"Enter\""));
-    assert!(html.contains("event.ctrlKey || event.metaKey"));
+    assert!(html.contains("!event.ctrlKey && !event.metaKey && !event.shiftKey"));
     assert!(html.contains("composer.requestSubmit()"));
 }
 
@@ -93,13 +95,9 @@ fn page_shell_replaces_transcript_from_backend_session_detail_messages() {
     let html = nanobot_rs::web::page::render_index_html();
 
     assert!(html.contains("transcript.innerHTML = \"\";"));
-    assert!(html.contains("for (const message of detail.messages || [])"));
-    assert!(html.contains("if (message.role === \"assistant\")"));
-    assert!(
-        html.contains("appendAssistantMessage(message.contentHtml || message.content || \"\");")
-    );
-    assert!(html.contains("else if (message.role === \"user\")"));
-    assert!(html.contains("appendMessage(\"user\", message.content || \"\");"));
+    assert!(html.contains("const messages = detail.messages || [];"));
+    assert!(html.contains("for (const message of messages)"));
+    assert!(html.contains("renderMessage(message, activeProfile);"));
 }
 
 #[test]
@@ -107,18 +105,18 @@ fn page_shell_refreshes_sessions_after_mutations_and_shows_active_profile() {
     let html = nanobot_rs::web::page::render_index_html();
 
     assert!(html.contains("await refreshSessions();"));
-    assert!(html.contains("message.startsWith(\"/model\")"));
-    assert!(html.contains("setCurrentProfile(payload.activeProfile || \"\");"));
-    assert!(html.contains("session.activeProfile || \"default\""));
-    assert!(html.contains("currentProfileNode.textContent"));
+    assert!(html.contains("profileSelect.addEventListener(\"change\""));
+    assert!(html.contains("setCurrentProfile(detail.activeProfile || \"\");"));
+    assert!(html.contains("activeProfile: activeProfile || session.activeProfile"));
+    assert!(html.contains("badge.textContent = profile;"));
 }
 
 #[test]
 fn page_shell_renders_assistant_messages_as_html() {
     let html = nanobot_rs::web::page::render_index_html();
 
-    assert!(html.contains("node.innerHTML = content;"));
-    assert!(html.contains("appendAssistantMessage(payload.replyHtml || \"\");"));
+    assert!(html.contains("contentDiv.innerHTML = message.contentHtml;"));
+    assert!(html.contains("bubble.innerHTML = content;"));
 }
 
 #[test]
@@ -140,22 +138,21 @@ fn page_shell_commits_session_selection_only_after_detail_load() {
 }
 
 #[test]
-fn page_shell_renders_grouped_session_sections() {
+fn page_shell_renders_grouped_session_select_options() {
     let html = nanobot_rs::web::page::render_index_html();
 
-    assert!(html.contains("class=\"session-group\""));
-    assert!(html.contains("heading.className = \"session-group-title\";"));
-    assert!(html.contains("payload.groups || []"));
+    assert!(html.contains("const optgroup = document.createElement(\"optgroup\");"));
+    assert!(html.contains("optgroup.label = tChannel(group.channel);"));
     assert!(html.contains("for (const group of groups)"));
-    assert!(html.contains("group.channel"));
+    assert!(html.contains("for (const session of group.sessions || [])"));
 }
 
 #[test]
 fn page_shell_supports_persisted_cross_channel_selection_and_legacy_migration() {
     let html = nanobot_rs::web::page::render_index_html();
 
-    assert!(html.contains("const SELECTED_CHANNEL_KEY = \"nanobot-rs.selectedChannel\";"));
-    assert!(html.contains("const SELECTED_SESSION_KEY = \"nanobot-rs.selectedSessionId\";"));
+    assert!(html.contains("const SELECTED_CHANNEL_KEY = \"pikachu.selectedChannel\";"));
+    assert!(html.contains("const SELECTED_SESSION_KEY = \"pikachu.selectedSessionId\";"));
     assert!(html.contains("const legacyStoredSessionId = localStorage.getItem(SESSION_KEY);"));
     assert!(html.contains("const storedChannel = localStorage.getItem(SELECTED_CHANNEL_KEY);"));
     assert!(html.contains("const storedSessionId = localStorage.getItem(SELECTED_SESSION_KEY);"));
@@ -171,7 +168,7 @@ fn page_shell_disables_composer_for_read_only_sessions_and_exposes_duplicate_act
         "const duplicateButton = document.getElementById(\"duplicate-session-button\");"
     ));
     assert!(html.contains("messageInput.disabled = readOnly;"));
-    assert!(html.contains("sendButton.disabled = busy || currentSessionReadOnly;"));
+    assert!(html.contains("sendButton.disabled = isBusy || currentSessionReadOnly;"));
     assert!(html.contains("duplicateButton.hidden = !canDuplicate;"));
     assert!(html.contains("Duplicate to Web"));
 }
@@ -225,10 +222,8 @@ fn page_shell_bootstraps_weixin_account_and_login_polling() {
     assert!(html.contains("value.startsWith(\"data:\")"));
     assert!(html.contains("value.startsWith(\"https://\")"));
     assert!(html.contains("return `data:image/png;base64,${compact}`;"));
-    assert!(html.contains(
-        "weixinQrImage.src = normalizeWeixinQrSource(payload.qrcodeImgContent || \"\");"
-    ));
-    assert!(html.contains("setTimeout(() => pollWeixinLoginStatus(), 1500);"));
+    assert!(html.contains("weixinQrImage.src = normalizeWeixinQrSource(payload.qrcodeImgContent || \"\");"));
+    assert!(html.contains("weixinPollTimer = setTimeout(() => pollWeixinLoginStatus(), 1500);"));
     assert!(html.contains("await loadWeixinAccount();"));
 }
 

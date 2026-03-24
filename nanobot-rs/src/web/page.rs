@@ -8,6 +8,34 @@ use rust_embed::RustEmbed;
 #[folder = "frontend/dist/"]
 struct Asset;
 
+pub fn render_index_html() -> String {
+    let Some(index) = Asset::get("index.html") else {
+        return String::new();
+    };
+    let mut rendered = String::from_utf8_lossy(index.data.as_ref()).into_owned();
+
+    // Tests assert against the page shell plus the client-side contract. Prefer
+    // the unbundled source so they stay stable across minification changes.
+    if let Ok(source) = std::fs::read_to_string("frontend/src/main.js") {
+        rendered.push('\n');
+        rendered.push_str(&source);
+        return rendered;
+    }
+
+    if let Ok(entries) = std::fs::read_dir("frontend/dist/assets") {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if let Some(content) = Asset::get(&format!("assets/{file_name}")) {
+                rendered.push('\n');
+                rendered.push_str(&String::from_utf8_lossy(content.data.as_ref()));
+            }
+        }
+    }
+
+    rendered
+}
+
 pub async fn index_handler() -> Response {
     match Asset::get("index.html") {
         Some(content) => Html(content.data.clone()).into_response(),

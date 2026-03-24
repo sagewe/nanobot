@@ -5,8 +5,9 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
+use chrono::Utc;
 use nanobot_rs::bus::{MessageBus, OutboundMessage};
-use nanobot_rs::channels::weixin::{WeixinAccountStore, WeixinChannel};
+use nanobot_rs::channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinChannel};
 use nanobot_rs::channels::{Channel, ChannelManager, TelegramChannel};
 use nanobot_rs::config::{Config, TelegramConfig, WeixinConfig};
 use serde_json::{Value, json};
@@ -248,6 +249,18 @@ async fn weixin_channel_sends_outbound_text() {
     let addr = start_weixin_server(state.clone()).await;
     let temp = tempdir().unwrap();
     let store = WeixinAccountStore::new(temp.path()).unwrap();
+    store
+        .save_account(&WeixinAccountState {
+            bot_token: "bot-token".to_string(),
+            ilink_bot_id: "bot@im.bot".to_string(),
+            baseurl: format!("http://{addr}"),
+            ilink_user_id: Some("operator@im.wechat".to_string()),
+            get_updates_buf: String::new(),
+            longpolling_timeout_ms: 35_000,
+            status: "confirmed".to_string(),
+            updated_at: Utc::now(),
+        })
+        .unwrap();
     store.save_context_token("user@im.wechat", "ctx-1").unwrap();
     let channel = WeixinChannel::new(
         WeixinConfig {
