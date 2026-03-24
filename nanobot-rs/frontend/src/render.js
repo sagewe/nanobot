@@ -1,5 +1,15 @@
 import DOMPurify from "dompurify";
+import hljs from "highlight.js/lib/core";
+import json from "highlight.js/lib/languages/json";
+import bash from "highlight.js/lib/languages/bash";
+import yaml from "highlight.js/lib/languages/yaml";
+import xml from "highlight.js/lib/languages/xml";
 import { t, tChannel, tToolCount } from "./i18n.js";
+
+hljs.registerLanguage("json", json);
+hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("yaml", yaml);
+hljs.registerLanguage("xml", xml);
 
 const transcript = document.getElementById("transcript");
 const sessionSelect = document.getElementById("session-select");
@@ -182,8 +192,21 @@ export function renderMessage(message, activeProfile) {
     const contentEl = document.createElement("div");
     contentEl.className = "msg-tool-output-content";
     const raw = message.content || "";
-    try { contentEl.textContent = JSON.stringify(JSON.parse(raw), null, 2); }
-    catch { contentEl.textContent = raw; }
+    try {
+      const formatted = JSON.stringify(JSON.parse(raw), null, 2);
+      contentEl.innerHTML = DOMPurify.sanitize(
+        hljs.highlight(formatted, { language: "json" }).value
+      );
+      contentEl.classList.add("hljs");
+    } catch {
+      const result = hljs.highlightAuto(raw, ["bash", "yaml", "xml"]);
+      if (result.relevance > 5) {
+        contentEl.innerHTML = DOMPurify.sanitize(result.value);
+        contentEl.classList.add("hljs");
+      } else {
+        contentEl.textContent = raw;
+      }
+    }
     header.addEventListener("click", () => {
       header.classList.toggle("open");
       contentEl.classList.toggle("open");

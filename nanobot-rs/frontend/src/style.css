@@ -966,3 +966,38 @@
           min-height: 2.75rem;
         }
       }
+
+      /* ── highlight.js token colors ───────────────────────────────────────── */
+      .msg-tool-output-content.hljs {
+        --hljs-string:  #2a7a3b;
+        --hljs-number:  #7b3f9e;
+        --hljs-keyword: #c15f3c;
+        --hljs-attr:    #1565c0;
+        --hljs-comment: #8a8078;
+        --hljs-literal: #b55a00;
+        --hljs-tag:     #1565c0;
+        --hljs-name:    #2a7a3b;
+        --hljs-punct:   #666;
+      }
+      :root[data-theme="dark"] .msg-tool-output-content.hljs {
+        --hljs-string:  #81c784;
+        --hljs-number:  #ce93d8;
+        --hljs-keyword: #d4724a;
+        --hljs-attr:    #64b5f6;
+        --hljs-comment: #7a7470;
+        --hljs-literal: #ffb74d;
+        --hljs-tag:     #64b5f6;
+        --hljs-name:    #81c784;
+        --hljs-punct:   #9a9490;
+      }
+      .hljs-string  { color: var(--hljs-string); }
+      .hljs-number  { color: var(--hljs-number); }
+      .hljs-keyword,
+      .hljs-built_in { color: var(--hljs-keyword); }
+      .hljs-attr,
+      .hljs-attribute { color: var(--hljs-attr); }
+      .hljs-comment { color: var(--hljs-comment); font-style: italic; }
+      .hljs-literal { color: var(--hljs-literal); }
+      .hljs-tag     { color: var(--hljs-tag); }
+      .hljs-name    { color: var(--hljs-name); }
+      .hljs-punctuation { color: var(--hljs-punct); }

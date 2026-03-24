@@ -9,6 +9,7 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
-    "dompurify": "^3.3.3"
+    "dompurify": "^3.3.3",
+    "highlight.js": "^11.11.1"
   }
 }

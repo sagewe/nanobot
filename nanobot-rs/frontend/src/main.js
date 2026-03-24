@@ -72,9 +72,26 @@ let currentSessionGroups = [];
 let currentMessages = [];
 let pendingSelectionToken = 0;
 let weixinPollTimer = null;
+let busyTimer = null;
+let busyStart = null;
 let isBusy = false;
 
 // ── State helpers ─────────────────────────────────────────────────────────────
+function startBusyTimer() {
+  busyStart = Date.now();
+  clearInterval(busyTimer);
+  busyTimer = setInterval(() => {
+    const secs = Math.floor((Date.now() - busyStart) / 1000);
+    setStatus(`${t("pikachu_working")} ${secs}s`, "loading");
+  }, 1000);
+}
+
+function stopBusyTimer() {
+  clearInterval(busyTimer);
+  busyTimer = null;
+  busyStart = null;
+}
+
 function setBusy(busy) {
   isBusy = busy;
   sendButton.disabled = busy || currentSessionReadOnly;
@@ -469,6 +486,7 @@ composer.addEventListener("submit", async (event) => {
   messageInput.value = "";
   setBusy(true);
   setStatus(t("pikachu_working"), "loading");
+  startBusyTimer();
 
   try {
     if (!currentSessionId) {
@@ -488,6 +506,7 @@ composer.addEventListener("submit", async (event) => {
     }
     setStatus(error?.message || t("request_failed"), "error");
   } finally {
+    stopBusyTimer();
     setBusy(false);
     messageInput.focus();
   }
