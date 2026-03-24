@@ -22,6 +22,7 @@ import {
   renderTranscript,
   renderSessionDetail,
   renderSessionSelect,
+  renderSessionsList,
   renderWeixinAccount,
   normalizeWeixinQrSource,
 } from "./render.js";
@@ -59,6 +60,8 @@ const langToggleBtn = document.getElementById("lang-toggle");
 const tabButtons = document.querySelectorAll(".tab-btn");
 const conversationPane = document.querySelector(".conversation-pane");
 const channelsPane = document.querySelector(".channels-pane");
+const sessionsPane = document.querySelector(".sessions-pane");
+const sessionsSearch = document.getElementById("sessions-search");
 const sessionRail = document.querySelector(".session-rail");
 const transcript = document.getElementById("transcript");
 
@@ -147,6 +150,10 @@ function clearDraft() {
   if (key) localStorage.removeItem(key);
 }
 
+function syncSessionsList() {
+  renderSessionsList(currentSessionGroups, currentChannel, currentSessionId, sessionsSearch.value);
+}
+
 function findSession(groups, channel, sessionId) {
   if (!channel || !sessionId) return null;
   for (const group of groups) {
@@ -180,12 +187,14 @@ function updateSessionMetadata(channel, sessionId, activeProfile) {
     }),
   }));
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
+  syncSessionsList();
 }
 
 // ── Session management ────────────────────────────────────────────────────────
 async function refreshSessions() {
   currentSessionGroups = await fetchSessions();
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
+  syncSessionsList();
   if (currentChannel && currentSessionId && !findSession(currentSessionGroups, currentChannel, currentSessionId)) {
     setSelectedSession(null, null);
   }
@@ -201,6 +210,7 @@ async function selectSession(channel, sessionId) {
   setCurrentProfile(detail.activeProfile || "");
   setComposerAccess(detail.readOnly === true, detail.canDuplicate === true);
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
+  syncSessionsList();
   restoreDraft();
 }
 
@@ -211,6 +221,7 @@ async function bootstrapSessions() {
   const sessions = await fetchSessions();
   currentSessionGroups = sessions;
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
+  syncSessionsList();
   const storedSession = findSession(sessions, storedChannel || "web", restoredSessionId);
   const initialSession = storedSession || findLatestWritableWebSession(sessions);
   if (!initialSession) {
@@ -357,13 +368,35 @@ sidebarToggle.addEventListener("click", () => {
 mobileMenuBtn.addEventListener("click", openMobileSidebar);
 backdropEl.addEventListener("click", closeMobileSidebar);
 
+function switchTab(tab) {
+  tabButtons.forEach((b) => { b.dataset.active = String(b.dataset.tab === tab); });
+  conversationPane.hidden = tab !== "chat";
+  sessionsPane.hidden = tab !== "sessions";
+  channelsPane.hidden = tab !== "channels";
+}
+
 tabButtons.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const tab = btn.dataset.tab;
-    tabButtons.forEach((b) => { b.dataset.active = String(b.dataset.tab === tab); });
-    conversationPane.hidden = tab !== "chat";
-    channelsPane.hidden = tab !== "channels";
-  });
+  btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+});
+
+sessionsSearch.addEventListener("input", syncSessionsList);
+
+document.getElementById("sessions-list").addEventListener("click", async (e) => {
+  const item = e.target.closest(".session-item");
+  if (!item) return;
+  const { channel, sessionId } = item.dataset;
+  if (!channel || !sessionId) return;
+  switchTab("chat");
+  await selectSession(channel, sessionId);
+  if (isMobile()) closeMobileSidebar();
+  messageInput.focus();
+});
+
+document.getElementById("sessions-list").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    e.target.closest(".session-item")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
 });
 
 langToggleBtn.addEventListener("click", () => {
@@ -371,6 +404,7 @@ langToggleBtn.addEventListener("click", () => {
   applyI18n();
   applyTheme(document.documentElement.getAttribute("data-theme") || "light");
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
+  syncSessionsList();
 });
 
 profileSelect.addEventListener("change", async () => {

@@ -339,3 +339,72 @@ export function renderWeixinAccount(account) {
   weixinStatusLabel.textContent = t("not_connected");
   weixinUserLabel.textContent = userId;
 }
+
+export function renderSessionsList(groups, currentChannel, currentSessionId, filterText) {
+  const listEl = document.getElementById("sessions-list");
+  const query = (filterText || "").toLowerCase().trim();
+  const frag = document.createDocumentFragment();
+  let totalVisible = 0;
+
+  for (const group of groups) {
+    const matchingSessions = (group.sessions || []).filter((session) => {
+      if (!query) return true;
+      return (
+        (session.sessionId || "").toLowerCase().includes(query) ||
+        (session.preview || "").toLowerCase().includes(query) ||
+        (session.channel || "").toLowerCase().includes(query)
+      );
+    });
+    if (!matchingSessions.length) continue;
+    totalVisible += matchingSessions.length;
+
+    const groupEl = document.createElement("div");
+    groupEl.className = "sessions-channel-group";
+
+    const label = document.createElement("div");
+    label.className = "sessions-channel-label";
+    label.textContent = tChannel(group.channel);
+    groupEl.appendChild(label);
+
+    for (const session of matchingSessions) {
+      const item = document.createElement("div");
+      item.className = "session-item";
+      item.dataset.channel = session.channel;
+      item.dataset.sessionId = session.sessionId;
+      item.dataset.active = String(
+        session.channel === currentChannel && session.sessionId === currentSessionId
+      );
+      item.setAttribute("role", "button");
+      item.setAttribute("tabindex", "0");
+
+      const textWrap = document.createElement("div");
+      textWrap.className = "session-item-text";
+
+      if (session.preview) {
+        const previewEl = document.createElement("div");
+        previewEl.className = "session-item-preview";
+        previewEl.textContent = session.preview;
+        textWrap.appendChild(previewEl);
+      }
+
+      const idEl = document.createElement("div");
+      idEl.className = "session-item-id";
+      idEl.textContent = session.sessionId;
+      textWrap.appendChild(idEl);
+
+      item.appendChild(textWrap);
+      groupEl.appendChild(item);
+    }
+    frag.appendChild(groupEl);
+  }
+
+  if (totalVisible === 0) {
+    const empty = document.createElement("div");
+    empty.className = "sessions-empty";
+    empty.textContent = t("sessions_empty");
+    frag.appendChild(empty);
+  }
+
+  listEl.innerHTML = "";
+  listEl.appendChild(frag);
+}

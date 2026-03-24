@@ -21,6 +21,10 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
               <span class="tab-label" data-i18n="tab_chat">Chat</span>
             </button>
+            <button class="tab-btn" data-tab="sessions" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              <span class="tab-label" data-i18n="tab_sessions">Sessions</span>
+            </button>
             <button class="tab-btn" data-tab="channels" role="tab">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
               <span class="tab-label" data-i18n="tab_channels">Channels</span>
@@ -34,6 +38,12 @@
           </div>
         </aside>
         <section class="shell">
+        <section class="sessions-pane" hidden>
+          <div class="sessions-search-bar">
+            <input type="search" id="sessions-search" data-i18n-placeholder="sessions_search_placeholder" placeholder="Filter sessions…" autocomplete="off" />
+          </div>
+          <div id="sessions-list" class="sessions-list"></div>
+        </section>
         <section class="channels-pane" hidden>
           <section id="weixin-account-panel" class="account-panel">
             <div class="account-panel-header">
