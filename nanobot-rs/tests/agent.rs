@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use axum::extract::State;
-use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
+use axum::http::{header, HeaderMap, Method, StatusCode, Uri};
 use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::{Json, Router};
@@ -18,7 +18,7 @@ use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig};
 use nanobot_rs::providers::{
     LlmProvider, LlmResponse, ProviderPool, ProviderRequestDescriptor, ToolCall,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify};
@@ -401,6 +401,180 @@ impl LlmProvider for ReplayAwareProvider {
 }
 
 #[derive(Default)]
+struct BtwState {
+    main_started: AtomicBool,
+    main_released: AtomicBool,
+    btw_started: AtomicBool,
+    btw_released: AtomicBool,
+    main_started_notify: Notify,
+    main_release_notify: Notify,
+    btw_started_notify: Notify,
+    btw_release_notify: Notify,
+    records: Arc<Mutex<Vec<RecordedRequest>>>,
+    histories: Arc<Mutex<Vec<Vec<Value>>>>,
+}
+
+#[derive(Clone)]
+struct BtwTestProvider {
+    state: Arc<BtwState>,
+}
+
+impl BtwTestProvider {
+    fn user_content(messages: &[Value]) -> String {
+        messages
+            .iter()
+            .rev()
+            .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+            .and_then(|message| message.get("content").and_then(Value::as_str))
+            .map(ContextBuilder::strip_runtime_prefix)
+            .flatten()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn strip_btw_prefix(content: &str) -> &str {
+        content
+            .strip_prefix("/btw ")
+            .or_else(|| content.strip_prefix("/btw"))
+            .unwrap_or(content)
+            .trim()
+    }
+
+    async fn record_request(
+        &self,
+        messages: &[Value],
+        request: Option<&ProviderRequestDescriptor>,
+    ) {
+        self.state.histories.lock().await.push(messages.to_vec());
+        if let Some(request) = request {
+            self.state.records.lock().await.push(RecordedRequest {
+                provider: request.provider_name.clone(),
+                model: request.model_name.clone(),
+                extras: request.request_extras.clone(),
+            });
+        }
+    }
+
+    async fn reply(
+        &self,
+        messages: Vec<Value>,
+        request: Option<&ProviderRequestDescriptor>,
+    ) -> Result<LlmResponse> {
+        self.record_request(&messages, request).await;
+        let content = Self::user_content(&messages);
+        let normalized = Self::strip_btw_prefix(&content);
+        let has_tool_result = messages
+            .iter()
+            .any(|message| message.get("role").and_then(Value::as_str) == Some("tool"));
+
+        if normalized.contains("inflight-shadow") {
+            if !has_tool_result {
+                return Ok(LlmResponse {
+                    content: Some("inflight-shadow".to_string()),
+                    tool_calls: vec![ToolCall {
+                        id: "call_1".to_string(),
+                        name: "list_dir".to_string(),
+                        arguments: json!({"path": "."}),
+                    }],
+                    finish_reason: "tool_calls".to_string(),
+                    extra: Map::new(),
+                });
+            }
+            self.state.main_started.store(true, Ordering::SeqCst);
+            self.state.main_started_notify.notify_waiters();
+            while !self.state.main_released.load(Ordering::SeqCst) {
+                self.state.main_release_notify.notified().await;
+            }
+            return Ok(LlmResponse {
+                content: Some("main final".to_string()),
+                tool_calls: Vec::new(),
+                finish_reason: "stop".to_string(),
+                extra: Map::new(),
+            });
+        }
+
+        if normalized.contains("main-hold") || normalized.contains("main block") {
+            self.state.main_started.store(true, Ordering::SeqCst);
+            self.state.main_started_notify.notify_waiters();
+            while !self.state.main_released.load(Ordering::SeqCst) {
+                self.state.main_release_notify.notified().await;
+            }
+            return Ok(LlmResponse {
+                content: Some("main final".to_string()),
+                tool_calls: Vec::new(),
+                finish_reason: "stop".to_string(),
+                extra: Map::new(),
+            });
+        }
+
+        if normalized.contains("hold-btw") {
+            self.state.btw_started.store(true, Ordering::SeqCst);
+            self.state.btw_started_notify.notify_waiters();
+            while !self.state.btw_released.load(Ordering::SeqCst) {
+                self.state.btw_release_notify.notified().await;
+            }
+            return Ok(LlmResponse {
+                content: Some("btw final".to_string()),
+                tool_calls: Vec::new(),
+                finish_reason: "stop".to_string(),
+                extra: Map::new(),
+            });
+        }
+
+        if normalized.contains("snapshot-fail") {
+            return Err(anyhow::anyhow!("snapshot load failed"));
+        }
+
+        if normalized.contains("tool-fail") {
+            return Err(anyhow::anyhow!("btw tool failed"));
+        }
+
+        if normalized.contains("profile-check")
+            || normalized.contains("status?")
+            || normalized.contains("stale-generation")
+            || normalized.contains("history-check")
+            || normalized.contains("inflight-check")
+            || normalized.contains("second-btw")
+        {
+            self.state.btw_started.store(true, Ordering::SeqCst);
+            self.state.btw_started_notify.notify_waiters();
+        }
+
+        Ok(LlmResponse {
+            content: Some("btw reply".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            extra: Map::new(),
+        })
+    }
+}
+
+#[async_trait]
+impl LlmProvider for BtwTestProvider {
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+    async fn chat(
+        &self,
+        messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        self.reply(messages, None).await
+    }
+
+    async fn chat_with_request(
+        &self,
+        messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        request: &ProviderRequestDescriptor,
+    ) -> Result<LlmResponse> {
+        self.reply(messages, Some(request)).await
+    }
+}
+
+#[derive(Default)]
 struct SessionConcurrencyState {
     first_started: AtomicBool,
     first_released: AtomicBool,
@@ -705,6 +879,35 @@ fn debounce_config(workspace: &std::path::Path, debounce_ms: u64) -> Config {
     config
 }
 
+fn inbound_message(
+    channel: &str,
+    chat_id: &str,
+    session_key: &str,
+    content: &str,
+) -> InboundMessage {
+    InboundMessage {
+        channel: channel.to_string(),
+        sender_id: "user".to_string(),
+        chat_id: chat_id.to_string(),
+        content: content.to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some(session_key.to_string()),
+    }
+}
+
+fn spawn_runner(agent: AgentLoop) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move { agent.run().await })
+}
+
+async fn wait_for_flag(flag: &AtomicBool, notify: &Notify) {
+    while !flag.load(Ordering::SeqCst) {
+        tokio::time::timeout(Duration::from_secs(1), notify.notified())
+            .await
+            .expect("flag should be set");
+    }
+}
+
 #[tokio::test]
 async fn agent_executes_tool_loop() {
     let dir = tempdir().expect("tempdir");
@@ -788,14 +991,12 @@ async fn agent_process_direct_returns_message_tool_reply() {
         .await
         .expect("process");
     assert_eq!(result, long_chinese);
-    assert!(
-        tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            bus.consume_outbound()
-        )
-        .await
-        .is_err()
-    );
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        bus.consume_outbound()
+    )
+    .await
+    .is_err());
 }
 
 #[tokio::test]
@@ -863,14 +1064,12 @@ async fn agent_bus_mode_suppresses_duplicate_final_reply_after_message_tool() {
         }
     };
     assert_eq!(outbound.content, long_chinese);
-    assert!(
-        tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            bus.consume_outbound()
-        )
-        .await
-        .is_err()
-    );
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        bus.consume_outbound()
+    )
+    .await
+    .is_err());
     agent.stop();
     runner.abort();
 }
@@ -1108,12 +1307,10 @@ async fn model_command_can_switch_a_session_to_a_codex_profile_and_use_the_codex
         Some("Bearer access-token")
     );
     assert_eq!(requests[0].account_id.as_deref(), Some("account-id"));
-    assert!(
-        requests[0]
-            .accept
-            .as_deref()
-            .is_some_and(|value| value.contains("text/event-stream"))
-    );
+    assert!(requests[0]
+        .accept
+        .as_deref()
+        .is_some_and(|value| value.contains("text/event-stream")));
     assert_eq!(
         requests[0].body.get("model").and_then(Value::as_str),
         Some("gpt-5.4")
@@ -1235,12 +1432,10 @@ async fn codex_profile_runs_a_tool_call_second_round_and_sends_tool_results_back
         requests[1].body.get("model").and_then(Value::as_str),
         Some("gpt-5.4")
     );
-    assert!(
-        requests[1]
-            .accept
-            .as_deref()
-            .is_some_and(|value| value.contains("text/event-stream"))
-    );
+    assert!(requests[1]
+        .accept
+        .as_deref()
+        .is_some_and(|value| value.contains("text/event-stream")));
 
     let second_input = requests[1]
         .body
@@ -1467,12 +1662,10 @@ async fn session_burst_messages_are_merged_into_one_turn() {
         .filter(|message| message.role == "user")
         .collect::<Vec<_>>();
     assert_eq!(user_turns.len(), 1);
-    assert!(
-        user_turns[0]
-            .content
-            .as_str()
-            .is_some_and(|value| value.contains("[Compressed user burst]"))
-    );
+    assert!(user_turns[0]
+        .content
+        .as_str()
+        .is_some_and(|value| value.contains("[Compressed user burst]")));
 
     agent.stop();
     runner.abort();
@@ -2084,9 +2277,12 @@ async fn system_messages_share_the_same_session_lock_as_user_messages() {
     state.user_release_notify.notify_waiters();
 
     while !state.system_started.load(Ordering::SeqCst) {
-        tokio::time::timeout(Duration::from_secs(1), state.system_started_notify.notified())
-            .await
-            .expect("system task should start after user release");
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            state.system_started_notify.notified(),
+        )
+        .await
+        .expect("system task should start after user release");
     }
 
     state.system_released.store(true, Ordering::SeqCst);
@@ -2150,9 +2346,12 @@ async fn stop_cancels_system_work_for_the_target_session() {
     .expect("publish system");
 
     while !state.system_started.load(Ordering::SeqCst) {
-        tokio::time::timeout(Duration::from_secs(1), state.system_started_notify.notified())
-            .await
-            .expect("system task should start");
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            state.system_started_notify.notified(),
+        )
+        .await
+        .expect("system task should start");
     }
 
     bus.publish_inbound(InboundMessage {
@@ -2314,4 +2513,578 @@ async fn direct_requests_for_different_sessions_can_run_in_parallel() {
 
     assert_eq!(second_result, "session-b done");
     assert_eq!(first_result, "session-a done");
+}
+
+#[tokio::test]
+async fn btw_replies_while_main_lane_keeps_running() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message("cli", "btw", "cli:btw", "main-hold"))
+        .await
+        .expect("publish main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message("cli", "btw", "cli:btw", "/btw status?"))
+        .await
+        .expect("publish btw");
+
+    let btw_outbound = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
+        .await
+        .expect("btw reply should arrive before the main turn completes")
+        .expect("btw outbound");
+    assert_eq!(btw_outbound.content, "btw reply");
+
+    state.main_released.store(true, Ordering::SeqCst);
+    state.main_release_notify.notify_waiters();
+    let main_outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("main outbound")
+        .expect("main outbound");
+    assert_eq!(main_outbound.content, "main final");
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn btw_does_not_persist_user_or_assistant_turns() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "history",
+        "cli:history",
+        "main-hold",
+    ))
+    .await
+    .expect("publish main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "history",
+        "cli:history",
+        "/btw history-check",
+    ))
+    .await
+    .expect("publish btw");
+
+    state.main_released.store(true, Ordering::SeqCst);
+    state.main_release_notify.notify_waiters();
+    let _ = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("main outbound")
+        .expect("main outbound");
+
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let session = agent
+        .load_session_by_key("cli:history")
+        .expect("load session")
+        .expect("session exists");
+    let turn_texts = session
+        .messages
+        .iter()
+        .map(|message| {
+            message
+                .content
+                .as_str()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| message.content.to_string())
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        turn_texts.iter().all(|content| !content.contains("/btw")),
+        "{turn_texts:?}"
+    );
+    assert!(
+        turn_texts
+            .iter()
+            .all(|content| !content.contains("history-check")),
+        "{turn_texts:?}"
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn btw_requires_an_active_main_task() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "inactive",
+        "cli:inactive",
+        "/btw hello",
+    ))
+    .await
+    .expect("publish btw");
+
+    let outbound = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
+        .await
+        .expect("btw should return a user-visible rejection when no main task is active")
+        .expect("outbound");
+    assert!(
+        outbound.content.contains("active main task") || outbound.content.contains("running main"),
+        "{}",
+        outbound.content
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn btw_uses_the_session_active_profile_snapshot() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    agent
+        .process_direct(
+            "/model openrouter:deepseek-r1",
+            "cli:profile",
+            "cli",
+            "profile",
+        )
+        .await
+        .expect("switch profile");
+    assert_eq!(
+        agent
+            .current_profile_for_session("cli:profile")
+            .expect("profile"),
+        "openrouter:deepseek-r1"
+    );
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "profile",
+        "cli:profile",
+        "main-hold",
+    ))
+    .await
+    .expect("publish main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "profile",
+        "cli:profile",
+        "/btw profile-check",
+    ))
+    .await
+    .expect("publish btw");
+
+    wait_for_flag(&state.btw_started, &state.btw_started_notify).await;
+    let records = state.records.lock().await.clone();
+    assert!(records.len() >= 2, "{records:?}");
+    let btw_request = records.last().expect("btw request");
+    assert_eq!(btw_request.provider, "openrouter");
+    assert_eq!(btw_request.model, "deepseek/deepseek-r1");
+    assert_eq!(btw_request.extras.get("temperature"), Some(&json!(0.1)));
+    assert_eq!(
+        btw_request.extras.get("reasoning"),
+        Some(&json!({"enabled": true}))
+    );
+
+    state.main_released.store(true, Ordering::SeqCst);
+    state.main_release_notify.notify_waiters();
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn btw_rejects_when_the_bound_main_generation_changes_before_start() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message("cli", "stale", "cli:stale", "main-hold"))
+        .await
+        .expect("publish main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "stale",
+        "cli:stale",
+        "/btw stale-generation",
+    ))
+    .await
+    .expect("publish btw");
+
+    state.main_released.store(true, Ordering::SeqCst);
+    state.main_release_notify.notify_waiters();
+
+    let outbound = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
+        .await
+        .expect("btw should reject stale generation changes")
+        .expect("outbound");
+    assert!(
+        outbound.content.contains("stale") || outbound.content.contains("generation"),
+        "{}",
+        outbound.content
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn btw_rejects_a_second_active_btw_for_the_same_session() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message("cli", "slot", "cli:slot", "main-hold"))
+        .await
+        .expect("publish main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message("cli", "slot", "cli:slot", "/btw hold-btw"))
+        .await
+        .expect("publish first btw");
+    wait_for_flag(&state.btw_started, &state.btw_started_notify).await;
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "slot",
+        "cli:slot",
+        "/btw second-btw",
+    ))
+    .await
+    .expect("publish second btw");
+
+    let outbound = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
+        .await
+        .expect("second btw should be rejected immediately")
+        .expect("outbound");
+    assert!(
+        outbound.content.contains("already") || outbound.content.contains("another"),
+        "{}",
+        outbound.content
+    );
+
+    state.btw_released.store(true, Ordering::SeqCst);
+    state.btw_release_notify.notify_waiters();
+    state.main_released.store(true, Ordering::SeqCst);
+    state.main_release_notify.notify_waiters();
+    let _ = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound()).await;
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn stop_cancels_active_btw_tasks_for_the_session() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message("cli", "stop", "cli:stop", "main-hold"))
+        .await
+        .expect("publish main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message("cli", "stop", "cli:stop", "/btw hold-btw"))
+        .await
+        .expect("publish btw");
+    wait_for_flag(&state.btw_started, &state.btw_started_notify).await;
+
+    bus.publish_inbound(inbound_message("cli", "stop", "cli:stop", "/stop"))
+        .await
+        .expect("publish stop");
+
+    let outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("stop should emit a cancellation reply")
+        .expect("outbound");
+    assert!(
+        outbound.content.starts_with("Stopped "),
+        "{}",
+        outbound.content
+    );
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), bus.consume_outbound())
+            .await
+            .is_err(),
+        "stopping the session should cancel the btw lane before it completes"
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn btw_bypasses_debounce_and_never_merges_into_user_bursts() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, debounce_config(dir.path(), 200))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message("cli", "burst", "cli:burst", "main-hold"))
+        .await
+        .expect("publish main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    for content in ["first", "second"] {
+        bus.publish_inbound(inbound_message("cli", "burst", "cli:burst", content))
+            .await
+            .expect("publish burst message");
+    }
+    bus.publish_inbound(inbound_message("cli", "burst", "cli:burst", "/btw status?"))
+        .await
+        .expect("publish btw");
+
+    let btw_outbound = tokio::time::timeout(Duration::from_millis(100), bus.consume_outbound())
+        .await
+        .expect("btw should bypass the debounce window")
+        .expect("outbound");
+    assert_eq!(btw_outbound.content, "btw reply");
+
+    state.main_released.store(true, Ordering::SeqCst);
+    state.main_release_notify.notify_waiters();
+    let burst_outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("debounced burst should still flush")
+        .expect("outbound");
+    assert!(burst_outbound.content.contains("[Compressed user burst]"));
+
+    let histories = state.histories.lock().await.clone();
+    let seen_contents = histories
+        .iter()
+        .map(|messages| BtwTestProvider::user_content(messages))
+        .collect::<Vec<_>>();
+    assert!(
+        seen_contents
+            .iter()
+            .any(|content| content.contains("[Compressed user burst]")),
+        "{seen_contents:?}"
+    );
+    assert!(
+        seen_contents
+            .iter()
+            .any(|content| content.contains("status?")),
+        "{seen_contents:?}"
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn btw_cannot_see_unsaved_inflight_main_lane_messages() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "inflight",
+        "cli:inflight",
+        "inflight-shadow",
+    ))
+    .await
+    .expect("publish inflight main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "inflight",
+        "cli:inflight",
+        "/btw inflight-check",
+    ))
+    .await
+    .expect("publish btw");
+
+    wait_for_flag(&state.btw_started, &state.btw_started_notify).await;
+    let histories = state.histories.lock().await.clone();
+    let btw_history = histories
+        .iter()
+        .rev()
+        .find(|messages| BtwTestProvider::user_content(messages).contains("inflight-check"))
+        .expect("btw history");
+    let saw_shadow = btw_history.iter().any(|message| {
+        message.get("role").and_then(Value::as_str) == Some("assistant")
+            && message
+                .get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| content.contains("inflight-shadow"))
+    });
+    assert!(!saw_shadow, "{btw_history:?}");
+
+    state.main_released.store(true, Ordering::SeqCst);
+    state.main_release_notify.notify_waiters();
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn btw_snapshot_load_failures_return_a_user_visible_reply() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    let session_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&session_dir).expect("create sessions dir");
+    std::fs::write(session_dir.join("cli_corrupt.jsonl"), "not-json").expect("corrupt session");
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "corrupt",
+        "cli:corrupt",
+        "main-hold",
+    ))
+    .await
+    .expect("publish main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "corrupt",
+        "cli:corrupt",
+        "/btw snapshot-fail",
+    ))
+    .await
+    .expect("publish btw");
+
+    let outbound = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
+        .await
+        .expect("btw should return a visible snapshot failure reply")
+        .expect("outbound");
+    assert!(
+        outbound.content.contains("snapshot") || outbound.content.contains("failed"),
+        "{}",
+        outbound.content
+    );
+
+    state.main_released.store(true, Ordering::SeqCst);
+    state.main_release_notify.notify_waiters();
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn btw_provider_or_tool_failures_do_not_affect_the_main_lane() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message("cli", "fail", "cli:fail", "main-hold"))
+        .await
+        .expect("publish main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message("cli", "fail", "cli:fail", "/btw tool-fail"))
+        .await
+        .expect("publish btw");
+
+    state.main_released.store(true, Ordering::SeqCst);
+    state.main_release_notify.notify_waiters();
+
+    let mut contents = Vec::new();
+    while contents.len() < 2 {
+        let outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+            .await
+            .expect("both lanes should resolve independently")
+            .expect("outbound");
+        contents.push(outbound.content);
+    }
+    assert!(
+        contents.iter().any(|content| content == "main final"),
+        "{contents:?}"
+    );
+    assert!(
+        contents
+            .iter()
+            .any(|content| content.contains("failed") || content.contains("tool")),
+        "{contents:?}"
+    );
+
+    agent.stop();
+    runner.abort();
 }
