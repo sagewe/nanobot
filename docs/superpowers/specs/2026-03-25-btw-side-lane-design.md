@@ -140,7 +140,7 @@ Each session now has two conceptual execution classes:
 This means the same session may have:
 
 - one active `main` task
-- zero or more active `btw` tasks
+- zero or one active `btw` task
 
 The design intentionally keeps these separate so future scheduling and cancellation rules remain clear.
 
@@ -173,10 +173,13 @@ Instead, the runtime should perform one session-scoped control read that yields:
 
 - whether a main task is active
 - the active main-task generation
+- whether a `btw` task is already active
 
 The side lane is then bound to that generation.
 
 If the main generation changes before the side-lane task actually starts, the side lane should abort with a normal user-visible response instead of running against the wrong main task.
+
+The “check active main task / check active btw task / reserve btw slot” sequence must be atomic for a given session. Two concurrent `/btw` requests for the same session must not both pass admission.
 
 ## Command Handling
 
@@ -224,13 +227,13 @@ This keeps the first version bounded and removes ambiguity around late side repl
 For a session with an active main task:
 
 1. User sends `/btw what are you doing?`
-2. Runtime atomically reads the session control state and captures the active main-task generation
-3. Runtime confirms there is no other active `btw` task for the same session
-4. Runtime loads the current saved session snapshot
-5. Runtime builds a one-off provider request from that snapshot plus the `/btw` question
-6. Runtime creates a fresh `ToolRegistry` for the side lane
-7. Runtime runs a provider/tool loop without writing main-session history
-8. Runtime sends the final reply back through the originating channel
+2. Runtime atomically reads the session control state, captures the active main-task generation, and reserves the session’s single `btw` slot
+3. Runtime loads the current saved session snapshot
+4. Runtime builds a one-off provider request from that snapshot plus the `/btw` question
+5. Runtime creates a fresh `ToolRegistry` for the side lane
+6. Runtime runs a provider/tool loop without writing main-session history
+7. Runtime sends the final reply back through the originating channel
+8. Runtime releases the session’s `btw` slot
 
 If no main task is active:
 
