@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -404,12 +404,18 @@ impl LlmProvider for ReplayAwareProvider {
 struct BtwState {
     main_started: AtomicBool,
     main_released: AtomicBool,
+    main_start_count: AtomicUsize,
     btw_started: AtomicBool,
     btw_released: AtomicBool,
+    btw_ready: AtomicBool,
+    btw_completed: AtomicBool,
     main_started_notify: Notify,
+    main_start_count_notify: Notify,
     main_release_notify: Notify,
     btw_started_notify: Notify,
     btw_release_notify: Notify,
+    btw_ready_notify: Notify,
+    btw_completed_notify: Notify,
     records: Arc<Mutex<Vec<RecordedRequest>>>,
     histories: Arc<Mutex<Vec<Vec<Value>>>>,
 }
@@ -495,7 +501,9 @@ impl BtwTestProvider {
 
         if normalized.contains("main-hold") || normalized.contains("main block") {
             self.state.main_started.store(true, Ordering::SeqCst);
+            self.state.main_start_count.fetch_add(1, Ordering::SeqCst);
             self.state.main_started_notify.notify_waiters();
+            self.state.main_start_count_notify.notify_waiters();
             while !self.state.main_released.load(Ordering::SeqCst) {
                 self.state.main_release_notify.notified().await;
             }
@@ -521,12 +529,14 @@ impl BtwTestProvider {
             });
         }
 
-        if normalized.contains("snapshot-fail") {
-            return Err(anyhow::anyhow!("snapshot load failed"));
-        }
-
         if normalized.contains("tool-fail") {
             return Err(anyhow::anyhow!("btw tool failed"));
+        }
+
+        if normalized.contains("stale-generation") {
+            while !self.state.btw_ready.load(Ordering::SeqCst) {
+                self.state.btw_ready_notify.notified().await;
+            }
         }
 
         if normalized.contains("profile-check")
@@ -540,12 +550,17 @@ impl BtwTestProvider {
             self.state.btw_started_notify.notify_waiters();
         }
 
-        Ok(LlmResponse {
+        let response = LlmResponse {
             content: Some("btw reply".to_string()),
             tool_calls: Vec::new(),
             finish_reason: "stop".to_string(),
             extra: Map::new(),
-        })
+        };
+        if normalized.contains("history-check") {
+            self.state.btw_completed.store(true, Ordering::SeqCst);
+            self.state.btw_completed_notify.notify_waiters();
+        }
+        Ok(response)
     }
 }
 
@@ -915,12 +930,18 @@ async fn wait_for_flag(flag: &AtomicBool, notify: &Notify) {
     }
 }
 
-async fn wait_for_record_count(state: &Arc<BtwState>, count: usize) {
+async fn wait_for_count(counter: &AtomicUsize, notify: &Notify, expected: usize) {
     loop {
-        if state.records.lock().await.len() >= count {
+        if counter.load(Ordering::SeqCst) >= expected {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        let notified = notify.notified();
+        if counter.load(Ordering::SeqCst) >= expected {
+            return;
+        }
+        tokio::time::timeout(Duration::from_secs(1), notified)
+            .await
+            .expect("counter should reach expected value");
     }
 }
 
@@ -2610,7 +2631,12 @@ async fn btw_does_not_persist_user_or_assistant_turns() {
         .expect("main outbound")
         .expect("main outbound");
 
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        state.btw_completed_notify.notified(),
+    )
+    .await
+    .expect("btw should complete before inspecting persistence");
 
     let session = agent
         .load_session_by_key("cli:history")
@@ -2635,6 +2661,12 @@ async fn btw_does_not_persist_user_or_assistant_turns() {
         turn_texts
             .iter()
             .all(|content| !content.contains("history-check")),
+        "{turn_texts:?}"
+    );
+    assert!(
+        turn_texts
+            .iter()
+            .all(|content| !content.contains("btw reply")),
         "{turn_texts:?}"
     );
     assert!(
@@ -2787,16 +2819,18 @@ async fn btw_rejects_when_the_bound_main_generation_changes_before_start() {
 
     state.main_released.store(true, Ordering::SeqCst);
     state.main_release_notify.notify_waiters();
-    tokio::time::timeout(Duration::from_secs(1), wait_for_record_count(&state, 2))
-        .await
-        .expect("second generation should start before BTW is allowed to continue");
-
-    state.main_started.store(false, Ordering::SeqCst);
     state.main_released.store(false, Ordering::SeqCst);
     bus.publish_inbound(inbound_message("cli", "stale", "cli:stale", "main-hold"))
         .await
         .expect("publish second main");
-    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        wait_for_count(&state.main_start_count, &state.main_start_count_notify, 2),
+    )
+    .await
+    .expect("second generation should start before BTW is allowed to continue");
+    state.btw_ready.store(true, Ordering::SeqCst);
+    state.btw_ready_notify.notify_waiters();
 
     let outbound = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
         .await
@@ -3071,7 +3105,7 @@ async fn btw_snapshot_load_failures_return_a_user_visible_reply() {
         "cli",
         "corrupt",
         "cli:corrupt",
-        "/btw snapshot-fail",
+        "/btw snapshot-profile-read",
     ))
     .await
     .expect("publish btw");
