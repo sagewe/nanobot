@@ -172,6 +172,7 @@ struct LogProgressReporter {
 struct PendingBurst {
     messages: Vec<InboundMessage>,
     timer: JoinHandle<()>,
+    generation: u64,
 }
 
 #[async_trait]
@@ -484,6 +485,7 @@ pub struct AgentLoop {
     context: ContextBuilder,
     subagents: SubagentManager,
     session_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    session_generations: Arc<Mutex<HashMap<String, u64>>>,
     pending_bursts: Arc<Mutex<HashMap<String, PendingBurst>>>,
     active_tasks: Arc<Mutex<HashMap<String, Vec<JoinHandle<()>>>>>,
     running: Arc<AtomicBool>,
@@ -593,6 +595,7 @@ impl AgentLoop {
             context,
             subagents,
             session_locks: Arc::new(Mutex::new(HashMap::new())),
+            session_generations: Arc::new(Mutex::new(HashMap::new())),
             pending_bursts: Arc::new(Mutex::new(HashMap::new())),
             active_tasks: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(AtomicBool::new(false)),
@@ -627,8 +630,13 @@ impl AgentLoop {
     }
 
     async fn dispatch(&self, msg: InboundMessage) -> Result<()> {
-        let lock = self.session_lock(&msg.session_key()).await;
+        let session_key = self.processing_session_key(&msg);
+        let generation = self.current_session_generation(&session_key).await;
+        let lock = self.session_lock(&session_key).await;
         let _guard = lock.lock().await;
+        if self.current_session_generation(&session_key).await != generation {
+            return Ok(());
+        }
         let tools = self.build_tools().await;
         if let Some(outbound) = self.process_message(msg, &tools).await? {
             self.bus.publish_outbound(outbound).await?;
@@ -637,7 +645,8 @@ impl AgentLoop {
     }
 
     async fn handle_stop(&self, msg: &InboundMessage) {
-        let session_key = msg.session_key();
+        let session_key = self.processing_session_key(msg);
+        self.bump_session_generation(&session_key).await;
         let tasks = self
             .active_tasks
             .lock()
@@ -1112,10 +1121,42 @@ impl AgentLoop {
             .clone()
     }
 
+    async fn current_session_generation(&self, session_key: &str) -> u64 {
+        *self
+            .session_generations
+            .lock()
+            .await
+            .entry(session_key.to_string())
+            .or_insert(0)
+    }
+
+    async fn bump_session_generation(&self, session_key: &str) -> u64 {
+        let mut generations = self.session_generations.lock().await;
+        let generation = generations.entry(session_key.to_string()).or_insert(0);
+        *generation += 1;
+        *generation
+    }
+
+    fn processing_session_key(&self, msg: &InboundMessage) -> String {
+        if msg.channel == "system" {
+            return msg
+                .chat_id
+                .split_once(':')
+                .map(|(channel, chat_id)| format!("{channel}:{chat_id}"))
+                .unwrap_or_else(|| msg.session_key());
+        }
+        msg.session_key()
+    }
+
     async fn spawn_dispatch(&self, msg: InboundMessage) {
-        let session_key = msg.session_key();
+        let session_key = self.processing_session_key(&msg);
+        let expected_generation = self.current_session_generation(&session_key).await;
         let this = self.clone();
+        let session_key_for_handle = session_key.clone();
         let handle = tokio::spawn(async move {
+            if this.current_session_generation(&session_key_for_handle).await != expected_generation {
+                return;
+            }
             if let Err(error) = this.dispatch(msg).await {
                 error!("agent dispatch failed: {error}");
             }
@@ -1132,27 +1173,31 @@ impl AgentLoop {
         let session_key = msg.session_key();
         let this = self.clone();
         let delay = self.message_debounce_ms;
+        let generation = self.current_session_generation(&session_key).await;
         let mut bursts = self.pending_bursts.lock().await;
         if let Some(existing) = bursts.get_mut(&session_key) {
             existing.messages.push(msg);
             existing.timer.abort();
             let session_key_clone = session_key.clone();
+            let burst_generation = existing.generation;
             existing.timer = tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(delay)).await;
-                this.flush_pending_burst(&session_key_clone).await;
+                this.flush_pending_burst(&session_key_clone, burst_generation)
+                    .await;
             });
             return;
         }
         let session_key_clone = session_key.clone();
         let timer = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(delay)).await;
-            this.flush_pending_burst(&session_key_clone).await;
+            this.flush_pending_burst(&session_key_clone, generation).await;
         });
         bursts.insert(
             session_key,
             PendingBurst {
                 messages: vec![msg],
                 timer,
+                generation,
             },
         );
     }
@@ -1163,10 +1208,15 @@ impl AgentLoop {
         }
     }
 
-    async fn flush_pending_burst(&self, session_key: &str) {
+    async fn flush_pending_burst(&self, session_key: &str, expected_generation: u64) {
         let Some(pending) = self.pending_bursts.lock().await.remove(session_key) else {
             return;
         };
+        if pending.generation != expected_generation
+            || self.current_session_generation(session_key).await != expected_generation
+        {
+            return;
+        }
         if let Some(merged) = Self::merge_burst_messages(pending.messages) {
             self.spawn_dispatch(merged).await;
         }
@@ -1235,6 +1285,7 @@ impl Clone for AgentLoop {
             context: self.context.clone(),
             subagents: self.subagents.clone(),
             session_locks: self.session_locks.clone(),
+            session_generations: self.session_generations.clone(),
             pending_bursts: self.pending_bursts.clone(),
             active_tasks: self.active_tasks.clone(),
             running: self.running.clone(),

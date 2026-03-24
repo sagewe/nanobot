@@ -521,6 +521,80 @@ impl LlmProvider for SameSessionDirectProvider {
 }
 
 #[derive(Default)]
+struct SystemSessionState {
+    user_started: AtomicBool,
+    user_released: AtomicBool,
+    system_started: AtomicBool,
+    system_released: AtomicBool,
+    user_started_notify: Notify,
+    user_release_notify: Notify,
+    system_started_notify: Notify,
+    system_release_notify: Notify,
+}
+
+#[derive(Clone)]
+struct SystemSessionProvider {
+    state: Arc<SystemSessionState>,
+}
+
+#[async_trait]
+impl LlmProvider for SystemSessionProvider {
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+    async fn chat(
+        &self,
+        messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        let last_message = messages.last().cloned().unwrap_or_else(|| json!({}));
+        let role = last_message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let content = last_message
+            .get("content")
+            .and_then(Value::as_str)
+            .and_then(ContextBuilder::strip_runtime_prefix)
+            .unwrap_or_default();
+
+        match (role, content.as_str()) {
+            ("user", "hold-user") => {
+                self.state.user_started.store(true, Ordering::SeqCst);
+                self.state.user_started_notify.notify_waiters();
+                while !self.state.user_released.load(Ordering::SeqCst) {
+                    self.state.user_release_notify.notified().await;
+                }
+                Ok(LlmResponse {
+                    content: Some("user done".to_string()),
+                    tool_calls: Vec::new(),
+                    finish_reason: "stop".to_string(),
+                    extra: Map::new(),
+                })
+            }
+            ("assistant", "system-hold") => {
+                self.state.system_started.store(true, Ordering::SeqCst);
+                self.state.system_started_notify.notify_waiters();
+                while !self.state.system_released.load(Ordering::SeqCst) {
+                    self.state.system_release_notify.notified().await;
+                }
+                Ok(LlmResponse {
+                    content: Some("system done".to_string()),
+                    tool_calls: Vec::new(),
+                    finish_reason: "stop".to_string(),
+                    extra: Map::new(),
+                })
+            }
+            _ => Err(anyhow::anyhow!(
+                "unexpected request shape for system-session provider"
+            )),
+        }
+    }
+}
+
+#[derive(Default)]
 struct DebounceProviderState {
     contents: Arc<Mutex<Vec<String>>>,
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
@@ -1938,6 +2012,177 @@ async fn bus_requests_for_different_sessions_can_complete_in_parallel() {
 
     assert_eq!(contents.first().map(String::as_str), Some("session-b done"));
     assert!(contents.iter().any(|content| content == "session-a done"));
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn system_messages_share_the_same_session_lock_as_user_messages() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(SystemSessionState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(SystemSessionProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::new(
+        bus.clone(),
+        provider,
+        dir.path().to_path_buf(),
+        "mock-model".to_string(),
+        5,
+        10,
+        false,
+        WebToolsConfig::default(),
+    )
+    .await
+    .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "shared".to_string(),
+        content: "hold-user".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:shared".to_string()),
+    })
+    .await
+    .expect("publish user");
+
+    while !state.user_started.load(Ordering::SeqCst) {
+        tokio::time::timeout(Duration::from_secs(1), state.user_started_notify.notified())
+            .await
+            .expect("user task should start");
+    }
+
+    bus.publish_inbound(InboundMessage {
+        channel: "system".to_string(),
+        sender_id: "subagent".to_string(),
+        chat_id: "cli:shared".to_string(),
+        content: "system-hold".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: None,
+    })
+    .await
+    .expect("publish system");
+
+    let system_started_early = tokio::time::timeout(Duration::from_millis(200), async {
+        while !state.system_started.load(Ordering::SeqCst) {
+            state.system_started_notify.notified().await;
+        }
+    })
+    .await
+    .is_ok();
+
+    state.user_released.store(true, Ordering::SeqCst);
+    state.user_release_notify.notify_waiters();
+
+    while !state.system_started.load(Ordering::SeqCst) {
+        tokio::time::timeout(Duration::from_secs(1), state.system_started_notify.notified())
+            .await
+            .expect("system task should start after user release");
+    }
+
+    state.system_released.store(true, Ordering::SeqCst);
+    state.system_release_notify.notify_waiters();
+
+    let mut contents = Vec::new();
+    while contents.len() < 2 {
+        let outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+            .await
+            .expect("timely outbound")
+            .expect("outbound");
+        contents.push(outbound.content);
+    }
+
+    assert!(
+        !system_started_early,
+        "system message overlapped its target user session"
+    );
+    assert!(contents.iter().any(|content| content == "user done"));
+    assert!(contents.iter().any(|content| content == "system done"));
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn stop_cancels_system_work_for_the_target_session() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(SystemSessionState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(SystemSessionProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::new(
+        bus.clone(),
+        provider,
+        dir.path().to_path_buf(),
+        "mock-model".to_string(),
+        5,
+        10,
+        false,
+        WebToolsConfig::default(),
+    )
+    .await
+    .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    bus.publish_inbound(InboundMessage {
+        channel: "system".to_string(),
+        sender_id: "subagent".to_string(),
+        chat_id: "cli:shared".to_string(),
+        content: "system-hold".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: None,
+    })
+    .await
+    .expect("publish system");
+
+    while !state.system_started.load(Ordering::SeqCst) {
+        tokio::time::timeout(Duration::from_secs(1), state.system_started_notify.notified())
+            .await
+            .expect("system task should start");
+    }
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "shared".to_string(),
+        content: "/stop".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:shared".to_string()),
+    })
+    .await
+    .expect("publish stop");
+
+    let outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("stop should produce outbound")
+        .expect("outbound");
+    assert!(
+        outbound.content.starts_with("Stopped "),
+        "{}",
+        outbound.content
+    );
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), bus.consume_outbound())
+            .await
+            .is_err(),
+        "stopped system task should not emit a completion"
+    );
 
     agent.stop();
     runner.abort();

@@ -426,7 +426,7 @@ async fn outbound_delivery_preserves_fifo_for_one_key() {
 }
 
 #[tokio::test]
-async fn outbound_delivery_drops_overflowed_messages_without_blocking_other_keys() {
+async fn outbound_delivery_buffers_same_key_messages_without_blocking_other_keys() {
     let (manager, bus, state) =
         start_mock_manager(Some("chat-a"), 2, Duration::from_millis(100)).await;
     manager.start_all().await;
@@ -450,11 +450,11 @@ async fn outbound_delivery_drops_overflowed_messages_without_blocking_other_keys
     bus.publish_outbound(OutboundMessage {
         channel: "mock".to_string(),
         chat_id: "chat-a".to_string(),
-        content: "overflow".to_string(),
+        content: "third".to_string(),
         metadata: HashMap::new(),
     })
     .await
-    .expect("publish overflow");
+    .expect("publish third");
     bus.publish_outbound(OutboundMessage {
         channel: "mock".to_string(),
         chat_id: "chat-b".to_string(),
@@ -466,44 +466,14 @@ async fn outbound_delivery_drops_overflowed_messages_without_blocking_other_keys
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     let events = state.events().await;
-    assert!(!events.iter().any(|event| event == "start:chat-a:overflow"));
+    assert!(!events.iter().any(|event| event == "start:chat-a:third"));
     assert!(events.iter().any(|event| event == "done:chat-b:other"));
 
     state.release_blocked();
     tokio::time::sleep(Duration::from_millis(250)).await;
     let events = state.events().await;
     assert!(events.iter().any(|event| event == "done:chat-a:second"));
-
-    manager.stop_all().await;
-}
-
-#[tokio::test]
-async fn idle_delivery_workers_retire_after_timeout() {
-    let (manager, bus, state) = start_mock_manager(None, 4, Duration::from_millis(25)).await;
-    manager.start_all().await;
-
-    bus.publish_outbound(OutboundMessage {
-        channel: "mock".to_string(),
-        chat_id: "chat-a".to_string(),
-        content: "only".to_string(),
-        metadata: HashMap::new(),
-    })
-    .await
-    .expect("publish");
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let events = state.events().await;
-    assert!(events.iter().any(|event| event == "done:chat-a:only"));
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            if manager.delivery_worker_count().await == 0 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("idle worker retirement");
+    assert!(events.iter().any(|event| event == "done:chat-a:third"));
 
     manager.stop_all().await;
 }

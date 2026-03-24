@@ -11,7 +11,6 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
-use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
@@ -69,15 +68,8 @@ pub struct TelegramChannel {
 }
 
 struct DeliveryWorkerEntry {
-    id: u64,
-    sender: mpsc::Sender<OutboundMessage>,
+    sender: mpsc::UnboundedSender<OutboundMessage>,
     handle: JoinHandle<()>,
-}
-
-#[derive(Clone)]
-struct DeliveryWorkerSender {
-    id: u64,
-    sender: mpsc::Sender<OutboundMessage>,
 }
 
 impl TelegramChannel {
@@ -378,34 +370,17 @@ impl ChannelManager {
         delivery_worker_idle_timeout: Duration,
     ) {
         let delivery_key = format!("{}:{}", msg.channel, msg.chat_id);
-        let mut msg = msg;
-        loop {
-            let worker = Self::delivery_worker_for_key(
-                delivery_key.clone(),
-                channel.clone(),
-                delivery_workers.clone(),
-                delivery_worker_seq.clone(),
-                delivery_worker_queue_capacity,
-                delivery_worker_idle_timeout,
-            )
-            .await;
-            match worker.sender.try_send(msg) {
-                Ok(()) => return,
-                Err(mpsc::error::TrySendError::Full(returned)) => {
-                    warn!("delivery queue full for {delivery_key}; dropping outbound message");
-                    let _ = returned;
-                    return;
-                }
-                Err(mpsc::error::TrySendError::Closed(returned)) => {
-                    msg = returned;
-                    Self::remove_delivery_worker_if_current(
-                        &delivery_workers,
-                        &delivery_key,
-                        worker.id,
-                    )
-                    .await;
-                }
-            }
+        let sender = Self::delivery_worker_for_key(
+            delivery_key.clone(),
+            channel.clone(),
+            delivery_workers.clone(),
+            delivery_worker_seq.clone(),
+            delivery_worker_queue_capacity,
+            delivery_worker_idle_timeout,
+        )
+        .await;
+        if sender.send(msg).is_err() {
+            warn!("delivery worker closed for {delivery_key}; outbound message was not delivered");
         }
     }
 
@@ -416,86 +391,45 @@ impl ChannelManager {
         delivery_worker_seq: Arc<AtomicU64>,
         delivery_worker_queue_capacity: usize,
         delivery_worker_idle_timeout: Duration,
-    ) -> DeliveryWorkerSender {
+    ) -> mpsc::UnboundedSender<OutboundMessage> {
         let mut workers = delivery_workers.lock().await;
         if let Some(existing) = workers.get(&delivery_key) {
-            return DeliveryWorkerSender {
-                id: existing.id,
-                sender: existing.sender.clone(),
-            };
+            return existing.sender.clone();
         }
 
-        let worker_id = delivery_worker_seq.fetch_add(1, Ordering::SeqCst) + 1;
-        let (sender, receiver) = mpsc::channel(delivery_worker_queue_capacity.max(1));
+        let _ = delivery_worker_seq;
+        let _ = delivery_worker_queue_capacity;
+        let _ = delivery_worker_idle_timeout;
+        let (sender, receiver) = mpsc::unbounded_channel();
         let worker_key = delivery_key.clone();
         let workers_for_task = delivery_workers.clone();
         let channel_for_task = channel.clone();
         let handle = tokio::spawn(async move {
-            Self::run_delivery_worker(
-                worker_key,
-                worker_id,
-                channel_for_task,
-                receiver,
-                workers_for_task,
-                delivery_worker_idle_timeout,
-            )
-            .await;
+            Self::run_delivery_worker(worker_key, channel_for_task, receiver, workers_for_task).await;
         });
         workers.insert(
             delivery_key,
             DeliveryWorkerEntry {
-                id: worker_id,
                 sender: sender.clone(),
                 handle,
             },
         );
-        DeliveryWorkerSender {
-            id: worker_id,
-            sender,
-        }
+        sender
     }
 
     async fn run_delivery_worker(
         delivery_key: String,
-        worker_id: u64,
         channel: Arc<dyn Channel>,
-        mut receiver: mpsc::Receiver<OutboundMessage>,
+        mut receiver: mpsc::UnboundedReceiver<OutboundMessage>,
         delivery_workers: Arc<Mutex<HashMap<String, DeliveryWorkerEntry>>>,
-        delivery_worker_idle_timeout: Duration,
     ) {
-        loop {
-            let message = if delivery_worker_idle_timeout.is_zero() {
-                receiver.recv().await
-            } else {
-                match timeout(delivery_worker_idle_timeout, receiver.recv()).await {
-                    Ok(message) => message,
-                    Err(_) => break,
-                }
-            };
-            let Some(message) = message else {
-                break;
-            };
-
+        while let Some(message) = receiver.recv().await {
             if let Err(error) = channel.send(message).await {
                 error!("failed to send outbound message: {error}");
             }
         }
 
-        Self::remove_delivery_worker_if_current(&delivery_workers, &delivery_key, worker_id).await;
-    }
-
-    async fn remove_delivery_worker_if_current(
-        delivery_workers: &Arc<Mutex<HashMap<String, DeliveryWorkerEntry>>>,
-        delivery_key: &str,
-        worker_id: u64,
-    ) {
         let mut workers = delivery_workers.lock().await;
-        let should_remove = workers
-            .get(delivery_key)
-            .map(|worker| worker.id == worker_id)
-            .unwrap_or(false);
-        if should_remove {
-            workers.remove(delivery_key);
-        }
+        workers.remove(&delivery_key);
     }
 }
