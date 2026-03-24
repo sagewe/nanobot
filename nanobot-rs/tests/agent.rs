@@ -488,9 +488,7 @@ impl BtwTestProvider {
             }
             self.state.main_started.store(true, Ordering::SeqCst);
             self.state.main_started_notify.notify_waiters();
-            while !self.state.main_released.load(Ordering::SeqCst) {
-                self.state.main_release_notify.notified().await;
-            }
+            wait_for_flag(&self.state.main_released, &self.state.main_release_notify).await;
             return Ok(LlmResponse {
                 content: Some("main final".to_string()),
                 tool_calls: Vec::new(),
@@ -504,9 +502,7 @@ impl BtwTestProvider {
             self.state.main_start_count.fetch_add(1, Ordering::SeqCst);
             self.state.main_started_notify.notify_waiters();
             self.state.main_start_count_notify.notify_waiters();
-            while !self.state.main_released.load(Ordering::SeqCst) {
-                self.state.main_release_notify.notified().await;
-            }
+            wait_for_flag(&self.state.main_released, &self.state.main_release_notify).await;
             return Ok(LlmResponse {
                 content: Some("main final".to_string()),
                 tool_calls: Vec::new(),
@@ -518,9 +514,7 @@ impl BtwTestProvider {
         if normalized.contains("hold-btw") {
             self.state.btw_started.store(true, Ordering::SeqCst);
             self.state.btw_started_notify.notify_waiters();
-            while !self.state.btw_released.load(Ordering::SeqCst) {
-                self.state.btw_release_notify.notified().await;
-            }
+            wait_for_flag(&self.state.btw_released, &self.state.btw_release_notify).await;
             return Ok(LlmResponse {
                 content: Some("btw final".to_string()),
                 tool_calls: Vec::new(),
