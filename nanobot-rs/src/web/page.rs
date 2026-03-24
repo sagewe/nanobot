@@ -464,9 +464,11 @@ pub fn render_index_html() -> String {
       }
 
       .msg-group[data-role="assistant"] .msg-avatar {
-        background: var(--sidebar-bg);
-        border: 1px solid var(--line);
-        color: var(--accent);
+        background: linear-gradient(135deg, #a855f7, #6366f1);
+        color: #fff;
+        font-size: 0.6rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
       }
 
       .msg-body {
@@ -655,16 +657,19 @@ pub fn render_index_html() -> String {
 
       #composer {
         margin-top: 0.5rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
+      }
+
+      .composer-input-wrap {
+        position: relative;
       }
 
       .composer-actions {
+        position: absolute;
+        bottom: 0.5rem;
+        right: 0.5rem;
         display: flex;
         align-items: center;
         gap: 0.4rem;
-        justify-content: flex-end;
       }
 
       #message-input {
@@ -674,7 +679,7 @@ pub fn render_index_html() -> String {
         resize: vertical;
         border: 1px solid var(--line);
         border-radius: 0.5rem;
-        padding: 0.65rem 1rem;
+        padding: 0.65rem 1rem 3rem 1rem;
         font: inherit;
         color: var(--ink);
         background: var(--input-bg);
@@ -693,9 +698,9 @@ pub fn render_index_html() -> String {
       #duplicate-session-button {
         border: 1px solid var(--line);
         border-radius: 999px;
-        padding: 0.55rem 1rem;
+        padding: 0.3rem 0.75rem;
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 0.82rem;
+        font-size: 0.75rem;
         color: var(--muted2);
         background: var(--input-bg);
         cursor: pointer;
@@ -735,15 +740,24 @@ pub fn render_index_html() -> String {
         }
 
         #app {
-          padding: 0.5rem 0.75rem;
+          padding: 0;
         }
 
         .shell {
-          border-radius: 0.75rem;
+          border-radius: 0;
+          padding: 0.5rem 0.5rem;
+        }
+
+        .conversation-pane {
+          padding: 0.5rem 0.25rem;
+        }
+
+        #transcript {
+          padding: 0.5rem 0.25rem;
         }
 
         .channels-pane {
-          padding: 1.25rem;
+          padding: 0.75rem 0.5rem;
         }
 
         .account-panel {
@@ -814,7 +828,7 @@ pub fn render_index_html() -> String {
         :root:not([data-theme="light"]):not([data-theme="dark"]) .account-panel { background: #252320; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) #weixin-qr-panel { background: #1e1c1a; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="assistant"] .msg-bubble { background: #252320; }
-        :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="assistant"] .msg-avatar { background: #1a1815; }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="assistant"] .msg-avatar { background: linear-gradient(135deg, #a855f7, #6366f1); }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="tool"] .msg-bubble { background: #1a1815; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="tool"] .msg-avatar { background: #1a1815; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-tool-output-content { background: #252320; }
@@ -840,7 +854,7 @@ pub fn render_index_html() -> String {
       :root[data-theme="dark"] .account-panel { background: #252320; }
       :root[data-theme="dark"] #weixin-qr-panel { background: #1e1c1a; }
       :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-bubble { background: #252320; }
-      :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-avatar { background: #1a1815; }
+      :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-avatar { background: linear-gradient(135deg, #a855f7, #6366f1); }
       :root[data-theme="dark"] .msg-group[data-role="tool"] .msg-bubble { background: #1a1815; }
       :root[data-theme="dark"] .msg-group[data-role="tool"] .msg-avatar { background: #1a1815; }
       :root[data-theme="dark"] .msg-tool-output-content { background: #252320; }
@@ -913,6 +927,28 @@ pub fn render_index_html() -> String {
 
         .session-header {
           flex-wrap: wrap;
+          transition: opacity 0.15s ease-out, max-height 0.2s ease-out;
+          overflow: hidden;
+          max-height: 10rem;
+        }
+
+        .session-header.scroll-hidden {
+          opacity: 0;
+          max-height: 0;
+          pointer-events: none;
+        }
+
+        #composer {
+          transition: opacity 0.15s ease-out, max-height 0.2s ease-out, margin-top 0.2s ease-out;
+          overflow: hidden;
+          max-height: 20rem;
+        }
+
+        #composer.scroll-hidden {
+          opacity: 0;
+          max-height: 0;
+          pointer-events: none;
+          margin-top: 0;
         }
 
         .session-header #session-select {
@@ -924,6 +960,13 @@ pub fn render_index_html() -> String {
         #profile-select,
         #message-input {
           font-size: 16px;
+        }
+
+        #message-input {
+          min-height: unset;
+          height: 5rem;
+          resize: none;
+          padding: 0.65rem 1rem 3rem 1rem;
         }
 
         #send-button,
@@ -999,12 +1042,14 @@ pub fn render_index_html() -> String {
           <section id="transcript" aria-live="polite"></section>
           <div id="status" role="status"></div>
           <form id="composer">
-            <textarea id="message-input" data-i18n-placeholder="input_placeholder" placeholder="Ask Pikachu to inspect, edit, or research. (Enter to send, Ctrl+Enter for newline)"></textarea>
-            <div class="composer-actions">
-              <button id="duplicate-session-button" type="button" data-i18n="duplicate_to_web" hidden>Duplicate to Web</button>
-              <button id="send-button" type="submit" data-i18n-title="send_button" title="Send (Enter)">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-              </button>
+            <div class="composer-input-wrap">
+              <textarea id="message-input" data-i18n-placeholder="input_placeholder" placeholder="Ask Pikachu to inspect, edit, or research. (Enter to send, Ctrl+Enter for newline)"></textarea>
+              <div class="composer-actions">
+                <button id="duplicate-session-button" type="button" data-i18n="duplicate_to_web" hidden>Duplicate to Web</button>
+                <button id="send-button" type="submit" data-i18n-title="send_button" title="Send (Enter)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+              </div>
             </div>
           </form>
         </section>
@@ -1219,7 +1264,7 @@ pub fn render_index_html() -> String {
       }
 
       const USER_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
-      const ASSISTANT_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+      const ASSISTANT_AVATAR_SVG = `AI`;
       const TOOL_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
       const COPY_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
       const CHECK_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
@@ -1346,7 +1391,9 @@ pub fn render_index_html() -> String {
           }
           const contentEl = document.createElement("div");
           contentEl.className = "msg-tool-output-content";
-          contentEl.textContent = message.content || "";
+          const raw = message.content || "";
+          try { contentEl.textContent = JSON.stringify(JSON.parse(raw), null, 2); }
+          catch { contentEl.textContent = raw; }
           header.addEventListener("click", () => {
             header.classList.toggle("open");
             contentEl.classList.toggle("open");
@@ -1935,6 +1982,34 @@ pub fn render_index_html() -> String {
           setTimeout(() => messageInput.scrollIntoView({ behavior: "smooth", block: "nearest" }), 300);
         }
       });
+
+      (function() {
+        const sessionHeader = document.querySelector(".session-header");
+        const composerEl = document.getElementById("composer");
+        let showTimer = null;
+        function hideChrome() {
+          sessionHeader.classList.add("scroll-hidden");
+          composerEl.classList.add("scroll-hidden");
+          clearTimeout(showTimer);
+        }
+
+        transcript.addEventListener("touchmove", () => {
+          if (!isMobile()) return;
+          hideChrome();
+        }, { passive: true });
+        transcript.addEventListener("touchend", () => {
+          if (!isMobile()) return;
+          sessionHeader.classList.remove("scroll-hidden");
+          composerEl.classList.remove("scroll-hidden");
+          clearTimeout(showTimer);
+        }, { passive: true });
+        transcript.addEventListener("touchcancel", () => {
+          if (!isMobile()) return;
+          sessionHeader.classList.remove("scroll-hidden");
+          composerEl.classList.remove("scroll-hidden");
+          clearTimeout(showTimer);
+        }, { passive: true });
+      })();
 
       messageInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
