@@ -901,10 +901,26 @@ fn spawn_runner(agent: AgentLoop) -> tokio::task::JoinHandle<()> {
 }
 
 async fn wait_for_flag(flag: &AtomicBool, notify: &Notify) {
-    while !flag.load(Ordering::SeqCst) {
-        tokio::time::timeout(Duration::from_secs(1), notify.notified())
+    loop {
+        if flag.load(Ordering::SeqCst) {
+            return;
+        }
+        let notified = notify.notified();
+        if flag.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::timeout(Duration::from_secs(1), notified)
             .await
             .expect("flag should be set");
+    }
+}
+
+async fn wait_for_record_count(state: &Arc<BtwState>, count: usize) {
+    loop {
+        if state.records.lock().await.len() >= count {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -2621,6 +2637,12 @@ async fn btw_does_not_persist_user_or_assistant_turns() {
             .all(|content| !content.contains("history-check")),
         "{turn_texts:?}"
     );
+    assert!(
+        turn_texts
+            .iter()
+            .all(|content| !content.contains("btw reply")),
+        "{turn_texts:?}"
+    );
 
     agent.stop();
     runner.abort();
@@ -2755,8 +2777,26 @@ async fn btw_rejects_when_the_bound_main_generation_changes_before_start() {
     .await
     .expect("publish btw");
 
+    bus.publish_inbound(inbound_message("cli", "stale", "cli:stale", "/stop"))
+        .await
+        .expect("publish stop for first generation");
+    let _ = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("stop should cancel the first generation")
+        .expect("stop outbound");
+
     state.main_released.store(true, Ordering::SeqCst);
     state.main_release_notify.notify_waiters();
+    tokio::time::timeout(Duration::from_secs(1), wait_for_record_count(&state, 2))
+        .await
+        .expect("second generation should start before BTW is allowed to continue");
+
+    state.main_started.store(false, Ordering::SeqCst);
+    state.main_released.store(false, Ordering::SeqCst);
+    bus.publish_inbound(inbound_message("cli", "stale", "cli:stale", "main-hold"))
+        .await
+        .expect("publish second main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
 
     let outbound = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
         .await
@@ -2912,6 +2952,11 @@ async fn btw_bypasses_debounce_and_never_merges_into_user_bursts() {
         .expect("debounced burst should still flush")
         .expect("outbound");
     assert!(burst_outbound.content.contains("[Compressed user burst]"));
+    assert!(
+        !burst_outbound.content.contains("status?"),
+        "{}",
+        burst_outbound.content
+    );
 
     let histories = state.histories.lock().await.clone();
     let seen_contents = histories
@@ -2928,6 +2973,13 @@ async fn btw_bypasses_debounce_and_never_merges_into_user_bursts() {
         seen_contents
             .iter()
             .any(|content| content.contains("status?")),
+        "{seen_contents:?}"
+    );
+    assert!(
+        seen_contents
+            .iter()
+            .all(|content| !(content.contains("[Compressed user burst]")
+                && content.contains("status?"))),
         "{seen_contents:?}"
     );
 
@@ -3002,10 +3054,6 @@ async fn btw_snapshot_load_failures_return_a_user_visible_reply() {
         .expect("agent");
     let runner = spawn_runner(agent.clone());
 
-    let session_dir = dir.path().join("sessions");
-    std::fs::create_dir_all(&session_dir).expect("create sessions dir");
-    std::fs::write(session_dir.join("cli_corrupt.jsonl"), "not-json").expect("corrupt session");
-
     bus.publish_inbound(inbound_message(
         "cli",
         "corrupt",
@@ -3015,6 +3063,9 @@ async fn btw_snapshot_load_failures_return_a_user_visible_reply() {
     .await
     .expect("publish main");
     wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    let session_path = dir.path().join("sessions").join("cli_corrupt.jsonl");
+    std::fs::write(&session_path, "not-json").expect("corrupt session after main started");
 
     bus.publish_inbound(inbound_message(
         "cli",
@@ -3037,6 +3088,11 @@ async fn btw_snapshot_load_failures_return_a_user_visible_reply() {
 
     state.main_released.store(true, Ordering::SeqCst);
     state.main_release_notify.notify_waiters();
+    let main_outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("main should still complete after BTW failure")
+        .expect("main outbound");
+    assert_eq!(main_outbound.content, "main final");
     agent.stop();
     runner.abort();
 }
