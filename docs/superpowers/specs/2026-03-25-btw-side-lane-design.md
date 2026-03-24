@@ -149,12 +149,34 @@ The design intentionally keeps these separate so future scheduling and cancellat
 The minimal runtime state needed is:
 
 - `main_task_running: HashSet<String>` or equivalent keyed by `session_key`
+- `main_task_generation: HashMap<String, u64>` or equivalent keyed by `session_key`
 - `btw_tasks: HashMap<String, Vec<JoinHandle<()>>>` or equivalent keyed by `session_key`
 
 The purpose is not to create a generalized scheduler yet. It is only to answer:
 
 - is a main task active for this session?
+- which exact main-task generation is active for this session?
 - what side-lane tasks should `/stop` cancel?
+
+### Atomic BTW Activation
+
+`/btw` activation must bind to a specific main-task generation atomically.
+
+The runtime should not:
+
+1. check “is a main task running?”
+2. then independently load a snapshot later
+
+because the main lane can finish or restart in between.
+
+Instead, the runtime should perform one session-scoped control read that yields:
+
+- whether a main task is active
+- the active main-task generation
+
+The side lane is then bound to that generation.
+
+If the main generation changes before the side-lane task actually starts, the side lane should abort with a normal user-visible response instead of running against the wrong main task.
 
 ## Command Handling
 
@@ -185,17 +207,30 @@ This keeps stop semantics easy to explain:
 
 No dedicated `/btw-stop` command is needed in this slice.
 
+### BTW Concurrency Limit
+
+The first version should allow at most one active `btw` task per session.
+
+If another `/btw ...` arrives while a `btw` task is already active for that same session, return a clear response such as:
+
+```text
+A BTW reply is already running for this session. Wait for it to finish or stop the session.
+```
+
+This keeps the first version bounded and removes ambiguity around late side replies.
+
 ## Processing Flow
 
 For a session with an active main task:
 
 1. User sends `/btw what are you doing?`
-2. Runtime checks `main_task_running[session_key]`
-3. Runtime loads the current saved session snapshot
-4. Runtime builds a one-off provider request from that snapshot plus the `/btw` question
-5. Runtime creates a fresh `ToolRegistry` for the side lane
-6. Runtime runs a provider/tool loop without writing main-session history
-7. Runtime sends the final reply back through the originating channel
+2. Runtime atomically reads the session control state and captures the active main-task generation
+3. Runtime confirms there is no other active `btw` task for the same session
+4. Runtime loads the current saved session snapshot
+5. Runtime builds a one-off provider request from that snapshot plus the `/btw` question
+6. Runtime creates a fresh `ToolRegistry` for the side lane
+7. Runtime runs a provider/tool loop without writing main-session history
+8. Runtime sends the final reply back through the originating channel
 
 If no main task is active:
 
@@ -235,6 +270,20 @@ Ordinary user messages still follow existing debounce rules.
 ### No Active Main Task
 
 Return a normal user-visible response, not an internal error.
+
+### Snapshot or Profile Read Failure
+
+If the runtime cannot load the session snapshot or cannot resolve the active profile for the side lane:
+
+- return a normal user-visible error reply for the `/btw` request
+- do not start the side lane
+- do not affect the main task
+
+This includes cases such as:
+
+- `SessionStore` read failure
+- missing session snapshot
+- invalid or missing `active_profile`
 
 ### BTW Provider Failure
 
@@ -291,6 +340,7 @@ No channel-specific protocol changes are required for the first version because 
 
 ### Isolation
 
-1. Multiple `/btw ...` calls for the same active session can run concurrently
+1. A second `/btw ...` for the same session is rejected while one is already active
 2. A btw failure does not affect the main task
 3. A main task completion does not retroactively write btw messages into session history
+4. A btw task bound to an outdated main-task generation is rejected instead of running against the wrong main flow
