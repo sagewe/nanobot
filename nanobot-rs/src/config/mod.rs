@@ -76,6 +76,7 @@ pub struct CodexProviderConfig {
     pub auth_file: String,
     #[serde(default = "default_codex_api_base")]
     pub api_base: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default = "default_codex_service_tier")]
     pub service_tier: Option<String>,
 }

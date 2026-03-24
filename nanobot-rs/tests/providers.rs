@@ -6,6 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nanobot_rs::config::Config;
 use nanobot_rs::config::load_config;
+use nanobot_rs::config::save_config;
 use nanobot_rs::providers::{
     LlmProvider, LlmResponse, ProviderError, ProviderKind, ProviderPool, ProviderRegistry,
     ProviderRequestDescriptor,
@@ -276,6 +277,37 @@ fn config_defaults_include_a_concrete_codex_provider_block() {
             .pointer("/providers/codex/apiBase")
             .and_then(Value::as_str),
         Some("https://chatgpt.com/backend-api/codex")
+    );
+    assert!(value.pointer("/providers/codex/serviceTier").is_none());
+}
+
+#[test]
+fn save_config_toml_template_omits_legacy_default_provider_fields() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("config.toml");
+    let config = Config::default();
+
+    let written = save_config(&config, Some(&path)).expect("save config");
+    assert_eq!(written, path);
+
+    let raw = fs::read_to_string(&path).expect("read toml config");
+    let value: toml::Value = raw.parse().expect("parse toml config");
+    let defaults = value
+        .get("agents")
+        .and_then(toml::Value::as_table)
+        .and_then(|agents| agents.get("defaults"))
+        .and_then(toml::Value::as_table)
+        .expect("agents.defaults table");
+    assert!(defaults.get("provider").is_none());
+    assert!(defaults.get("model").is_none());
+    assert!(
+        value
+            .get("providers")
+            .and_then(toml::Value::as_table)
+            .and_then(|providers| providers.get("codex"))
+            .and_then(toml::Value::as_table)
+            .and_then(|codex| codex.get("serviceTier"))
+            .is_none()
     );
 }
 

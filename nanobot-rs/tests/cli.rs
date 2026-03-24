@@ -24,6 +24,13 @@ fn onboard_generates_config_with_provider_and_web_defaults() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(
+            "Template includes multi-profile support for codex, telegram, weixin, wecom, and embedded web."
+        ),
+        "stdout: {stdout}"
+    );
 
     let raw = std::fs::read_to_string(&config_path).expect("read config");
     let value: Value = serde_json::from_str(&raw).expect("parse config");
@@ -85,6 +92,7 @@ fn onboard_generates_config_with_provider_and_web_defaults() {
             .and_then(Value::as_str),
         Some("https://chatgpt.com/backend-api/codex")
     );
+    assert!(value.pointer("/providers/codex/serviceTier").is_none());
     assert_eq!(
         value
             .pointer("/tools/web/search/provider")

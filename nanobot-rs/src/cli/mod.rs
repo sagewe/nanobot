@@ -15,6 +15,8 @@ use crate::web;
 
 pub const DEFAULT_WEB_HOST: &str = "127.0.0.1";
 pub const DEFAULT_WEB_PORT: u16 = 3456;
+const ONBOARD_TEMPLATE_SUMMARY: &str =
+    "Template includes multi-profile support for codex, telegram, weixin, wecom, and embedded web.";
 
 #[derive(Debug, Parser)]
 #[command(name = "nanobot-rs")]
@@ -121,6 +123,7 @@ async fn onboard(config_path: Option<PathBuf>, workspace_override: Option<PathBu
             path.display()
         );
     }
+    println!("{ONBOARD_TEMPLATE_SUMMARY}");
     println!("Created workspace at {}", workspace.display());
     println!("nanobot-rs is ready");
     Ok(())
