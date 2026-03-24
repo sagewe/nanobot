@@ -534,9 +534,7 @@ impl BtwTestProvider {
         }
 
         if normalized.contains("stale-generation") {
-            while !self.state.btw_ready.load(Ordering::SeqCst) {
-                self.state.btw_ready_notify.notified().await;
-            }
+            wait_for_flag(&self.state.btw_ready, &self.state.btw_ready_notify).await;
         }
 
         if normalized.contains("profile-check")
@@ -2631,12 +2629,7 @@ async fn btw_does_not_persist_user_or_assistant_turns() {
         .expect("main outbound")
         .expect("main outbound");
 
-    tokio::time::timeout(
-        Duration::from_secs(1),
-        state.btw_completed_notify.notified(),
-    )
-    .await
-    .expect("btw should complete before inspecting persistence");
+    wait_for_flag(&state.btw_completed, &state.btw_completed_notify).await;
 
     let session = agent
         .load_session_by_key("cli:history")
