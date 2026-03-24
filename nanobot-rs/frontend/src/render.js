@@ -1,0 +1,302 @@
+import DOMPurify from "dompurify";
+import { t, tChannel, tToolCount } from "./i18n.js";
+
+const transcript = document.getElementById("transcript");
+const sessionSelect = document.getElementById("session-select");
+const profileSelect = document.getElementById("profile-select");
+const statusNode = document.getElementById("status");
+const weixinStatusLabel = document.getElementById("weixin-status-label");
+const weixinUserLabel = document.getElementById("weixin-user-label");
+const weixinQrPanel = document.getElementById("weixin-qr-panel");
+const weixinQrImage = document.getElementById("weixin-qr-image");
+const weixinLoginButton = document.getElementById("weixin-login-button");
+const weixinLogoutButton = document.getElementById("weixin-logout-button");
+
+const USER_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+const ASSISTANT_AVATAR_SVG = `AI`;
+const TOOL_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+const COPY_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const CHECK_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+export function formatTime(date) {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+export function normalizeWeixinQrSource(content) {
+  const value = (content || "").trim();
+  if (!value) return "";
+  if (
+    value.startsWith("data:") ||
+    value.startsWith("blob:") ||
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("/")
+  ) {
+    return value;
+  }
+  const compact = value.replace(/\s+/g, "");
+  if (/^[A-Za-z0-9+/=]+$/.test(compact)) {
+    return `data:image/png;base64,${compact}`;
+  }
+  return value;
+}
+
+export function setStatus(message, variant = "idle") {
+  statusNode.textContent = message;
+  statusNode.dataset.variant = variant;
+}
+
+export function setCurrentProfile(profile) {
+  if (profile && profileSelect.querySelector(`option[value="${CSS.escape(profile)}"]`)) {
+    profileSelect.value = profile;
+  }
+}
+
+export function renderProfiles(profiles) {
+  profileSelect.innerHTML = "";
+  for (const p of profiles) {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p;
+    profileSelect.appendChild(opt);
+  }
+}
+
+function makeMsgGroup(role, { profile = null, timestamp = null } = {}) {
+  const group = document.createElement("div");
+  group.className = "msg-group";
+  group.dataset.role = role;
+
+  const avatar = document.createElement("div");
+  avatar.className = "msg-avatar";
+  if (role === "user") {
+    avatar.innerHTML = USER_AVATAR_SVG;
+  } else if (role === "tool") {
+    avatar.innerHTML = TOOL_AVATAR_SVG;
+  } else {
+    avatar.innerHTML = ASSISTANT_AVATAR_SVG;
+  }
+
+  const body = document.createElement("div");
+  body.className = "msg-body";
+
+  const bubble = document.createElement("div");
+  bubble.className = "msg-bubble";
+
+  const footer = document.createElement("div");
+  footer.className = "msg-footer";
+
+  const sender = document.createElement("span");
+  sender.className = "msg-sender";
+  if (role === "user") {
+    sender.textContent = t("sender_you");
+  } else if (role === "tool") {
+    sender.textContent = t("sender_tool");
+  } else {
+    sender.textContent = t("sender_pikachu");
+  }
+
+  const time = document.createElement("span");
+  time.className = "msg-time";
+  time.textContent = formatTime(timestamp ? new Date(timestamp) : new Date());
+
+  footer.appendChild(sender);
+  footer.appendChild(time);
+
+  if (profile) {
+    const badge = document.createElement("span");
+    badge.className = "msg-badge";
+    badge.textContent = profile;
+    footer.appendChild(badge);
+  }
+
+  if (role === "assistant") {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "msg-copy";
+    copyBtn.title = t("copy");
+    copyBtn.innerHTML = COPY_SVG;
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(bubble.innerText || "").then(() => {
+        copyBtn.innerHTML = CHECK_SVG;
+        setTimeout(() => { copyBtn.innerHTML = COPY_SVG; }, 1500);
+      });
+    });
+    footer.appendChild(copyBtn);
+  }
+
+  body.appendChild(bubble);
+  body.appendChild(footer);
+  group.appendChild(avatar);
+  group.appendChild(body);
+
+  return { group, bubble };
+}
+
+export function renderMessage(message, activeProfile) {
+  const ts = message.timestamp || null;
+  if (message.role === "user") {
+    const { group, bubble } = makeMsgGroup("user", { timestamp: ts });
+    bubble.textContent = message.content || "";
+    transcript.appendChild(group);
+  } else if (message.role === "assistant") {
+    const { group, bubble } = makeMsgGroup("assistant", { profile: activeProfile || null, timestamp: ts });
+    if (message.toolCalls && message.toolCalls.length > 0) {
+      const toolsDiv = document.createElement("div");
+      toolsDiv.className = "msg-tool-calls";
+      const summary = document.createElement("div");
+      summary.className = "msg-tool-summary";
+      summary.appendChild(document.createTextNode(tToolCount(message.toolCalls.length)));
+      for (const tc of message.toolCalls) {
+        const badge = document.createElement("span");
+        badge.className = "msg-tool-badge";
+        badge.textContent = tc.name;
+        summary.appendChild(badge);
+      }
+      toolsDiv.appendChild(summary);
+      bubble.appendChild(toolsDiv);
+    }
+    if (message.contentHtml) {
+      const contentDiv = document.createElement("div");
+      if (message.toolCalls && message.toolCalls.length > 0) {
+        contentDiv.style.marginTop = "0.6rem";
+      }
+      contentDiv.innerHTML = DOMPurify.sanitize(message.contentHtml);
+      bubble.appendChild(contentDiv);
+    } else if (message.content) {
+      const contentDiv = document.createElement("div");
+      contentDiv.textContent = message.content;
+      bubble.appendChild(contentDiv);
+    }
+    transcript.appendChild(group);
+  } else if (message.role === "tool") {
+    const { group, bubble } = makeMsgGroup("tool", { timestamp: ts });
+    const header = document.createElement("div");
+    header.className = "msg-tool-output-header";
+    header.appendChild(document.createTextNode(t("tool_output") + "\u00a0"));
+    if (message.toolName) {
+      const badge = document.createElement("span");
+      badge.className = "msg-tool-badge";
+      badge.textContent = message.toolName;
+      header.appendChild(badge);
+    }
+    const contentEl = document.createElement("div");
+    contentEl.className = "msg-tool-output-content";
+    const raw = message.content || "";
+    try { contentEl.textContent = JSON.stringify(JSON.parse(raw), null, 2); }
+    catch { contentEl.textContent = raw; }
+    header.addEventListener("click", () => {
+      header.classList.toggle("open");
+      contentEl.classList.toggle("open");
+    });
+    bubble.appendChild(header);
+    bubble.appendChild(contentEl);
+    transcript.appendChild(group);
+  }
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+export function appendMessage(role, content) {
+  const { group, bubble } = makeMsgGroup(role);
+  bubble.textContent = content;
+  transcript.appendChild(group);
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+export function appendAssistantMessage(content) {
+  const { group, bubble } = makeMsgGroup("assistant");
+  bubble.innerHTML = DOMPurify.sanitize(content);
+  transcript.appendChild(group);
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+export function renderTranscript(messages, activeProfile) {
+  transcript.innerHTML = "";
+  if (!messages.length) {
+    appendAssistantMessage(t("initial_message"));
+    return;
+  }
+  for (const message of messages) {
+    renderMessage(message, activeProfile || "");
+  }
+}
+
+// Returns the messages array so callers can store it.
+export function renderSessionDetail(detail) {
+  transcript.innerHTML = "";
+  const activeProfile = detail.activeProfile || "";
+  const messages = detail.messages || [];
+  if (!messages.length) {
+    appendAssistantMessage(t("initial_message"));
+    return messages;
+  }
+  for (const message of messages) {
+    renderMessage(message, activeProfile);
+  }
+  return messages;
+}
+
+export function renderSessionSelect(groups, currentChannel, currentSessionId) {
+  const prev = sessionSelect.value;
+  sessionSelect.innerHTML = "";
+  const newOpt = document.createElement("option");
+  newOpt.value = "__new__";
+  newOpt.textContent = t("new_chat");
+  sessionSelect.appendChild(newOpt);
+  for (const group of groups) {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = tChannel(group.channel);
+    for (const session of group.sessions || []) {
+      const opt = document.createElement("option");
+      opt.value = `${session.channel}::${session.sessionId}`;
+      opt.textContent = session.preview
+        ? `${session.sessionId} \u2014 ${session.preview}`
+        : session.sessionId;
+      if (session.channel === currentChannel && session.sessionId === currentSessionId) {
+        opt.selected = true;
+      }
+      optgroup.appendChild(opt);
+    }
+    sessionSelect.appendChild(optgroup);
+  }
+  if (!sessionSelect.value && prev) {
+    sessionSelect.value = prev;
+  }
+}
+
+export function renderWeixinAccount(account) {
+  const enabled = account?.enabled === true;
+  const loggedIn = account?.loggedIn === true;
+  const expired = account?.expired === true;
+  const userId = account?.userId || account?.botId || t("login_from_console");
+  weixinLoginButton.disabled = !enabled || loggedIn;
+  weixinLogoutButton.disabled = !enabled || !loggedIn;
+
+  if (!enabled) {
+    weixinStatusLabel.textContent = t("weixin_disabled");
+    weixinUserLabel.textContent = t("enable_weixin");
+    weixinQrPanel.hidden = true;
+    weixinQrImage.src = "";
+    return;
+  }
+
+  if (loggedIn && !expired) {
+    weixinStatusLabel.textContent = t("connected");
+    weixinUserLabel.textContent = userId;
+    weixinQrPanel.hidden = true;
+    weixinQrImage.src = "";
+    return;
+  }
+
+  if (expired) {
+    weixinStatusLabel.textContent = t("login_expired");
+    weixinUserLabel.textContent = userId;
+    weixinQrPanel.hidden = true;
+    weixinQrImage.src = "";
+    return;
+  }
+
+  weixinQrPanel.hidden = true;
+  weixinQrImage.src = "";
+  weixinStatusLabel.textContent = t("not_connected");
+  weixinUserLabel.textContent = userId;
+}
