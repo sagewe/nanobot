@@ -712,15 +712,15 @@ fn transcript_message(message: &SessionMessage) -> Option<WebTranscriptMessage> 
                 let result: Vec<WebToolCall> = calls
                     .iter()
                     .filter_map(|call| {
-                        let name = call
-                            .get("function")?
-                            .get("name")?
-                            .as_str()?
-                            .to_string();
+                        let name = call.get("function")?.get("name")?.as_str()?.to_string();
                         Some(WebToolCall { name })
                     })
                     .collect();
-                if result.is_empty() { None } else { Some(result) }
+                if result.is_empty() {
+                    None
+                } else {
+                    Some(result)
+                }
             });
             if content.is_empty() && tool_calls.is_none() {
                 return None;

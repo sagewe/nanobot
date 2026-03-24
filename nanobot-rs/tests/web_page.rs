@@ -41,7 +41,9 @@ fn page_shell_clears_input_before_network_round_trip() {
     let clear_index = html
         .find("messageInput.value = \"\";")
         .expect("clear input statement");
-    let fetch_index = html.find("const response = await fetch(\"/api/chat\"").expect("fetch call");
+    let fetch_index = html
+        .find("const response = await fetch(\"/api/chat\"")
+        .expect("fetch call");
 
     assert!(clear_index < fetch_index);
 }
@@ -222,7 +224,9 @@ fn page_shell_bootstraps_weixin_account_and_login_polling() {
     assert!(html.contains("value.startsWith(\"data:\")"));
     assert!(html.contains("value.startsWith(\"https://\")"));
     assert!(html.contains("return `data:image/png;base64,${compact}`;"));
-    assert!(html.contains("weixinQrImage.src = normalizeWeixinQrSource(payload.qrcodeImgContent || \"\");"));
+    assert!(html.contains(
+        "weixinQrImage.src = normalizeWeixinQrSource(payload.qrcodeImgContent || \"\");"
+    ));
     assert!(html.contains("weixinPollTimer = setTimeout(() => pollWeixinLoginStatus(), 1500);"));
     assert!(html.contains("await loadWeixinAccount();"));
 }
