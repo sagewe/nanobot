@@ -142,12 +142,12 @@ function makeMsgGroup(role, { profile = null, timestamp = null } = {}) {
   return { group, bubble };
 }
 
-export function renderMessage(message, activeProfile) {
+function buildMessageElement(message, activeProfile) {
   const ts = message.timestamp || null;
   if (message.role === "user") {
     const { group, bubble } = makeMsgGroup("user", { timestamp: ts });
     bubble.textContent = message.content || "";
-    transcript.appendChild(group);
+    return group;
   } else if (message.role === "assistant") {
     const { group, bubble } = makeMsgGroup("assistant", { profile: activeProfile || null, timestamp: ts });
     if (message.toolCalls && message.toolCalls.length > 0) {
@@ -177,7 +177,7 @@ export function renderMessage(message, activeProfile) {
       contentDiv.textContent = message.content;
       bubble.appendChild(contentDiv);
     }
-    transcript.appendChild(group);
+    return group;
   } else if (message.role === "tool") {
     const { group, bubble } = makeMsgGroup("tool", { timestamp: ts });
     const header = document.createElement("div");
@@ -213,9 +213,18 @@ export function renderMessage(message, activeProfile) {
     });
     bubble.appendChild(header);
     bubble.appendChild(contentEl);
-    transcript.appendChild(group);
+    return group;
   }
-  transcript.scrollTop = transcript.scrollHeight;
+  return null;
+}
+
+// Appends a single message to transcript (used for live/incremental updates).
+export function renderMessage(message, activeProfile) {
+  const el = buildMessageElement(message, activeProfile);
+  if (el) {
+    transcript.appendChild(el);
+    transcript.scrollTop = transcript.scrollHeight;
+  }
 }
 
 export function appendMessage(role, content) {
@@ -232,29 +241,36 @@ export function appendAssistantMessage(content) {
   transcript.scrollTop = transcript.scrollHeight;
 }
 
-export function renderTranscript(messages, activeProfile) {
+function batchRender(messages, activeProfile) {
+  const frag = document.createDocumentFragment();
+  for (const message of messages) {
+    const el = buildMessageElement(message, activeProfile || "");
+    if (el) frag.appendChild(el);
+  }
   transcript.innerHTML = "";
+  transcript.appendChild(frag);
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+export function renderTranscript(messages, activeProfile) {
   if (!messages.length) {
+    transcript.innerHTML = "";
     appendAssistantMessage(t("initial_message"));
     return;
   }
-  for (const message of messages) {
-    renderMessage(message, activeProfile || "");
-  }
+  batchRender(messages, activeProfile);
 }
 
 // Returns the messages array so callers can store it.
 export function renderSessionDetail(detail) {
-  transcript.innerHTML = "";
   const activeProfile = detail.activeProfile || "";
   const messages = detail.messages || [];
   if (!messages.length) {
+    transcript.innerHTML = "";
     appendAssistantMessage(t("initial_message"));
     return messages;
   }
-  for (const message of messages) {
-    renderMessage(message, activeProfile);
-  }
+  batchRender(messages, activeProfile);
   return messages;
 }
 

@@ -34,6 +34,7 @@ const SELECTED_CHANNEL_KEY = "pikachu.selectedChannel";
 const SELECTED_SESSION_KEY = "pikachu.selectedSessionId";
 const THEME_KEY = "pikachu.theme";
 const COLLAPSED_KEY = "pikachu.sidebarCollapsed";
+const DRAFT_KEY_PREFIX = "pikachu.draft";
 
 // ── DOM references ────────────────────────────────────────────────────────────
 const composer = document.getElementById("composer");
@@ -122,6 +123,30 @@ function setSelectedSession(channel, sessionId) {
   }
 }
 
+function draftKey() {
+  return currentChannel && currentSessionId
+    ? `${DRAFT_KEY_PREFIX}.${currentChannel}.${currentSessionId}`
+    : null;
+}
+
+function saveDraft() {
+  const key = draftKey();
+  if (!key) return;
+  const val = messageInput.value;
+  if (val) localStorage.setItem(key, val);
+  else localStorage.removeItem(key);
+}
+
+function restoreDraft() {
+  const key = draftKey();
+  messageInput.value = (key && localStorage.getItem(key)) || "";
+}
+
+function clearDraft() {
+  const key = draftKey();
+  if (key) localStorage.removeItem(key);
+}
+
 function findSession(groups, channel, sessionId) {
   if (!channel || !sessionId) return null;
   for (const group of groups) {
@@ -176,6 +201,7 @@ async function selectSession(channel, sessionId) {
   setCurrentProfile(detail.activeProfile || "");
   setComposerAccess(detail.readOnly === true, detail.canDuplicate === true);
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
+  restoreDraft();
 }
 
 async function bootstrapSessions() {
@@ -435,6 +461,8 @@ weixinLogoutButton.addEventListener("click", async () => {
   }
 });
 
+messageInput.addEventListener("input", saveDraft);
+
 messageInput.addEventListener("focus", () => {
   if (isMobile()) {
     setTimeout(() => messageInput.scrollIntoView({ behavior: "smooth", block: "nearest" }), 300);
@@ -484,6 +512,7 @@ composer.addEventListener("submit", async (event) => {
 
   appendMessage("user", message);
   messageInput.value = "";
+  clearDraft();
   setBusy(true);
   setStatus(t("pikachu_working"), "loading");
   startBusyTimer();
@@ -503,6 +532,7 @@ composer.addEventListener("submit", async (event) => {
   } catch (error) {
     if (!messageInput.value.trim()) {
       messageInput.value = draft;
+      saveDraft();
     }
     setStatus(error?.message || t("request_failed"), "error");
   } finally {
