@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -166,6 +167,11 @@ struct LogProgressReporter {
     session_key: String,
     channel: String,
     chat_id: String,
+}
+
+struct PendingBurst {
+    messages: Vec<InboundMessage>,
+    timer: JoinHandle<()>,
 }
 
 #[async_trait]
@@ -469,6 +475,7 @@ pub struct AgentLoop {
     default_profile: String,
     profiles: HashMap<String, AgentProfileConfig>,
     max_iterations: usize,
+    message_debounce_ms: u64,
     exec_timeout: u64,
     restrict_to_workspace: bool,
     web_tools: WebToolsConfig,
@@ -476,7 +483,8 @@ pub struct AgentLoop {
     sessions: SessionStore,
     context: ContextBuilder,
     subagents: SubagentManager,
-    processing_lock: Arc<Mutex<()>>,
+    session_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    pending_bursts: Arc<Mutex<HashMap<String, PendingBurst>>>,
     active_tasks: Arc<Mutex<HashMap<String, Vec<JoinHandle<()>>>>>,
     running: Arc<AtomicBool>,
 }
@@ -509,6 +517,7 @@ impl AgentLoop {
             default_profile,
             profiles,
             max_iterations,
+            0,
             exec_timeout,
             restrict_to_workspace,
             web_tools,
@@ -530,6 +539,7 @@ impl AgentLoop {
             config.agents.defaults.default_profile.clone(),
             config.agents.profiles.clone(),
             config.agents.defaults.max_tool_iterations,
+            config.agents.defaults.message_debounce_ms,
             config.tools.exec.timeout,
             config.tools.restrict_to_workspace,
             config.tools.web.clone(),
@@ -545,6 +555,7 @@ impl AgentLoop {
         default_profile: String,
         profiles: HashMap<String, AgentProfileConfig>,
         max_iterations: usize,
+        message_debounce_ms: u64,
         exec_timeout: u64,
         restrict_to_workspace: bool,
         web_tools: WebToolsConfig,
@@ -573,6 +584,7 @@ impl AgentLoop {
             default_profile,
             profiles,
             max_iterations,
+            message_debounce_ms,
             exec_timeout,
             restrict_to_workspace,
             web_tools,
@@ -580,7 +592,8 @@ impl AgentLoop {
             sessions,
             context,
             subagents,
-            processing_lock: Arc::new(Mutex::new(())),
+            session_locks: Arc::new(Mutex::new(HashMap::new())),
+            pending_bursts: Arc::new(Mutex::new(HashMap::new())),
             active_tasks: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(AtomicBool::new(false)),
         })
@@ -594,26 +607,28 @@ impl AgentLoop {
             };
             let session_key = msg.session_key();
             if msg.content.trim().eq_ignore_ascii_case("/stop") {
+                self.clear_pending_burst(&session_key).await;
                 self.handle_stop(&msg).await;
                 continue;
             }
-            let this = self.clone();
-            let handle = tokio::spawn(async move {
-                if let Err(error) = this.dispatch(msg).await {
-                    error!("agent dispatch failed: {error}");
+            if self.is_immediate_command(&msg) {
+                if msg.content.trim().eq_ignore_ascii_case("/new") {
+                    self.clear_pending_burst(&session_key).await;
                 }
-            });
-            self.active_tasks
-                .lock()
-                .await
-                .entry(session_key)
-                .or_default()
-                .push(handle);
+                self.spawn_dispatch(msg).await;
+                continue;
+            }
+            if self.message_debounce_ms > 0 && msg.channel != "system" {
+                self.enqueue_burst_message(msg).await;
+                continue;
+            }
+            self.spawn_dispatch(msg).await;
         }
     }
 
     async fn dispatch(&self, msg: InboundMessage) -> Result<()> {
-        let _guard = self.processing_lock.lock().await;
+        let lock = self.session_lock(&msg.session_key()).await;
+        let _guard = lock.lock().await;
         let tools = self.build_tools().await;
         if let Some(outbound) = self.process_message(msg, &tools).await? {
             self.bus.publish_outbound(outbound).await?;
@@ -653,6 +668,14 @@ impl AgentLoop {
 
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
+    }
+
+    fn is_immediate_command(&self, msg: &InboundMessage) -> bool {
+        let trimmed = msg.content.trim();
+        trimmed.eq_ignore_ascii_case("/new")
+            || trimmed.eq_ignore_ascii_case("/help")
+            || trimmed.eq_ignore_ascii_case("/models")
+            || trimmed.starts_with("/model ")
     }
 
     fn normalize_session_profile<'a>(&'a self, session: &'a mut Session) -> &'a str {
@@ -816,6 +839,8 @@ impl AgentLoop {
             metadata,
             session_key_override: Some(session_key.to_string()),
         };
+        let lock = self.session_lock(session_key).await;
+        let _guard = lock.lock().await;
         let tools = self.build_tools().await;
         let outbound = self.process_message(msg, &tools).await?;
         if let Some(outbound) = outbound {
@@ -1079,6 +1104,94 @@ impl AgentLoop {
         .await
     }
 
+    async fn session_lock(&self, session_key: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.session_locks.lock().await;
+        locks
+            .entry(session_key.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    async fn spawn_dispatch(&self, msg: InboundMessage) {
+        let session_key = msg.session_key();
+        let this = self.clone();
+        let handle = tokio::spawn(async move {
+            if let Err(error) = this.dispatch(msg).await {
+                error!("agent dispatch failed: {error}");
+            }
+        });
+        self.active_tasks
+            .lock()
+            .await
+            .entry(session_key)
+            .or_default()
+            .push(handle);
+    }
+
+    async fn enqueue_burst_message(&self, msg: InboundMessage) {
+        let session_key = msg.session_key();
+        let this = self.clone();
+        let delay = self.message_debounce_ms;
+        let mut bursts = self.pending_bursts.lock().await;
+        if let Some(existing) = bursts.get_mut(&session_key) {
+            existing.messages.push(msg);
+            existing.timer.abort();
+            let session_key_clone = session_key.clone();
+            existing.timer = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(delay)).await;
+                this.flush_pending_burst(&session_key_clone).await;
+            });
+            return;
+        }
+        let session_key_clone = session_key.clone();
+        let timer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            this.flush_pending_burst(&session_key_clone).await;
+        });
+        bursts.insert(
+            session_key,
+            PendingBurst {
+                messages: vec![msg],
+                timer,
+            },
+        );
+    }
+
+    async fn clear_pending_burst(&self, session_key: &str) {
+        if let Some(pending) = self.pending_bursts.lock().await.remove(session_key) {
+            pending.timer.abort();
+        }
+    }
+
+    async fn flush_pending_burst(&self, session_key: &str) {
+        let Some(pending) = self.pending_bursts.lock().await.remove(session_key) else {
+            return;
+        };
+        if let Some(merged) = Self::merge_burst_messages(pending.messages) {
+            self.spawn_dispatch(merged).await;
+        }
+    }
+
+    fn merge_burst_messages(messages: Vec<InboundMessage>) -> Option<InboundMessage> {
+        let mut iter = messages.into_iter();
+        let first = iter.next()?;
+        let mut contents = vec![first.content.clone()];
+        contents.extend(iter.map(|message| message.content));
+        let merged_content = if contents.len() == 1 {
+            contents.into_iter().next().unwrap_or_default()
+        } else {
+            let mut merged = String::from("[Compressed user burst]\n");
+            for (index, content) in contents.iter().enumerate() {
+                merged.push_str(&format!("{}. {content}\n", index + 1));
+            }
+            merged.trim_end().to_string()
+        };
+        let mut merged = first;
+        merged.content = merged_content;
+        merged.timestamp = Utc::now();
+        Some(merged)
+    }
+
     fn save_turn(&self, session: &mut Session, messages: Vec<Value>, skip: usize) -> Result<()> {
         for value in messages.into_iter().skip(skip) {
             let mut message: SessionMessage = serde_json::from_value(value)?;
@@ -1113,6 +1226,7 @@ impl Clone for AgentLoop {
             default_profile: self.default_profile.clone(),
             profiles: self.profiles.clone(),
             max_iterations: self.max_iterations,
+            message_debounce_ms: self.message_debounce_ms,
             exec_timeout: self.exec_timeout,
             restrict_to_workspace: self.restrict_to_workspace,
             web_tools: self.web_tools.clone(),
@@ -1120,7 +1234,8 @@ impl Clone for AgentLoop {
             sessions: self.sessions.clone(),
             context: self.context.clone(),
             subagents: self.subagents.clone(),
-            processing_lock: self.processing_lock.clone(),
+            session_locks: self.session_locks.clone(),
+            pending_bursts: self.pending_bursts.clone(),
             active_tasks: self.active_tasks.clone(),
             running: self.running.clone(),
         }

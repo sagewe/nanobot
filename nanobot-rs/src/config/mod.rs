@@ -12,6 +12,7 @@ pub struct AgentDefaults {
     pub workspace: String,
     pub default_profile: String,
     pub max_tool_iterations: usize,
+    pub message_debounce_ms: u64,
     pub provider: String,
     pub model: String,
 }
@@ -24,6 +25,7 @@ impl Default for AgentDefaults {
             workspace: default_workspace_path().display().to_string(),
             default_profile: profile_key(&provider, &model),
             max_tool_iterations: 20,
+            message_debounce_ms: 0,
             provider,
             model,
         }
@@ -100,6 +102,7 @@ impl Default for CodexProviderConfig {
 struct RawAgentDefaults {
     pub workspace: String,
     pub max_tool_iterations: usize,
+    pub message_debounce_ms: u64,
     pub default_profile: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -110,6 +113,7 @@ impl Default for RawAgentDefaults {
         Self {
             workspace: default_workspace_path().display().to_string(),
             max_tool_iterations: 20,
+            message_debounce_ms: 0,
             default_profile: None,
             provider: None,
             model: None,
@@ -145,6 +149,7 @@ impl RawConfig {
         let RawAgentDefaults {
             workspace,
             max_tool_iterations,
+            message_debounce_ms,
             default_profile,
             provider,
             model,
@@ -267,6 +272,7 @@ impl RawConfig {
                     workspace,
                     default_profile,
                     max_tool_iterations,
+                    message_debounce_ms,
                     provider: default_profile_config.provider.clone(),
                     model: default_profile_config.model.clone(),
                 },
@@ -329,6 +335,7 @@ struct SerializableAgentDefaults<'a> {
     workspace: &'a str,
     default_profile: &'a str,
     max_tool_iterations: usize,
+    message_debounce_ms: u64,
 }
 
 impl<'a> From<&'a AgentDefaults> for SerializableAgentDefaults<'a> {
@@ -337,6 +344,7 @@ impl<'a> From<&'a AgentDefaults> for SerializableAgentDefaults<'a> {
             workspace: &defaults.workspace,
             default_profile: &defaults.default_profile,
             max_tool_iterations: defaults.max_tool_iterations,
+            message_debounce_ms: defaults.message_debounce_ms,
         }
     }
 }

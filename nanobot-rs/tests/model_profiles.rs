@@ -93,6 +93,35 @@ fn request_defaults_to_an_empty_object_when_omitted() {
 }
 
 #[test]
+fn message_debounce_ms_loads_from_camel_case_config() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("config.json");
+    fs::write(
+        &path,
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "maxToolIterations": 20,
+      "messageDebounceMs": 1500,
+      "defaultProfile": "openai:gpt-4.1-mini"
+    },
+    "profiles": {
+      "openai:gpt-4.1-mini": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini"
+      }
+    }
+  }
+}"#,
+    )
+    .expect("write config");
+
+    let config = load_config(Some(&path)).expect("load config");
+    assert_eq!(config.agents.defaults.message_debounce_ms, 1500);
+}
+
+#[test]
 fn empty_config_still_inherits_the_default_profile() {
     let value = load_config_from_json("{}").expect("load sparse config");
 

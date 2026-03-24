@@ -12,7 +12,7 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::{Json, Router};
-use nanobot_rs::agent::{AgentLoop, SubagentManager};
+use nanobot_rs::agent::{AgentLoop, ContextBuilder, SubagentManager};
 use nanobot_rs::bus::{InboundMessage, MessageBus};
 use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig};
 use nanobot_rs::providers::{
@@ -400,6 +400,197 @@ impl LlmProvider for ReplayAwareProvider {
     }
 }
 
+#[derive(Default)]
+struct SessionConcurrencyState {
+    first_started: AtomicBool,
+    first_released: AtomicBool,
+    second_started: AtomicBool,
+    first_started_notify: Notify,
+    first_release_notify: Notify,
+    second_started_notify: Notify,
+}
+
+#[derive(Clone)]
+struct CrossSessionBusProvider {
+    state: Arc<SessionConcurrencyState>,
+}
+
+#[async_trait]
+impl LlmProvider for CrossSessionBusProvider {
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+    async fn chat(
+        &self,
+        messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        let user_content = messages
+            .iter()
+            .rev()
+            .find(|message| message.get("role").and_then(|role| role.as_str()) == Some("user"))
+            .and_then(|message| message.get("content").and_then(|content| content.as_str()))
+            .unwrap_or_default();
+
+        if user_content.ends_with("hold-a") {
+            self.state.first_started.store(true, Ordering::SeqCst);
+            self.state.first_started_notify.notify_waiters();
+            while !self.state.first_released.load(Ordering::SeqCst) {
+                self.state.first_release_notify.notified().await;
+            }
+            return Ok(LlmResponse {
+                content: Some("session-a done".to_string()),
+                tool_calls: Vec::new(),
+                finish_reason: "stop".to_string(),
+                extra: Map::new(),
+            });
+        }
+
+        if user_content.ends_with("fast-b") {
+            self.state.second_started.store(true, Ordering::SeqCst);
+            self.state.second_started_notify.notify_waiters();
+            return Ok(LlmResponse {
+                content: Some("session-b done".to_string()),
+                tool_calls: Vec::new(),
+                finish_reason: "stop".to_string(),
+                extra: Map::new(),
+            });
+        }
+
+        Err(anyhow::anyhow!(
+            "unexpected request shape for cross-session bus provider"
+        ))
+    }
+}
+
+#[derive(Clone)]
+struct SameSessionDirectProvider {
+    state: Arc<SessionConcurrencyState>,
+}
+
+#[async_trait]
+impl LlmProvider for SameSessionDirectProvider {
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+    async fn chat(
+        &self,
+        messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        let user_content = messages
+            .iter()
+            .rev()
+            .find(|message| message.get("role").and_then(|role| role.as_str()) == Some("user"))
+            .and_then(|message| message.get("content").and_then(|content| content.as_str()))
+            .unwrap_or_default();
+
+        if user_content.ends_with("first") {
+            self.state.first_started.store(true, Ordering::SeqCst);
+            self.state.first_started_notify.notify_waiters();
+            while !self.state.first_released.load(Ordering::SeqCst) {
+                self.state.first_release_notify.notified().await;
+            }
+            return Ok(LlmResponse {
+                content: Some("first done".to_string()),
+                tool_calls: Vec::new(),
+                finish_reason: "stop".to_string(),
+                extra: Map::new(),
+            });
+        }
+
+        if user_content.ends_with("second") {
+            self.state.second_started.store(true, Ordering::SeqCst);
+            self.state.second_started_notify.notify_waiters();
+            return Ok(LlmResponse {
+                content: Some("second done".to_string()),
+                tool_calls: Vec::new(),
+                finish_reason: "stop".to_string(),
+                extra: Map::new(),
+            });
+        }
+
+        Err(anyhow::anyhow!(
+            "unexpected request shape for same-session direct provider"
+        ))
+    }
+}
+
+#[derive(Default)]
+struct DebounceProviderState {
+    contents: Arc<Mutex<Vec<String>>>,
+    requests: Arc<Mutex<Vec<RecordedRequest>>>,
+    block_started: AtomicBool,
+    block_released: AtomicBool,
+    block_started_notify: Notify,
+    block_release_notify: Notify,
+}
+
+#[derive(Clone)]
+struct DebounceRecordingProvider {
+    state: Arc<DebounceProviderState>,
+}
+
+#[async_trait]
+impl LlmProvider for DebounceRecordingProvider {
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        Err(anyhow::anyhow!(
+            "chat() should not be used for debounce recording provider"
+        ))
+    }
+
+    async fn chat_with_request(
+        &self,
+        messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        request: &ProviderRequestDescriptor,
+    ) -> Result<LlmResponse> {
+        let raw_user_content = messages
+            .iter()
+            .rev()
+            .find(|message| message.get("role").and_then(|role| role.as_str()) == Some("user"))
+            .and_then(|message| message.get("content").and_then(|content| content.as_str()))
+            .unwrap_or_default();
+        let user_content = ContextBuilder::strip_runtime_prefix(raw_user_content)
+            .unwrap_or_else(|| raw_user_content.to_string());
+
+        self.state.contents.lock().await.push(user_content.clone());
+        self.state.requests.lock().await.push(RecordedRequest {
+            provider: request.provider_name.clone(),
+            model: request.model_name.clone(),
+            extras: request.request_extras.clone(),
+        });
+
+        if user_content == "block" {
+            self.state.block_started.store(true, Ordering::SeqCst);
+            self.state.block_started_notify.notify_waiters();
+            while !self.state.block_released.load(Ordering::SeqCst) {
+                self.state.block_release_notify.notified().await;
+            }
+        }
+
+        Ok(LlmResponse {
+            content: Some(format!("processed: {user_content}")),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            extra: Map::new(),
+        })
+    }
+}
+
 fn multi_profile_config(workspace: &std::path::Path) -> Config {
     let mut config = Config::default();
     config.agents.defaults.workspace = workspace.display().to_string();
@@ -431,6 +622,12 @@ fn multi_profile_config(workspace: &std::path::Path) -> Config {
     ]
     .into_iter()
     .collect();
+    config
+}
+
+fn debounce_config(workspace: &std::path::Path, debounce_ms: u64) -> Config {
+    let mut config = multi_profile_config(workspace);
+    config.agents.defaults.message_debounce_ms = debounce_ms;
     config
 }
 
@@ -1141,4 +1338,735 @@ async fn agent_preserves_assistant_extra_fields_across_tool_continuation() {
         .expect("process");
 
     assert_eq!(result, "done");
+}
+
+#[tokio::test]
+async fn session_burst_messages_are_merged_into_one_turn() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(DebounceProviderState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(DebounceRecordingProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, debounce_config(dir.path(), 50))
+        .await
+        .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    for content in ["first", "second", "third"] {
+        bus.publish_inbound(InboundMessage {
+            channel: "cli".to_string(),
+            sender_id: "user".to_string(),
+            chat_id: "burst".to_string(),
+            content: content.to_string(),
+            timestamp: chrono::Utc::now(),
+            metadata: Default::default(),
+            session_key_override: Some("cli:burst".to_string()),
+        })
+        .await
+        .expect("publish burst");
+    }
+
+    let outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("timely outbound")
+        .expect("outbound");
+    assert!(outbound.content.contains("[Compressed user burst]"));
+
+    let contents = state.contents.lock().await.clone();
+    assert_eq!(contents.len(), 1);
+    assert!(contents[0].contains("[Compressed user burst]"));
+    assert!(contents[0].contains("1. first"));
+    assert!(contents[0].contains("2. second"));
+    assert!(contents[0].contains("3. third"));
+
+    let session = agent
+        .load_session_by_key("cli:burst")
+        .expect("load session")
+        .expect("session exists");
+    let user_turns = session
+        .messages
+        .iter()
+        .filter(|message| message.role == "user")
+        .collect::<Vec<_>>();
+    assert_eq!(user_turns.len(), 1);
+    assert!(
+        user_turns[0]
+            .content
+            .as_str()
+            .is_some_and(|value| value.contains("[Compressed user burst]"))
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn messages_outside_the_debounce_window_are_processed_separately() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(DebounceProviderState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(DebounceRecordingProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, debounce_config(dir.path(), 40))
+        .await
+        .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "split".to_string(),
+        content: "one".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:split".to_string()),
+    })
+    .await
+    .expect("publish first");
+
+    tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("timely first outbound")
+        .expect("first outbound");
+
+    tokio::time::sleep(Duration::from_millis(80)).await;
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "split".to_string(),
+        content: "two".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:split".to_string()),
+    })
+    .await
+    .expect("publish second");
+
+    tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("timely second outbound")
+        .expect("second outbound");
+
+    let contents = state.contents.lock().await.clone();
+    assert_eq!(contents, vec!["one".to_string(), "two".to_string()]);
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn models_command_bypasses_pending_debounce() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(DebounceProviderState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(DebounceRecordingProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, debounce_config(dir.path(), 200))
+        .await
+        .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "models".to_string(),
+        content: "hello".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:models".to_string()),
+    })
+    .await
+    .expect("publish normal");
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "models".to_string(),
+        content: "/models".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:models".to_string()),
+    })
+    .await
+    .expect("publish command");
+
+    let first = tokio::time::timeout(Duration::from_millis(100), bus.consume_outbound())
+        .await
+        .expect("models should bypass debounce")
+        .expect("first outbound");
+    assert!(
+        first.content.contains("Available model profiles:"),
+        "{:?}",
+        first.content
+    );
+
+    let second = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("debounced burst should still flush")
+        .expect("second outbound");
+    assert_eq!(second.content, "processed: hello");
+    assert_eq!(
+        state.contents.lock().await.clone(),
+        vec!["hello".to_string()]
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn help_command_bypasses_pending_debounce() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(DebounceProviderState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(DebounceRecordingProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, debounce_config(dir.path(), 200))
+        .await
+        .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "help".to_string(),
+        content: "hello".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:help".to_string()),
+    })
+    .await
+    .expect("publish normal");
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "help".to_string(),
+        content: "/help".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:help".to_string()),
+    })
+    .await
+    .expect("publish help");
+
+    let first = tokio::time::timeout(Duration::from_millis(100), bus.consume_outbound())
+        .await
+        .expect("help should bypass debounce")
+        .expect("first outbound");
+    assert!(
+        first.content.contains("nanobot-rs commands:"),
+        "{}",
+        first.content
+    );
+
+    let second = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("debounced burst should flush")
+        .expect("second outbound");
+    assert_eq!(second.content, "processed: hello");
+    assert_eq!(
+        state.contents.lock().await.clone(),
+        vec!["hello".to_string()]
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn model_command_bypasses_pending_debounce_and_updates_the_flushed_burst_profile() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(DebounceProviderState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(DebounceRecordingProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, debounce_config(dir.path(), 200))
+        .await
+        .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "model".to_string(),
+        content: "hello".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:model".to_string()),
+    })
+    .await
+    .expect("publish normal");
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "model".to_string(),
+        content: "/model openrouter:deepseek-r1".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:model".to_string()),
+    })
+    .await
+    .expect("publish model command");
+
+    let first = tokio::time::timeout(Duration::from_millis(100), bus.consume_outbound())
+        .await
+        .expect("model should bypass debounce")
+        .expect("first outbound");
+    assert!(
+        first
+            .content
+            .contains("Switched this session to openrouter:deepseek-r1."),
+        "{}",
+        first.content
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("debounced burst should flush")
+        .expect("second outbound");
+
+    let requests = state.requests.lock().await.clone();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].provider, "openrouter");
+    assert_eq!(requests[0].model, "deepseek/deepseek-r1");
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn new_clears_any_pending_burst_before_resetting_the_session() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(DebounceProviderState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(DebounceRecordingProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, debounce_config(dir.path(), 200))
+        .await
+        .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "new".to_string(),
+        content: "hello".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:new".to_string()),
+    })
+    .await
+    .expect("publish normal");
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "new".to_string(),
+        content: "/new".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:new".to_string()),
+    })
+    .await
+    .expect("publish new");
+
+    let first = tokio::time::timeout(Duration::from_millis(100), bus.consume_outbound())
+        .await
+        .expect("new should bypass debounce")
+        .expect("first outbound");
+    assert_eq!(first.content, "New session started.");
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), bus.consume_outbound())
+            .await
+            .is_err(),
+        "pending burst should be cleared by /new"
+    );
+    assert!(state.contents.lock().await.is_empty());
+
+    let session = agent
+        .load_session_by_key("cli:new")
+        .expect("load session")
+        .expect("session exists");
+    assert!(session.messages.is_empty());
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn stop_bypasses_debounce_cancels_the_running_task_and_clears_pending_burst() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(DebounceProviderState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(DebounceRecordingProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, debounce_config(dir.path(), 20))
+        .await
+        .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "stop".to_string(),
+        content: "block".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:stop".to_string()),
+    })
+    .await
+    .expect("publish blocking");
+
+    while !state.block_started.load(Ordering::SeqCst) {
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            state.block_started_notify.notified(),
+        )
+        .await
+        .expect("blocking task should start");
+    }
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "stop".to_string(),
+        content: "later".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:stop".to_string()),
+    })
+    .await
+    .expect("publish buffered");
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "stop".to_string(),
+        content: "/stop".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:stop".to_string()),
+    })
+    .await
+    .expect("publish stop");
+
+    let outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("stop should produce outbound")
+        .expect("outbound");
+    assert!(
+        outbound.content.starts_with("Stopped "),
+        "{}",
+        outbound.content
+    );
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), bus.consume_outbound())
+            .await
+            .is_err(),
+        "pending burst should be cleared by /stop"
+    );
+    assert_eq!(
+        state.contents.lock().await.clone(),
+        vec!["block".to_string()]
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn bursts_are_never_merged_across_different_sessions_in_the_same_channel() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(DebounceProviderState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(DebounceRecordingProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, debounce_config(dir.path(), 50))
+        .await
+        .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    for (session_key, chat_id, content) in [
+        ("telegram:chat-a", "chat-a", "alpha-1"),
+        ("telegram:chat-b", "chat-b", "beta-1"),
+        ("telegram:chat-a", "chat-a", "alpha-2"),
+        ("telegram:chat-b", "chat-b", "beta-2"),
+    ] {
+        bus.publish_inbound(InboundMessage {
+            channel: "telegram".to_string(),
+            sender_id: "user".to_string(),
+            chat_id: chat_id.to_string(),
+            content: content.to_string(),
+            timestamp: chrono::Utc::now(),
+            metadata: Default::default(),
+            session_key_override: Some(session_key.to_string()),
+        })
+        .await
+        .expect("publish");
+    }
+
+    for _ in 0..2 {
+        tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+            .await
+            .expect("timely outbound")
+            .expect("outbound");
+    }
+
+    let mut contents = state.contents.lock().await.clone();
+    contents.sort();
+    assert_eq!(
+        contents,
+        vec![
+            "[Compressed user burst]\n1. alpha-1\n2. alpha-2".to_string(),
+            "[Compressed user burst]\n1. beta-1\n2. beta-2".to_string()
+        ]
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn bus_requests_for_different_sessions_can_complete_in_parallel() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(SessionConcurrencyState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(CrossSessionBusProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::new(
+        bus.clone(),
+        provider,
+        dir.path().to_path_buf(),
+        "mock-model".to_string(),
+        5,
+        10,
+        false,
+        WebToolsConfig::default(),
+    )
+    .await
+    .expect("agent");
+    let runner = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.run().await })
+    };
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "a".to_string(),
+        content: "hold-a".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:a".to_string()),
+    })
+    .await
+    .expect("publish a");
+
+    while !state.first_started.load(Ordering::SeqCst) {
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            state.first_started_notify.notified(),
+        )
+        .await
+        .expect("first session should start");
+    }
+
+    bus.publish_inbound(InboundMessage {
+        channel: "cli".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "b".to_string(),
+        content: "fast-b".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: Default::default(),
+        session_key_override: Some("cli:b".to_string()),
+    })
+    .await
+    .expect("publish b");
+
+    let early_outbound = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
+        .await
+        .ok()
+        .flatten();
+
+    state.first_released.store(true, Ordering::SeqCst);
+    state.first_release_notify.notify_waiters();
+
+    let mut contents = Vec::new();
+    if let Some(outbound) = early_outbound {
+        contents.push(outbound.content);
+    }
+    while contents.len() < 2 {
+        let outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+            .await
+            .expect("timely outbound")
+            .expect("outbound");
+        contents.push(outbound.content);
+    }
+
+    assert_eq!(contents.first().map(String::as_str), Some("session-b done"));
+    assert!(contents.iter().any(|content| content == "session-a done"));
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn direct_requests_for_the_same_session_remain_serialized() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(SessionConcurrencyState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(SameSessionDirectProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::new(
+        bus,
+        provider,
+        dir.path().to_path_buf(),
+        "mock-model".to_string(),
+        5,
+        10,
+        false,
+        WebToolsConfig::default(),
+    )
+    .await
+    .expect("agent");
+
+    let first_agent = agent.clone();
+    let first_task = tokio::spawn(async move {
+        first_agent
+            .process_direct("first", "cli:shared", "cli", "shared")
+            .await
+    });
+
+    while !state.first_started.load(Ordering::SeqCst) {
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            state.first_started_notify.notified(),
+        )
+        .await
+        .expect("first direct request should start");
+    }
+
+    let second_agent = agent.clone();
+    let second_task = tokio::spawn(async move {
+        second_agent
+            .process_direct("second", "cli:shared", "cli", "shared")
+            .await
+    });
+
+    let second_started_early = tokio::time::timeout(Duration::from_millis(200), async {
+        while !state.second_started.load(Ordering::SeqCst) {
+            state.second_started_notify.notified().await;
+        }
+    })
+    .await
+    .is_ok();
+
+    state.first_released.store(true, Ordering::SeqCst);
+    state.first_release_notify.notify_waiters();
+
+    let first_result = first_task.await.expect("first join").expect("first result");
+    let second_result = second_task
+        .await
+        .expect("second join")
+        .expect("second result");
+
+    assert!(
+        !second_started_early,
+        "second same-session request overlapped the first"
+    );
+    assert_eq!(first_result, "first done");
+    assert_eq!(second_result, "second done");
+}
+
+#[tokio::test]
+async fn direct_requests_for_different_sessions_can_run_in_parallel() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(SessionConcurrencyState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(CrossSessionBusProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::new(
+        bus,
+        provider,
+        dir.path().to_path_buf(),
+        "mock-model".to_string(),
+        5,
+        10,
+        false,
+        WebToolsConfig::default(),
+    )
+    .await
+    .expect("agent");
+
+    let first_agent = agent.clone();
+    let first_task = tokio::spawn(async move {
+        first_agent
+            .process_direct("hold-a", "web:a", "web", "a")
+            .await
+    });
+
+    while !state.first_started.load(Ordering::SeqCst) {
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            state.first_started_notify.notified(),
+        )
+        .await
+        .expect("first direct session should start");
+    }
+
+    let second_agent = agent.clone();
+    let second_task = tokio::spawn(async move {
+        second_agent
+            .process_direct("fast-b", "web:b", "web", "b")
+            .await
+    });
+
+    let second_result = tokio::time::timeout(Duration::from_millis(200), second_task)
+        .await
+        .expect("second direct session should not be blocked")
+        .expect("second join")
+        .expect("second result");
+
+    state.first_released.store(true, Ordering::SeqCst);
+    state.first_release_notify.notify_waiters();
+
+    let first_result = first_task.await.expect("first join").expect("first result");
+
+    assert_eq!(second_result, "session-b done");
+    assert_eq!(first_result, "session-a done");
 }

@@ -27,6 +27,12 @@ fn config_defaults_expose_the_new_default_profile_shape() {
     );
     assert_eq!(
         value
+            .pointer("/agents/defaults/messageDebounceMs")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        value
             .pointer("/agents/profiles/openai:gpt-4.1-mini/provider")
             .and_then(Value::as_str),
         Some("openai")

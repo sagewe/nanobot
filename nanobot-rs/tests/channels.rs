@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use axum::extract::State;
 use axum::routing::post;
@@ -13,7 +15,92 @@ use nanobot_rs::config::{Config, TelegramConfig, WeixinConfig};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
+
+#[derive(Clone)]
+struct MockChannel {
+    name: &'static str,
+    state: Arc<MockChannelState>,
+}
+
+#[derive(Default)]
+struct MockChannelState {
+    events: Mutex<Vec<String>>,
+    block_chat_id: Option<String>,
+    block_once: bool,
+    blocked_once: AtomicBool,
+    release_requested: AtomicBool,
+    release: Notify,
+}
+
+impl MockChannel {
+    fn new(name: &'static str, block_chat_id: Option<&str>) -> Self {
+        Self {
+            name,
+            state: Arc::new(MockChannelState {
+                block_chat_id: block_chat_id.map(|value| value.to_string()),
+                block_once: true,
+                blocked_once: AtomicBool::new(false),
+                release_requested: AtomicBool::new(false),
+                ..Default::default()
+            }),
+        }
+    }
+}
+
+impl MockChannelState {
+    async fn events(&self) -> Vec<String> {
+        self.events.lock().await.clone()
+    }
+
+    fn release_blocked(&self) {
+        self.release_requested.store(true, Ordering::SeqCst);
+        self.release.notify_waiters();
+    }
+}
+
+#[async_trait::async_trait]
+impl Channel for MockChannel {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    async fn start(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn stop(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn send(&self, msg: OutboundMessage) -> anyhow::Result<()> {
+        self.state
+            .events
+            .lock()
+            .await
+            .push(format!("start:{}:{}", msg.chat_id, msg.content));
+
+        let should_block = self
+            .state
+            .block_chat_id
+            .as_ref()
+            .map(|chat_id| chat_id == &msg.chat_id)
+            .unwrap_or(false)
+            && (!self.state.block_once || !self.state.blocked_once.swap(true, Ordering::SeqCst));
+        if should_block {
+            while !self.state.release_requested.load(Ordering::SeqCst) {
+                self.state.release.notified().await;
+            }
+        }
+
+        self.state
+            .events
+            .lock()
+            .await
+            .push(format!("done:{}:{}", msg.chat_id, msg.content));
+        Ok(())
+    }
+}
 
 #[derive(Clone, Default)]
 struct TelegramState {
@@ -68,6 +155,23 @@ async fn start_weixin_server(state: TelegramState) -> SocketAddr {
         axum::serve(listener, app).await.expect("serve");
     });
     addr
+}
+
+async fn start_mock_manager(
+    block_chat_id: Option<&str>,
+    worker_queue_capacity: usize,
+    worker_idle_timeout: Duration,
+) -> (ChannelManager, MessageBus, Arc<MockChannelState>) {
+    let bus = MessageBus::new(32);
+    let channel = MockChannel::new("mock", block_chat_id);
+    let state = channel.state.clone();
+    let manager = ChannelManager::with_channels_for_test(
+        HashMap::from([("mock".to_string(), Arc::new(channel) as Arc<dyn Channel>)]),
+        bus.clone(),
+        worker_queue_capacity,
+        worker_idle_timeout,
+    );
+    (manager, bus, state)
 }
 
 #[tokio::test]
@@ -241,6 +345,192 @@ async fn telegram_channel_sends_rendered_html() {
         sent[0].get("text").and_then(Value::as_str),
         Some("<b>hello</b> <code>code</code> <a href=\"https://example.com\">link</a>")
     );
+}
+
+#[tokio::test]
+async fn outbound_delivery_to_different_keys_is_parallel() {
+    let (manager, bus, state) =
+        start_mock_manager(Some("chat-a"), 4, Duration::from_millis(100)).await;
+    manager.start_all().await;
+
+    bus.publish_outbound(OutboundMessage {
+        channel: "mock".to_string(),
+        chat_id: "chat-a".to_string(),
+        content: "first".to_string(),
+        metadata: HashMap::new(),
+    })
+    .await
+    .expect("publish first");
+    bus.publish_outbound(OutboundMessage {
+        channel: "mock".to_string(),
+        chat_id: "chat-b".to_string(),
+        content: "second".to_string(),
+        metadata: HashMap::new(),
+    })
+    .await
+    .expect("publish second");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let events = state.events().await;
+    assert!(events.iter().any(|event| event == "done:chat-b:second"));
+    assert!(!events.iter().any(|event| event == "done:chat-a:first"));
+
+    state.release_blocked();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let events = state.events().await;
+    assert!(events.iter().any(|event| event == "done:chat-a:first"));
+
+    manager.stop_all().await;
+}
+
+#[tokio::test]
+async fn outbound_delivery_preserves_fifo_for_one_key() {
+    let (manager, bus, state) =
+        start_mock_manager(Some("chat-a"), 4, Duration::from_millis(100)).await;
+    manager.start_all().await;
+
+    bus.publish_outbound(OutboundMessage {
+        channel: "mock".to_string(),
+        chat_id: "chat-a".to_string(),
+        content: "first".to_string(),
+        metadata: HashMap::new(),
+    })
+    .await
+    .expect("publish first");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let events = state.events().await;
+    assert!(events.iter().any(|event| event == "start:chat-a:first"));
+    bus.publish_outbound(OutboundMessage {
+        channel: "mock".to_string(),
+        chat_id: "chat-a".to_string(),
+        content: "second".to_string(),
+        metadata: HashMap::new(),
+    })
+    .await
+    .expect("publish second");
+
+    state.release_blocked();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let events = state.events().await;
+    assert_eq!(
+        events,
+        vec![
+            "start:chat-a:first".to_string(),
+            "done:chat-a:first".to_string(),
+            "start:chat-a:second".to_string(),
+            "done:chat-a:second".to_string(),
+        ]
+    );
+
+    manager.stop_all().await;
+}
+
+#[tokio::test]
+async fn outbound_delivery_drops_overflowed_messages_without_blocking_other_keys() {
+    let (manager, bus, state) =
+        start_mock_manager(Some("chat-a"), 2, Duration::from_millis(100)).await;
+    manager.start_all().await;
+
+    bus.publish_outbound(OutboundMessage {
+        channel: "mock".to_string(),
+        chat_id: "chat-a".to_string(),
+        content: "first".to_string(),
+        metadata: HashMap::new(),
+    })
+    .await
+    .expect("publish first");
+    bus.publish_outbound(OutboundMessage {
+        channel: "mock".to_string(),
+        chat_id: "chat-a".to_string(),
+        content: "second".to_string(),
+        metadata: HashMap::new(),
+    })
+    .await
+    .expect("publish second");
+    bus.publish_outbound(OutboundMessage {
+        channel: "mock".to_string(),
+        chat_id: "chat-a".to_string(),
+        content: "overflow".to_string(),
+        metadata: HashMap::new(),
+    })
+    .await
+    .expect("publish overflow");
+    bus.publish_outbound(OutboundMessage {
+        channel: "mock".to_string(),
+        chat_id: "chat-b".to_string(),
+        content: "other".to_string(),
+        metadata: HashMap::new(),
+    })
+    .await
+    .expect("publish other");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let events = state.events().await;
+    assert!(!events.iter().any(|event| event == "start:chat-a:overflow"));
+    assert!(events.iter().any(|event| event == "done:chat-b:other"));
+
+    state.release_blocked();
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let events = state.events().await;
+    assert!(events.iter().any(|event| event == "done:chat-a:second"));
+
+    manager.stop_all().await;
+}
+
+#[tokio::test]
+async fn idle_delivery_workers_retire_after_timeout() {
+    let (manager, bus, state) = start_mock_manager(None, 4, Duration::from_millis(25)).await;
+    manager.start_all().await;
+
+    bus.publish_outbound(OutboundMessage {
+        channel: "mock".to_string(),
+        chat_id: "chat-a".to_string(),
+        content: "only".to_string(),
+        metadata: HashMap::new(),
+    })
+    .await
+    .expect("publish");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let events = state.events().await;
+    assert!(events.iter().any(|event| event == "done:chat-a:only"));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if manager.delivery_worker_count().await == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("idle worker retirement");
+
+    manager.stop_all().await;
+}
+
+#[tokio::test]
+async fn stop_all_aborts_active_delivery_workers() {
+    let (manager, bus, state) =
+        start_mock_manager(Some("chat-a"), 4, Duration::from_millis(100)).await;
+    manager.start_all().await;
+
+    bus.publish_outbound(OutboundMessage {
+        channel: "mock".to_string(),
+        chat_id: "chat-a".to_string(),
+        content: "blocked".to_string(),
+        metadata: HashMap::new(),
+    })
+    .await
+    .expect("publish");
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    manager.stop_all().await;
+    state.release_blocked();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let events = state.events().await;
+    assert!(!events.iter().any(|event| event == "done:chat-a:blocked"));
+    assert_eq!(manager.delivery_worker_count().await, 0);
 }
 
 #[tokio::test]
