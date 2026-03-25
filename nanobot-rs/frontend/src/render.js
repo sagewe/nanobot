@@ -146,23 +146,34 @@ function buildBtwThreadElement(message) {
   const wrapper = document.createElement("div");
   wrapper.className = "btw-thread";
   wrapper.dataset.kind = "btw-thread";
-  if (message.stale) {
-    wrapper.dataset.stale = "true";
-  }
-  if (message.pending) {
-    wrapper.dataset.pending = "true";
-  }
+  if (message.stale) wrapper.dataset.stale = "true";
+  if (message.pending) wrapper.dataset.pending = "true";
 
-  const label = document.createElement("div");
+  // Header row: chevron + label + query (clickable to toggle)
+  const header = document.createElement("div");
+  header.className = "btw-thread-header";
+  header.setAttribute("role", "button");
+  header.setAttribute("tabindex", "0");
+
+  const chevron = document.createElement("span");
+  chevron.className = "btw-thread-chevron";
+  chevron.innerHTML =
+    '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,4.5 6,7.5 9,4.5"/></svg>';
+
+  const label = document.createElement("span");
   label.className = "btw-thread-label";
   label.textContent = "BTW";
-  wrapper.appendChild(label);
 
-  const query = document.createElement("div");
+  const query = document.createElement("span");
   query.className = "btw-thread-query";
   query.textContent = message.query || "";
-  wrapper.appendChild(query);
 
+  header.appendChild(chevron);
+  header.appendChild(label);
+  header.appendChild(query);
+  wrapper.appendChild(header);
+
+  // Answer (collapsed by default unless pending)
   const answer = document.createElement("div");
   answer.className = "btw-thread-answer";
   if (message.contentHtml) {
@@ -170,9 +181,22 @@ function buildBtwThreadElement(message) {
   } else if (message.content) {
     answer.textContent = message.content;
   } else {
-    answer.textContent = message.pending ? "Pending…" : "";
+    answer.textContent = message.pending ? "…" : "";
   }
   wrapper.appendChild(answer);
+
+  // Toggle on click / Enter
+  const toggle = () => {
+    const open = wrapper.dataset.open === "true";
+    wrapper.dataset.open = String(!open);
+  };
+  header.addEventListener("click", toggle);
+  header.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+  });
+
+  // Auto-expand if pending (so user sees it working)
+  if (message.pending) wrapper.dataset.open = "true";
 
   return wrapper;
 }

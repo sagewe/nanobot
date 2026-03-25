@@ -582,47 +582,93 @@
 
       .btw-thread {
         justify-self: start;
-        display: grid;
-        gap: 0.45rem;
         max-width: min(40rem, 100%);
-        padding: 0.8rem 0.95rem;
-        border: 1px solid rgba(193, 95, 60, 0.22);
-        border-radius: 0.9rem;
-        background: linear-gradient(180deg, rgba(193, 95, 60, 0.06), rgba(193, 95, 60, 0.02));
+        border-left: 2px solid rgba(193, 95, 60, 0.3);
+        padding-left: 0.75rem;
+      }
+
+      .btw-thread-header {
+        display: flex;
+        align-items: baseline;
+        gap: 0.4rem;
+        cursor: pointer;
+        user-select: none;
+        padding: 0.1rem 0;
+      }
+
+      .btw-thread-header:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+        border-radius: 3px;
+      }
+
+      .btw-thread-chevron {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        color: var(--accent);
+        transition: transform 0.18s ease;
+        margin-top: 0.1rem;
+      }
+
+      .btw-thread-chevron svg {
+        width: 12px;
+        height: 12px;
+      }
+
+      .btw-thread[data-open="true"] .btw-thread-chevron {
+        transform: rotate(180deg);
       }
 
       .btw-thread-label {
-        display: inline-flex;
-        align-items: center;
-        width: fit-content;
-        padding: 0.1rem 0.45rem;
+        flex-shrink: 0;
+        padding: 0.05rem 0.4rem;
         border-radius: 999px;
-        background: rgba(193, 95, 60, 0.14);
+        background: rgba(193, 95, 60, 0.12);
         color: var(--accent);
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 0.68rem;
+        font-size: 0.65rem;
         font-weight: 700;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.05em;
       }
 
       .btw-thread-query {
-        color: var(--ink);
-        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 0.9rem;
-        line-height: 1.55;
-        white-space: pre-wrap;
+        color: var(--muted2);
+        font-size: 0.88rem;
+        line-height: 1.45;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* When open, allow query to wrap */
+      .btw-thread[data-open="true"] .btw-thread-query {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: unset;
       }
 
       .btw-thread-answer {
-        padding-left: 0.8rem;
-        border-left: 2px solid rgba(193, 95, 60, 0.18);
+        display: none;
+        margin-top: 0.5rem;
+        padding-left: 0.6rem;
+        border-left: 2px solid rgba(193, 95, 60, 0.15);
         color: var(--muted2);
+        font-size: 0.9rem;
         line-height: 1.6;
       }
 
+      .btw-thread[data-open="true"] .btw-thread-answer {
+        display: block;
+      }
+
       .btw-thread[data-stale="true"] .btw-thread-label {
-        background: rgba(162, 123, 59, 0.14);
+        background: rgba(162, 123, 59, 0.12);
         color: #8a632f;
+      }
+
+      .btw-thread[data-stale="true"] {
+        border-left-color: rgba(162, 123, 59, 0.25);
       }
 
       .btw-thread[data-pending="true"] .btw-thread-answer {
