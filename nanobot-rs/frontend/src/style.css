@@ -786,6 +786,124 @@
         display: block;
       }
 
+      /* ── Markdown prose (assistant bubble) ──────────────────────────────────── */
+      .msg-group[data-role="assistant"] .msg-bubble > * + * { margin-top: 0.55em; }
+      .msg-group[data-role="assistant"] .msg-bubble > *:first-child { margin-top: 0; }
+      .msg-group[data-role="assistant"] .msg-bubble h1,
+      .msg-group[data-role="assistant"] .msg-bubble h2,
+      .msg-group[data-role="assistant"] .msg-bubble h3 {
+        font-weight: 600;
+        line-height: 1.3;
+        margin-top: 1.1em;
+      }
+      .msg-group[data-role="assistant"] .msg-bubble h1 { font-size: 1.15em; }
+      .msg-group[data-role="assistant"] .msg-bubble h2 { font-size: 1.05em; }
+      .msg-group[data-role="assistant"] .msg-bubble h3 { font-size: 0.95em; }
+      .msg-group[data-role="assistant"] .msg-bubble ul,
+      .msg-group[data-role="assistant"] .msg-bubble ol {
+        padding-left: 1.4em;
+      }
+      .msg-group[data-role="assistant"] .msg-bubble li + li { margin-top: 0.2em; }
+      .msg-group[data-role="assistant"] .msg-bubble li > ul,
+      .msg-group[data-role="assistant"] .msg-bubble li > ol { margin-top: 0.2em; }
+      .msg-group[data-role="assistant"] .msg-bubble blockquote {
+        border-left: 3px solid var(--accent);
+        margin: 0;
+        padding: 0.15em 0.75em;
+        color: var(--dim);
+        font-style: italic;
+      }
+      .msg-group[data-role="assistant"] .msg-bubble hr {
+        border: none;
+        border-top: 1px solid var(--line);
+        margin: 0.75em 0;
+      }
+      .msg-group[data-role="assistant"] .msg-bubble :not(pre) > code {
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.82em;
+        background: rgba(193, 95, 60, 0.1);
+        color: var(--accent);
+        border-radius: 3px;
+        padding: 0.1em 0.35em;
+      }
+      .msg-group[data-role="assistant"] .msg-bubble table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88em;
+      }
+      .msg-group[data-role="assistant"] .msg-bubble th,
+      .msg-group[data-role="assistant"] .msg-bubble td {
+        border: 1px solid var(--line);
+        padding: 0.35em 0.6em;
+        text-align: left;
+      }
+      .msg-group[data-role="assistant"] .msg-bubble th {
+        background: rgba(193, 95, 60, 0.07);
+        font-weight: 600;
+      }
+      .msg-group[data-role="assistant"] .msg-bubble tr:nth-child(even) td {
+        background: rgba(0, 0, 0, 0.02);
+      }
+      :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-bubble tr:nth-child(even) td {
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      /* ── In-transcript search bar ────────────────────────────────────────────── */
+      #transcript-search {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.4rem 1rem;
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+        flex-shrink: 0;
+        color: var(--muted);
+      }
+      #transcript-search[hidden] { display: none; }
+      #search-input {
+        flex: 1;
+        border: 1px solid var(--line);
+        border-radius: 0.35rem;
+        padding: 0.2rem 0.5rem;
+        font-size: 0.84rem;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: inherit;
+        outline: none;
+      }
+      #search-input:focus { border-color: var(--accent); }
+      #search-count {
+        font-size: 0.75rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        color: var(--dim);
+        white-space: nowrap;
+        min-width: 4rem;
+        text-align: center;
+      }
+      #search-prev, #search-next, #search-close {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0.2rem 0.3rem;
+        border-radius: 0.25rem;
+        color: var(--dim);
+        display: flex;
+        align-items: center;
+        transition: color 0.12s, background 0.12s;
+      }
+      #search-prev:hover, #search-next:hover { color: var(--ink); background: var(--line); }
+      #search-close:hover { color: #c0392b; background: rgba(192,57,43,0.1); }
+      mark.search-highlight {
+        background: rgba(193, 95, 60, 0.25);
+        color: inherit;
+        border-radius: 2px;
+        padding: 0 1px;
+      }
+      mark.search-current {
+        background: var(--accent);
+        color: #fff;
+      }
+
       @keyframes status-pulse {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.45; }

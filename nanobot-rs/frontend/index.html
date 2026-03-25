@@ -77,6 +77,14 @@
             <select id="session-select" data-i18n-aria-label="select_session" aria-label="Select session"></select>
             <select id="profile-select" data-i18n-aria-label="select_model" aria-label="Select model"></select>
           </div>
+          <div id="transcript-search" hidden>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="search-input" type="text" autocomplete="off" spellcheck="false" data-i18n-placeholder="search_placeholder">
+            <span id="search-count"></span>
+            <button id="search-prev" type="button" aria-label="Previous match"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
+            <button id="search-next" type="button" aria-label="Next match"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+            <button id="search-close" type="button" aria-label="Close search"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
           <section id="transcript" aria-live="polite"></section>
           <div id="status" role="status"></div>
           <form id="composer">

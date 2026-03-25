@@ -607,6 +607,127 @@ composer.addEventListener("submit", async (event) => {
   }
 });
 
+// ── In-transcript search ───────────────────────────────────────────────────────
+const transcriptSearch = document.getElementById("transcript-search");
+const searchInput = document.getElementById("search-input");
+const searchCount = document.getElementById("search-count");
+
+let searchMatches = [];
+let searchIndex = -1;
+
+function openSearch() {
+  transcriptSearch.hidden = false;
+  searchInput.focus();
+  searchInput.select();
+}
+
+function closeSearch() {
+  transcriptSearch.hidden = true;
+  clearSearchHighlights();
+  searchMatches = [];
+  searchIndex = -1;
+  searchCount.textContent = "";
+}
+
+function clearSearchHighlights() {
+  transcript.querySelectorAll("mark.search-highlight").forEach((mark) => {
+    mark.replaceWith(...mark.childNodes);
+  });
+  transcript.normalize();
+}
+
+function performSearch(query) {
+  clearSearchHighlights();
+  searchMatches = [];
+  searchIndex = -1;
+  if (!query.trim()) { searchCount.textContent = ""; return; }
+
+  const lower = query.toLowerCase();
+  const walker = document.createTreeWalker(transcript, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (node.parentElement?.closest("script,style,mark")) return NodeFilter.FILTER_REJECT;
+      return node.textContent.toLowerCase().includes(lower)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  const textNodes = [];
+  let node;
+  while ((node = walker.nextNode())) textNodes.push(node);
+
+  for (const textNode of textNodes) {
+    const text = textNode.textContent;
+    const textLower = text.toLowerCase();
+    let offset = 0;
+    const frag = document.createDocumentFragment();
+    let pos;
+    while ((pos = textLower.indexOf(lower, offset)) !== -1) {
+      if (pos > offset) frag.appendChild(document.createTextNode(text.slice(offset, pos)));
+      const mark = document.createElement("mark");
+      mark.className = "search-highlight";
+      mark.textContent = text.slice(pos, pos + query.length);
+      frag.appendChild(mark);
+      searchMatches.push(mark);
+      offset = pos + query.length;
+    }
+    if (offset < text.length) frag.appendChild(document.createTextNode(text.slice(offset)));
+    textNode.replaceWith(frag);
+  }
+
+  if (searchMatches.length > 0) {
+    navigateSearch(0);
+  } else {
+    searchCount.textContent = t("search_no_results");
+  }
+}
+
+function navigateSearch(index) {
+  if (!searchMatches.length) return;
+  if (searchIndex >= 0) searchMatches[searchIndex]?.classList.remove("search-current");
+  searchIndex = ((index % searchMatches.length) + searchMatches.length) % searchMatches.length;
+  const current = searchMatches[searchIndex];
+  current.classList.add("search-current");
+  current.scrollIntoView({ block: "center", behavior: "smooth" });
+  searchCount.textContent = `${searchIndex + 1} / ${searchMatches.length}`;
+}
+
+searchInput.addEventListener("input", () => performSearch(searchInput.value));
+searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); navigateSearch(e.shiftKey ? searchIndex - 1 : searchIndex + 1); }
+  else if (e.key === "Escape") closeSearch();
+});
+document.getElementById("search-prev").addEventListener("click", () => navigateSearch(searchIndex - 1));
+document.getElementById("search-next").addEventListener("click", () => navigateSearch(searchIndex + 1));
+document.getElementById("search-close").addEventListener("click", closeSearch);
+
+// ── Global keyboard shortcuts ──────────────────────────────────────────────────
+document.addEventListener("keydown", (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod) return;
+  switch (e.key.toLowerCase()) {
+    case "k":
+      e.preventDefault();
+      switchTab("sessions");
+      sessionsSearch.focus();
+      sessionsSearch.select();
+      break;
+    case "n":
+      if (document.activeElement !== messageInput) {
+        e.preventDefault();
+        sessionSelect.value = "__new__";
+        sessionSelect.dispatchEvent(new Event("change"));
+      }
+      break;
+    case "f":
+      if (document.activeElement !== messageInput && document.activeElement !== searchInput) {
+        e.preventDefault();
+        openSearch();
+      }
+      break;
+  }
+});
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 renderTranscript([]);
 setComposerAccess(false, false);
