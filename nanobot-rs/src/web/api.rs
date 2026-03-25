@@ -34,6 +34,7 @@ pub struct ChatResponse {
     pub reply: String,
     #[serde(rename = "replyHtml")]
     pub reply_html: String,
+    pub persisted: bool,
     pub channel: String,
     #[serde(rename = "sessionId")]
     pub session_id: String,
@@ -134,6 +135,7 @@ pub async fn chat(
     Ok(Json(ChatResponse {
         reply: chat.reply,
         reply_html,
+        persisted: chat.persisted,
         channel,
         session_id,
         active_profile: chat.active_profile,

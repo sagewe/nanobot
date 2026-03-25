@@ -35,6 +35,7 @@ impl ChatService for StaticChatService {
         Ok(WebChatReply {
             reply: "unused".to_string(),
             active_profile: "openai:mock-model".to_string(),
+            persisted: true,
         })
     }
 
@@ -54,6 +55,7 @@ fn test_state() -> AppState {
 #[derive(Clone)]
 struct ReplyChatService {
     reply: String,
+    persisted: bool,
 }
 
 #[async_trait]
@@ -67,6 +69,7 @@ impl ChatService for ReplyChatService {
         Ok(WebChatReply {
             reply: self.reply.clone(),
             active_profile: "openai:mock-model".to_string(),
+            persisted: self.persisted,
         })
     }
 
@@ -82,6 +85,14 @@ impl ChatService for ReplyChatService {
 fn test_state_with_reply(reply: &str) -> AppState {
     AppState::new(Arc::new(ReplyChatService {
         reply: reply.to_string(),
+        persisted: true,
+    }))
+}
+
+fn test_state_with_ephemeral_reply(reply: &str) -> AppState {
+    AppState::new(Arc::new(ReplyChatService {
+        reply: reply.to_string(),
+        persisted: false,
     }))
 }
 
@@ -464,6 +475,29 @@ async fn chat_endpoint_returns_agent_reply() {
     );
     assert_eq!(response["channel"], "web");
     assert_eq!(response["sessionId"], "browser-session-1");
+    assert_eq!(response["persisted"], true);
+}
+
+#[tokio::test]
+async fn chat_endpoint_exposes_ephemeral_reply_flag() {
+    let app = web::build_router(test_state_with_ephemeral_reply("temporary"));
+    let addr = spawn_test_server(app).await;
+
+    let response: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://{addr}/api/chat"))
+        .json(&serde_json::json!({
+            "message": "/btw hi",
+            "sessionId": "browser-session-btw"
+        }))
+        .send()
+        .await
+        .expect("send chat request")
+        .json()
+        .await
+        .expect("chat response body");
+
+    assert_eq!(response["reply"], "temporary");
+    assert_eq!(response["persisted"], false);
 }
 
 #[tokio::test]
@@ -562,6 +596,7 @@ async fn chat_endpoint_returns_message_tool_reply() {
 
     assert_eq!(response["reply"], "Hi from the message tool");
     assert_eq!(response["replyHtml"], "<p>Hi from the message tool</p>\n");
+    assert_eq!(response["persisted"], false);
 }
 
 #[tokio::test]

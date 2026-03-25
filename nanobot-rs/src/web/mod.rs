@@ -98,6 +98,7 @@ pub trait ChatService: Send + Sync {
 pub struct WebChatReply {
     pub reply: String,
     pub active_profile: String,
+    pub persisted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -482,13 +483,13 @@ impl ChatService for AgentChatService {
         );
         let result = self
             .agent
-            .process_direct_logged(message, &session_key, channel, session_id)
+            .process_direct_result_logged(message, &session_key, channel, session_id)
             .await;
         match &result {
             Ok(reply) => {
                 info!(
                     session = %session_id,
-                    preview = %preview(reply),
+                    preview = %preview(&reply.reply),
                     "web session {session_id} completed"
                 );
             }
@@ -503,8 +504,9 @@ impl ChatService for AgentChatService {
         let reply = result?;
         let active_profile = self.agent.current_profile_for_session(&session_key)?;
         Ok(WebChatReply {
-            reply,
+            reply: reply.reply,
             active_profile,
+            persisted: reply.persisted,
         })
     }
 

@@ -191,6 +191,11 @@ function updateSessionMetadata(channel, sessionId, activeProfile) {
   syncSessionsList();
 }
 
+function appendEphemeralExchange(message, payload) {
+  appendMessage("user", message);
+  appendAssistantMessage(payload.replyHtml || payload.reply);
+}
+
 // ── Session management ────────────────────────────────────────────────────────
 async function refreshSessions() {
   currentSessionGroups = await fetchSessions();
@@ -578,6 +583,9 @@ composer.addEventListener("submit", async (event) => {
     setSelectedSession(payload.channel || currentChannel, payload.sessionId);
     await refreshSessions();
     await selectSession(payload.channel || currentChannel, payload.sessionId || currentSessionId);
+    if (payload.persisted === false) {
+      appendEphemeralExchange(message, payload);
+    }
     setStatus("", "idle");
   } catch (error) {
     if (!messageInput.value.trim()) {

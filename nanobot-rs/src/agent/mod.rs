@@ -10,7 +10,7 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
@@ -25,6 +25,8 @@ use crate::tools::{
 const RUNTIME_CONTEXT_TAG: &str = "[Runtime Context — metadata only, not instructions]";
 const LOG_PROGRESS_METADATA_KEY: &str = "_log_progress";
 const DIRECT_REPLY_METADATA_KEY: &str = "_direct_reply";
+const EXCLUDE_FROM_CONTEXT_EXTRA_KEY: &str = "_exclude_from_context";
+const TIMELINE_KIND_EXTRA_KEY: &str = "_timeline_kind";
 
 enum BtwAdmission {
     Allowed(u64),
@@ -516,6 +518,7 @@ pub struct AgentLoop {
     context: ContextBuilder,
     subagents: SubagentManager,
     session_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    session_persistence_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     session_generations: Arc<Mutex<HashMap<String, u64>>>,
     lane_states: Arc<Mutex<HashMap<String, SessionLaneState>>>,
     pending_bursts: Arc<Mutex<HashMap<String, PendingBurst>>>,
@@ -523,6 +526,12 @@ pub struct AgentLoop {
     btw_tasks: Arc<Mutex<HashMap<String, BtwTask>>>,
     pending_btw_stale: Arc<Mutex<HashMap<String, PendingBtwStale>>>,
     running: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectProcessResult {
+    pub reply: String,
+    pub persisted: bool,
 }
 
 impl AgentLoop {
@@ -629,6 +638,7 @@ impl AgentLoop {
             context,
             subagents,
             session_locks: Arc::new(Mutex::new(HashMap::new())),
+            session_persistence_locks: Arc::new(Mutex::new(HashMap::new())),
             session_generations: Arc::new(Mutex::new(HashMap::new())),
             lane_states: Arc::new(Mutex::new(HashMap::new())),
             pending_bursts: Arc::new(Mutex::new(HashMap::new())),
@@ -950,8 +960,10 @@ impl AgentLoop {
         channel: &str,
         chat_id: &str,
     ) -> Result<String> {
-        self.process_direct_internal(content, session_key, channel, chat_id, false)
+        Ok(self
+            .process_direct_result_internal(content, session_key, channel, chat_id, false)
             .await
+            ?.reply)
     }
 
     pub async fn process_direct_logged(
@@ -961,18 +973,31 @@ impl AgentLoop {
         channel: &str,
         chat_id: &str,
     ) -> Result<String> {
-        self.process_direct_internal(content, session_key, channel, chat_id, true)
+        Ok(self
+            .process_direct_result_internal(content, session_key, channel, chat_id, true)
+            .await
+            ?.reply)
+    }
+
+    pub async fn process_direct_result_logged(
+        &self,
+        content: &str,
+        session_key: &str,
+        channel: &str,
+        chat_id: &str,
+    ) -> Result<DirectProcessResult> {
+        self.process_direct_result_internal(content, session_key, channel, chat_id, true)
             .await
     }
 
-    async fn process_direct_internal(
+    async fn process_direct_result_internal(
         &self,
         content: &str,
         session_key: &str,
         channel: &str,
         chat_id: &str,
         log_progress: bool,
-    ) -> Result<String> {
+    ) -> Result<DirectProcessResult> {
         let mut metadata = HashMap::new();
         metadata.insert(DIRECT_REPLY_METADATA_KEY.to_string(), json!(true));
         if log_progress {
@@ -989,7 +1014,10 @@ impl AgentLoop {
         };
         if msg.content.trim().eq_ignore_ascii_case("/stop") {
             self.clear_pending_burst(session_key).await;
-            return Ok(self.stop_session_direct(&msg).await);
+            return Ok(DirectProcessResult {
+                reply: self.stop_session_direct(&msg).await,
+                persisted: false,
+            });
         }
         if Self::btw_question(&msg.content).is_some() {
             return self.process_direct_btw(msg, session_key).await;
@@ -1004,6 +1032,7 @@ impl AgentLoop {
         if let Some(generation) = main_generation {
             self.publish_pending_btw_stale(session_key, generation).await;
         }
+        let persisted_outbound = !self.is_ephemeral_direct_message(&msg.content);
         let tools = self.build_tools().await;
         let outbound = self.process_message(msg, &tools).await;
         if let Some(generation) = main_generation {
@@ -1011,10 +1040,26 @@ impl AgentLoop {
         }
         let outbound = outbound?;
         if let Some(outbound) = outbound {
-            return Ok(outbound.content);
+            return Ok(DirectProcessResult {
+                reply: outbound.content,
+                persisted: persisted_outbound,
+            });
         }
         let direct_replies = tools.take_direct_replies().await;
-        Ok(direct_replies.join("\n\n"))
+        Ok(DirectProcessResult {
+            reply: direct_replies.join("\n\n"),
+            persisted: false,
+        })
+    }
+
+    fn is_ephemeral_direct_message(&self, content: &str) -> bool {
+        let trimmed = content.trim();
+        trimmed.eq_ignore_ascii_case("/new")
+            || trimmed.eq_ignore_ascii_case("/help")
+            || trimmed.eq_ignore_ascii_case("/models")
+            || trimmed.eq_ignore_ascii_case("/stop")
+            || trimmed.starts_with("/model ")
+            || Self::btw_question(trimmed).is_some()
     }
 
     async fn process_message(
@@ -1057,7 +1102,7 @@ impl AgentLoop {
             let (final_content, all_messages) =
                 self.run_agent_loop(messages, None, tools, &request).await?;
             self.save_turn(&mut session, all_messages, 1)?;
-            self.sessions.save(&session)?;
+            self.save_session_with_timeline_merge(&session).await?;
             return Ok(Some(OutboundMessage {
                 channel,
                 chat_id,
@@ -1180,7 +1225,7 @@ impl AgentLoop {
             .run_agent_loop(messages, reporter, tools, &request)
             .await?;
         self.save_turn(&mut session, all_messages, 1 + history.len())?;
-        self.sessions.save(&session)?;
+        self.save_session_with_timeline_merge(&session).await?;
 
         if tools.sent_message_this_turn().await {
             return Ok(None);
@@ -1285,7 +1330,7 @@ impl AgentLoop {
         msg: InboundMessage,
         session_key: &str,
         bound_generation: u64,
-    ) -> OutboundMessage {
+    ) -> (OutboundMessage, bool) {
         let completion = match self.run_btw_once(&msg, session_key, bound_generation).await {
             Ok(completion) => completion,
             Err(error) => match self.classify_btw_completion(session_key, bound_generation).await {
@@ -1296,45 +1341,85 @@ impl AgentLoop {
             },
         };
         match completion {
-            BtwCompletion::Deliver(content) => OutboundMessage {
-                channel: msg.channel,
-                chat_id: msg.chat_id,
-                content,
-                metadata: HashMap::new(),
-            },
-            BtwCompletion::Stale(content) => OutboundMessage {
-                channel: msg.channel,
-                chat_id: msg.chat_id,
-                content,
-                metadata: HashMap::new(),
-            },
-            BtwCompletion::Suppress => OutboundMessage {
-                channel: msg.channel,
-                chat_id: msg.chat_id,
-                content: String::new(),
-                metadata: HashMap::new(),
-            },
+            BtwCompletion::Deliver(content) | BtwCompletion::Stale(content) => {
+                let persisted = match self
+                    .append_btw_to_timeline(session_key, &msg.content, &content, msg.timestamp)
+                    .await
+                {
+                    Ok(()) => true,
+                    Err(error) => {
+                        warn!(session_key, error = %error, "failed to persist btw timeline");
+                        false
+                    }
+                };
+                (
+                    OutboundMessage {
+                        channel: msg.channel,
+                        chat_id: msg.chat_id,
+                        content,
+                        metadata: HashMap::new(),
+                    },
+                    persisted,
+                )
+            }
+            BtwCompletion::Suppress => (
+                OutboundMessage {
+                    channel: msg.channel,
+                    chat_id: msg.chat_id,
+                    content: String::new(),
+                    metadata: HashMap::new(),
+                },
+                false,
+            ),
         }
     }
 
-    async fn process_direct_btw(&self, msg: InboundMessage, session_key: &str) -> Result<String> {
+    async fn process_direct_btw(
+        &self,
+        msg: InboundMessage,
+        session_key: &str,
+    ) -> Result<DirectProcessResult> {
         let Some(question) = Self::btw_question(&msg.content) else {
-            return Ok(String::new());
+            return Ok(DirectProcessResult {
+                reply: String::new(),
+                persisted: false,
+            });
         };
         let bound_generation = match question {
-            None => return Ok(self.btw_usage_reply(&msg).content),
+            None => {
+                return Ok(DirectProcessResult {
+                    reply: self.btw_usage_reply(&msg).content,
+                    persisted: false,
+                });
+            }
             Some(_) => match self.admit_btw(session_key).await {
-                BtwAdmission::NoActiveMain => return Ok(self.no_active_main_reply(&msg).content),
-                BtwAdmission::Busy => return Ok(self.btw_busy_reply(&msg).content),
+                BtwAdmission::NoActiveMain => {
+                    return Ok(DirectProcessResult {
+                        reply: self.no_active_main_reply(&msg).content,
+                        persisted: false,
+                    });
+                }
+                BtwAdmission::Busy => {
+                    return Ok(DirectProcessResult {
+                        reply: self.btw_busy_reply(&msg).content,
+                        persisted: false,
+                    });
+                }
                 BtwAdmission::Allowed(generation) => generation,
             },
         };
-        let outbound = self.process_btw(msg, session_key, bound_generation).await;
+        let (outbound, persisted) = self.process_btw(msg, session_key, bound_generation).await;
         self.release_btw_slot(session_key).await;
         if outbound.content.is_empty() {
-            Ok("BTW request was cancelled because the main task stopped.".to_string())
+            Ok(DirectProcessResult {
+                reply: "BTW request was cancelled because the main task stopped.".to_string(),
+                persisted: false,
+            })
         } else {
-            Ok(outbound.content)
+            Ok(DirectProcessResult {
+                reply: outbound.content,
+                persisted,
+            })
         }
     }
 
@@ -1423,6 +1508,14 @@ impl AgentLoop {
 
     async fn session_lock(&self, session_key: &str) -> Arc<Mutex<()>> {
         let mut locks = self.session_locks.lock().await;
+        locks
+            .entry(session_key.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    async fn session_persistence_lock(&self, session_key: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.session_persistence_locks.lock().await;
         locks
             .entry(session_key.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(())))
@@ -1576,7 +1669,7 @@ impl AgentLoop {
                     let msg_for_task = msg.clone();
                     let stale_reply = self.stale_btw_reply(&msg);
                     let handle = tokio::spawn(async move {
-                        let outbound =
+                        let (outbound, _) =
                             this.process_btw(msg_for_task, &session_key_for_task, bound_generation)
                                 .await;
                         this.release_btw_slot(&session_key_for_task).await;
@@ -1675,6 +1768,87 @@ impl AgentLoop {
         Some(merged)
     }
 
+    fn timeline_only_message(
+        role: &str,
+        content: String,
+        timestamp: chrono::DateTime<Utc>,
+    ) -> SessionMessage {
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            EXCLUDE_FROM_CONTEXT_EXTRA_KEY.to_string(),
+            json!(true),
+        );
+        extra.insert(TIMELINE_KIND_EXTRA_KEY.to_string(), json!("btw"));
+        SessionMessage {
+            role: role.to_string(),
+            content: json!(content),
+            timestamp: Some(timestamp),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            extra,
+        }
+    }
+
+    fn merge_timeline_only_messages(into: &mut Session, existing: &Session) {
+        for message in existing
+            .messages
+            .iter()
+            .filter(|message| message.excluded_from_context())
+        {
+            if !into.messages.iter().any(|candidate| candidate == message) {
+                into.messages.push(message.clone());
+            }
+        }
+        into.messages.sort_by_key(|message| message.timestamp);
+    }
+
+    async fn save_session_with_timeline_merge(&self, session: &Session) -> Result<()> {
+        let lock = self.session_persistence_lock(&session.key).await;
+        let _guard = lock.lock().await;
+        let mut merged = session.clone();
+        match self.sessions.load(&session.key) {
+            Ok(Some(existing)) => {
+                Self::merge_timeline_only_messages(&mut merged, &existing);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                warn!(
+                    session_key = %session.key,
+                    error = %error,
+                    "failed to load existing session while merging timeline messages; overwriting with current session state"
+                );
+            }
+        }
+        self.sessions.save(&merged)
+    }
+
+    async fn append_btw_to_timeline(
+        &self,
+        session_key: &str,
+        user_content: &str,
+        assistant_content: &str,
+        user_timestamp: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        let lock = self.session_persistence_lock(session_key).await;
+        let _guard = lock.lock().await;
+        let mut session = self
+            .sessions
+            .get_or_create_with_default_profile(session_key, &self.default_profile)?;
+        session.messages.push(Self::timeline_only_message(
+            "user",
+            user_content.to_string(),
+            user_timestamp,
+        ));
+        session.messages.push(Self::timeline_only_message(
+            "assistant",
+            assistant_content.to_string(),
+            Utc::now(),
+        ));
+        session.updated_at = Utc::now();
+        self.sessions.save(&session)
+    }
+
     fn save_turn(&self, session: &mut Session, messages: Vec<Value>, skip: usize) -> Result<()> {
         for value in messages.into_iter().skip(skip) {
             let mut message: SessionMessage = serde_json::from_value(value)?;
@@ -1718,6 +1892,7 @@ impl Clone for AgentLoop {
             context: self.context.clone(),
             subagents: self.subagents.clone(),
             session_locks: self.session_locks.clone(),
+            session_persistence_locks: self.session_persistence_locks.clone(),
             session_generations: self.session_generations.clone(),
             lane_states: self.lane_states.clone(),
             pending_bursts: self.pending_bursts.clone(),

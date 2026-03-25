@@ -2589,7 +2589,7 @@ async fn btw_replies_while_main_lane_keeps_running() {
 }
 
 #[tokio::test]
-async fn btw_does_not_persist_user_or_assistant_turns() {
+async fn btw_persists_to_timeline_but_not_model_history() {
     let dir = tempdir().expect("tempdir");
     let state = Arc::new(BtwState::default());
     let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
@@ -2645,26 +2645,39 @@ async fn btw_does_not_persist_user_or_assistant_turns() {
         })
         .collect::<Vec<_>>();
     assert!(
-        turn_texts.iter().all(|content| !content.contains("/btw")),
+        turn_texts
+            .iter()
+            .any(|content| content.contains("/btw history-check")),
         "{turn_texts:?}"
     );
     assert!(
         turn_texts
             .iter()
-            .all(|content| !content.contains("history-check")),
+            .any(|content| content.contains("btw reply")),
         "{turn_texts:?}"
     );
+    let history_texts = session
+        .get_history(100)
+        .into_iter()
+        .map(|message| {
+            message
+                .get("content")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .unwrap_or_else(|| message["content"].to_string())
+        })
+        .collect::<Vec<_>>();
     assert!(
-        turn_texts
+        history_texts
+            .iter()
+            .all(|content| !content.contains("/btw history-check")),
+        "{history_texts:?}"
+    );
+    assert!(
+        history_texts
             .iter()
             .all(|content| !content.contains("btw reply")),
-        "{turn_texts:?}"
-    );
-    assert!(
-        turn_texts
-            .iter()
-            .all(|content| !content.contains("btw reply")),
-        "{turn_texts:?}"
+        "{history_texts:?}"
     );
 
     agent.stop();

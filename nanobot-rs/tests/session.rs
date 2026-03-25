@@ -535,6 +535,61 @@ fn duplicate_to_web_sets_source_key_when_source_has_no_ancestor_metadata() {
 }
 
 #[test]
+fn get_history_excludes_timeline_only_messages_from_model_context() {
+    let mut session = Session::new("web:timeline");
+    session.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("main question"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    session.messages.push(SessionMessage {
+        role: "assistant".to_string(),
+        content: json!("main answer"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    session.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("/btw quick question"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: serde_json::Map::from_iter([(
+            "_exclude_from_context".to_string(),
+            json!(true),
+        )]),
+    });
+    session.messages.push(SessionMessage {
+        role: "assistant".to_string(),
+        content: json!("btw answer"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: serde_json::Map::from_iter([(
+            "_exclude_from_context".to_string(),
+            json!(true),
+        )]),
+    });
+
+    let history = session.get_history(100);
+    let contents = history
+        .iter()
+        .filter_map(|message| message.get("content").and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>();
+
+    assert_eq!(contents, vec!["main question", "main answer"]);
+}
+
+#[test]
 fn list_sessions_warns_when_a_session_file_is_skipped() {
     let dir = tempdir().expect("tempdir");
     let store = SessionStore::new(dir.path()).expect("session store");

@@ -122,6 +122,15 @@ fn page_shell_renders_assistant_messages_as_html() {
 }
 
 #[test]
+fn page_shell_preserves_ephemeral_chat_replies_after_session_reload() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("if (payload.persisted === false) {"));
+    assert!(html.contains("appendMessage(\"user\", message);"));
+    assert!(html.contains("appendAssistantMessage(payload.replyHtml || payload.reply);"));
+}
+
+#[test]
 fn page_shell_commits_session_selection_only_after_detail_load() {
     let html = nanobot_rs::web::page::render_index_html();
 

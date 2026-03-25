@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use tracing::warn;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionMessage {
     pub role: String,
     #[serde(default)]
@@ -26,6 +26,13 @@ pub struct SessionMessage {
 }
 
 impl SessionMessage {
+    pub fn excluded_from_context(&self) -> bool {
+        self.extra
+            .get("_exclude_from_context")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
     pub fn to_llm_message(&self) -> Value {
         let mut obj = self.extra.clone();
         obj.insert("role".to_string(), json!(self.role));
@@ -79,9 +86,13 @@ impl Session {
     }
 
     pub fn get_history(&self, max_messages: usize) -> Vec<Value> {
-        let unconsolidated = &self.messages[self.last_consolidated..];
+        let unconsolidated = self.messages[self.last_consolidated..]
+            .iter()
+            .filter(|message| !message.excluded_from_context())
+            .cloned()
+            .collect::<Vec<_>>();
         let mut sliced = if max_messages == 0 || max_messages >= unconsolidated.len() {
-            unconsolidated.to_vec()
+            unconsolidated
         } else {
             unconsolidated[unconsolidated.len() - max_messages..].to_vec()
         };
