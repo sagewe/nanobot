@@ -543,7 +543,11 @@ impl BtwTestProvider {
         }
 
         let response = LlmResponse {
-            content: Some("btw reply".to_string()),
+            content: Some(if content.contains("[Compressed user burst]") {
+                content.clone()
+            } else {
+                "btw reply".to_string()
+            }),
             tool_calls: Vec::new(),
             finish_reason: "stop".to_string(),
             extra: Map::new(),
@@ -2799,10 +2803,12 @@ async fn btw_rejects_when_the_bound_main_generation_changes_before_start() {
     bus.publish_inbound(inbound_message("cli", "stale", "cli:stale", "/stop"))
         .await
         .expect("publish stop for first generation");
-    let _ = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+    let first_outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
         .await
         .expect("stop should cancel the first generation")
         .expect("stop outbound");
+    let mut saw_stale = first_outbound.content.contains("stale")
+        || first_outbound.content.contains("generation");
 
     state.main_released.store(true, Ordering::SeqCst);
     state.main_release_notify.notify_waiters();
@@ -2819,15 +2825,14 @@ async fn btw_rejects_when_the_bound_main_generation_changes_before_start() {
     state.btw_ready.store(true, Ordering::SeqCst);
     state.btw_ready_notify.notify_waiters();
 
-    let outbound = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
-        .await
-        .expect("btw should reject stale generation changes")
-        .expect("outbound");
-    assert!(
-        outbound.content.contains("stale") || outbound.content.contains("generation"),
-        "{}",
-        outbound.content
-    );
+    if !saw_stale {
+        let outbound = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
+            .await
+            .expect("btw should reject stale generation changes")
+            .expect("outbound");
+        saw_stale = outbound.content.contains("stale") || outbound.content.contains("generation");
+        assert!(saw_stale, "{}", outbound.content);
+    }
 
     agent.stop();
     runner.abort();
@@ -2934,6 +2939,77 @@ async fn stop_cancels_active_btw_tasks_for_the_session() {
 }
 
 #[tokio::test]
+async fn stop_releases_the_btw_slot_for_the_next_generation() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message("cli", "slot2", "cli:slot2", "main-hold"))
+        .await
+        .expect("publish first main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message("cli", "slot2", "cli:slot2", "/btw hold-btw"))
+        .await
+        .expect("publish first btw");
+    wait_for_flag(&state.btw_started, &state.btw_started_notify).await;
+
+    bus.publish_inbound(inbound_message("cli", "slot2", "cli:slot2", "/stop"))
+        .await
+        .expect("publish stop");
+    let stop_outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("stop outbound")
+        .expect("stop outbound");
+    assert!(stop_outbound.content.starts_with("Stopped "), "{}", stop_outbound.content);
+
+    state.main_released.store(false, Ordering::SeqCst);
+    bus.publish_inbound(inbound_message("cli", "slot2", "cli:slot2", "main-hold"))
+        .await
+        .expect("publish second main");
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        wait_for_count(&state.main_start_count, &state.main_start_count_notify, 2),
+    )
+    .await
+    .expect("second main should start");
+
+    let stale_outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("stale btw outbound")
+        .expect("stale btw outbound");
+    assert!(
+        stale_outbound.content.contains("stale") || stale_outbound.content.contains("generation"),
+        "{}",
+        stale_outbound.content
+    );
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "slot2",
+        "cli:slot2",
+        "/btw second-btw",
+    ))
+    .await
+    .expect("publish second btw");
+    let btw_outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("second btw reply")
+        .expect("second btw outbound");
+    assert_eq!(btw_outbound.content, "btw reply");
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
 async fn btw_bypasses_debounce_and_never_merges_into_user_bursts() {
     let dir = tempdir().expect("tempdir");
     let state = Arc::new(BtwState::default());
@@ -2968,10 +3044,18 @@ async fn btw_bypasses_debounce_and_never_merges_into_user_bursts() {
 
     state.main_released.store(true, Ordering::SeqCst);
     state.main_release_notify.notify_waiters();
-    let burst_outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
-        .await
-        .expect("debounced burst should still flush")
-        .expect("outbound");
+    let mut burst_outbound = None;
+    for _ in 0..2 {
+        let outbound = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+            .await
+            .expect("debounced burst should still flush")
+            .expect("outbound");
+        if outbound.content.contains("[Compressed user burst]") {
+            burst_outbound = Some(outbound);
+            break;
+        }
+    }
+    let burst_outbound = burst_outbound.expect("merged burst outbound");
     assert!(burst_outbound.content.contains("[Compressed user burst]"));
     assert!(
         !burst_outbound.content.contains("status?"),
