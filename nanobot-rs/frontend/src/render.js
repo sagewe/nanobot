@@ -142,7 +142,45 @@ function makeMsgGroup(role, { profile = null, timestamp = null } = {}) {
   return { group, bubble };
 }
 
+function buildBtwThreadElement(message) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "btw-thread";
+  wrapper.dataset.kind = "btw-thread";
+  if (message.stale) {
+    wrapper.dataset.stale = "true";
+  }
+  if (message.pending) {
+    wrapper.dataset.pending = "true";
+  }
+
+  const label = document.createElement("div");
+  label.className = "btw-thread-label";
+  label.textContent = "BTW";
+  wrapper.appendChild(label);
+
+  const query = document.createElement("div");
+  query.className = "btw-thread-query";
+  query.textContent = message.query || "";
+  wrapper.appendChild(query);
+
+  const answer = document.createElement("div");
+  answer.className = "btw-thread-answer";
+  if (message.contentHtml) {
+    answer.innerHTML = DOMPurify.sanitize(message.contentHtml);
+  } else if (message.content) {
+    answer.textContent = message.content;
+  } else {
+    answer.textContent = message.pending ? "Pending…" : "";
+  }
+  wrapper.appendChild(answer);
+
+  return wrapper;
+}
+
 function buildMessageElement(message, activeProfile) {
+  if (message.kind === "btw_thread") {
+    return buildBtwThreadElement(message);
+  }
   const ts = message.timestamp || null;
   if (message.role === "user") {
     const { group, bubble } = makeMsgGroup("user", { timestamp: ts });

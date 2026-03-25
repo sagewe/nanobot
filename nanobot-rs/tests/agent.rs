@@ -2647,7 +2647,13 @@ async fn btw_persists_to_timeline_but_not_model_history() {
     assert!(
         turn_texts
             .iter()
-            .any(|content| content.contains("/btw history-check")),
+            .any(|content| content.contains("history-check")),
+        "{turn_texts:?}"
+    );
+    assert!(
+        turn_texts
+            .iter()
+            .all(|content| !content.contains("/btw history-check")),
         "{turn_texts:?}"
     );
     assert!(

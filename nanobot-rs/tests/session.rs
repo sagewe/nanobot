@@ -330,6 +330,45 @@ fn session_store_helpers_expose_namespaced_sessions() {
 }
 
 #[test]
+fn session_summary_preview_ignores_timeline_only_btw_messages() {
+    let dir = tempdir().expect("tempdir");
+    let store = SessionStore::new(dir.path()).expect("session store");
+
+    let mut session = Session::new("web:btw-preview");
+    session.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("main task"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+
+    let mut btw_extra = serde_json::Map::new();
+    btw_extra.insert("_exclude_from_context".to_string(), json!(true));
+    btw_extra.insert("_timeline_kind".to_string(), json!("btw_query"));
+    btw_extra.insert("_btw_id".to_string(), json!("btw-1"));
+    session.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("side question"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: btw_extra,
+    });
+    store.save(&session).expect("save session");
+
+    let summary = store
+        .get_session_summary("web:btw-preview")
+        .expect("summary lookup")
+        .expect("summary");
+
+    assert_eq!(summary.preview.as_deref(), Some("main task"));
+}
+
+#[test]
 fn session_store_lists_cross_namespace_sessions_and_grouped_channels() {
     let dir = tempdir().expect("tempdir");
     let store = SessionStore::new(dir.path()).expect("session store");

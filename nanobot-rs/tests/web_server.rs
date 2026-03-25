@@ -780,6 +780,65 @@ async fn session_detail_endpoint_returns_channel_capabilities_and_source_session
 }
 
 #[tokio::test]
+async fn session_detail_endpoint_groups_btw_messages_into_a_thread_block() {
+    let dir = tempdir().expect("tempdir");
+    let mut session = Session::new("web:btw-focus");
+    let mut query_extra = Map::new();
+    query_extra.insert("_exclude_from_context".to_string(), json!(true));
+    query_extra.insert("_timeline_kind".to_string(), json!("btw_query"));
+    query_extra.insert("_btw_id".to_string(), json!("btw-1"));
+
+    let mut answer_extra = Map::new();
+    answer_extra.insert("_exclude_from_context".to_string(), json!(true));
+    answer_extra.insert("_timeline_kind".to_string(), json!("btw_answer"));
+    answer_extra.insert("_btw_id".to_string(), json!("btw-1"));
+
+    session.messages = vec![
+        text_message("user", "main task"),
+        SessionMessage {
+            role: "user".to_string(),
+            content: json!("side question"),
+            timestamp: Some(Utc::now() - Duration::seconds(1)),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            extra: query_extra,
+        },
+        SessionMessage {
+            role: "assistant".to_string(),
+            content: json!("side answer"),
+            timestamp: Some(Utc::now()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            extra: answer_extra,
+        },
+    ];
+    save_session(dir.path(), &session);
+
+    let app = agent_app(&dir, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let response: serde_json::Value = reqwest::get(format!("http://{addr}/api/sessions/web/btw-focus"))
+        .await
+        .expect("fetch session detail")
+        .json()
+        .await
+        .expect("detail payload");
+
+    let messages = response["messages"].as_array().expect("messages");
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["kind"], "message");
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[1]["kind"], "btw_thread");
+    assert_eq!(messages[1]["role"], "btw");
+    assert_eq!(messages[1]["query"], "side question");
+    assert_eq!(messages[1]["content"], "side answer");
+    assert_eq!(messages[1]["pending"], false);
+    assert_eq!(messages[1]["stale"], false);
+}
+
+#[tokio::test]
 async fn create_session_endpoint_initializes_default_profile() {
     let dir = tempdir().expect("tempdir");
     let app = agent_app(&dir, Vec::new()).await;

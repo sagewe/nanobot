@@ -33,6 +33,14 @@ impl SessionMessage {
             .unwrap_or(false)
     }
 
+    pub fn timeline_kind(&self) -> Option<&str> {
+        self.extra.get("_timeline_kind").and_then(Value::as_str)
+    }
+
+    pub fn btw_id(&self) -> Option<&str> {
+        self.extra.get("_btw_id").and_then(Value::as_str)
+    }
+
     pub fn to_llm_message(&self) -> Value {
         let mut obj = self.extra.clone();
         obj.insert("role".to_string(), json!(self.role));
@@ -404,6 +412,9 @@ impl Session {
 }
 
 fn message_preview(message: &SessionMessage) -> Option<String> {
+    if message.excluded_from_context() {
+        return None;
+    }
     if !matches!(message.role.as_str(), "user" | "assistant") {
         return None;
     }

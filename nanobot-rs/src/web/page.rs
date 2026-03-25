@@ -16,9 +16,20 @@ pub fn render_index_html() -> String {
 
     // Tests assert against the page shell plus the client-side contract. Prefer
     // the unbundled source so they stay stable across minification changes.
-    if let Ok(source) = std::fs::read_to_string("frontend/src/main.js") {
-        rendered.push('\n');
-        rendered.push_str(&source);
+    let source_paths = [
+        "frontend/src/main.js",
+        "frontend/src/render.js",
+        "frontend/src/style.css",
+    ];
+    let mut appended_any_source = false;
+    for path in source_paths {
+        if let Ok(source) = std::fs::read_to_string(path) {
+            rendered.push('\n');
+            rendered.push_str(&source);
+            appended_any_source = true;
+        }
+    }
+    if appended_any_source {
         return rendered;
     }
 

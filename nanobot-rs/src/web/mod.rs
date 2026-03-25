@@ -130,10 +130,17 @@ pub struct WebToolCall {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WebTranscriptMessage {
+    pub kind: String,
     pub role: String,
     pub content: String,
     pub timestamp: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
     pub content_html: Option<String>,
+    #[serde(default)]
+    pub pending: bool,
+    #[serde(default)]
+    pub stale: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<WebToolCall>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -639,11 +646,7 @@ fn detail_from_session(service: &AgentChatService, session: Session) -> WebSessi
         session_id: public_session_id(&session.key),
         updated_at: session.updated_at,
         active_profile: effective_profile(service, session.active_profile.as_deref()),
-        messages: session
-            .messages
-            .iter()
-            .filter_map(transcript_message)
-            .collect(),
+        messages: transcript_messages(&session.messages),
         read_only: capabilities.read_only,
         can_send: capabilities.can_send,
         can_duplicate: capabilities.can_duplicate,
@@ -703,15 +706,75 @@ fn channel_sort_key(channel: &str) -> (usize, &str) {
     (rank, channel)
 }
 
+fn transcript_messages(messages: &[SessionMessage]) -> Vec<WebTranscriptMessage> {
+    let mut transcript = Vec::new();
+    let mut index = 0;
+    while let Some(message) = messages.get(index) {
+        match message.timeline_kind() {
+            Some("btw_query") => {
+                let query = session_content_text(message).unwrap_or_default();
+                let mut answer = String::new();
+                let mut answer_html = None;
+                let mut stale = false;
+                let mut pending = true;
+                let mut timestamp = message.timestamp;
+
+                if let Some(next) = messages.get(index + 1) {
+                    if next.timeline_kind() == Some("btw_answer")
+                        && message.btw_id().is_some()
+                        && message.btw_id() == next.btw_id()
+                    {
+                        answer = session_content_text(next).unwrap_or_default();
+                        answer_html = (!answer.is_empty()).then(|| render_web_html(&answer));
+                        stale = next
+                            .extra
+                            .get("_btw_stale")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false);
+                        pending = false;
+                        timestamp = next.timestamp.or(timestamp);
+                        index += 1;
+                    }
+                }
+
+                transcript.push(WebTranscriptMessage {
+                    kind: "btw_thread".to_string(),
+                    role: "btw".to_string(),
+                    content: answer,
+                    timestamp,
+                    query: Some(query),
+                    content_html: answer_html,
+                    pending,
+                    stale,
+                    tool_calls: None,
+                    tool_name: None,
+                });
+            }
+            Some("btw_answer") => {}
+            _ => {
+                if let Some(entry) = transcript_message(message) {
+                    transcript.push(entry);
+                }
+            }
+        }
+        index += 1;
+    }
+    transcript
+}
+
 fn transcript_message(message: &SessionMessage) -> Option<WebTranscriptMessage> {
     match message.role.as_str() {
         "user" => {
             let content = session_content_text(message)?;
             Some(WebTranscriptMessage {
+                kind: "message".to_string(),
                 role: "user".to_string(),
                 content,
                 timestamp: message.timestamp,
+                query: None,
                 content_html: None,
+                pending: false,
+                stale: false,
                 tool_calls: None,
                 tool_name: None,
             })
@@ -741,10 +804,14 @@ fn transcript_message(message: &SessionMessage) -> Option<WebTranscriptMessage> 
                 None
             };
             Some(WebTranscriptMessage {
+                kind: "message".to_string(),
                 role: "assistant".to_string(),
                 content,
                 timestamp: message.timestamp,
+                query: None,
                 content_html,
+                pending: false,
+                stale: false,
                 tool_calls,
                 tool_name: None,
             })
@@ -753,10 +820,14 @@ fn transcript_message(message: &SessionMessage) -> Option<WebTranscriptMessage> 
             let content = session_content_text(message).unwrap_or_default();
             let tool_name = message.name.clone().unwrap_or_else(|| "tool".to_string());
             Some(WebTranscriptMessage {
+                kind: "message".to_string(),
                 role: "tool".to_string(),
                 content,
                 timestamp: message.timestamp,
+                query: None,
                 content_html: None,
+                pending: false,
+                stale: false,
                 tool_calls: None,
                 tool_name: Some(tool_name),
             })
@@ -778,6 +849,7 @@ fn session_preview(messages: &[SessionMessage]) -> Option<String> {
         .iter()
         .rev()
         .find_map(|message| match message.role.as_str() {
+            _ if message.excluded_from_context() => None,
             "user" | "assistant" => session_content_text(message),
             _ => None,
         })

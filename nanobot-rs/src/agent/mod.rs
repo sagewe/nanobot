@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
@@ -27,6 +28,8 @@ const LOG_PROGRESS_METADATA_KEY: &str = "_log_progress";
 const DIRECT_REPLY_METADATA_KEY: &str = "_direct_reply";
 const EXCLUDE_FROM_CONTEXT_EXTRA_KEY: &str = "_exclude_from_context";
 const TIMELINE_KIND_EXTRA_KEY: &str = "_timeline_kind";
+const BTW_ID_EXTRA_KEY: &str = "_btw_id";
+const BTW_STALE_EXTRA_KEY: &str = "_btw_stale";
 
 enum BtwAdmission {
     Allowed(u64),
@@ -1341,9 +1344,42 @@ impl AgentLoop {
             },
         };
         match completion {
-            BtwCompletion::Deliver(content) | BtwCompletion::Stale(content) => {
+            BtwCompletion::Deliver(content) => {
                 let persisted = match self
-                    .append_btw_to_timeline(session_key, &msg.content, &content, msg.timestamp)
+                    .append_btw_to_timeline(
+                        session_key,
+                        &msg.content,
+                        &content,
+                        msg.timestamp,
+                        false,
+                    )
+                    .await
+                {
+                    Ok(()) => true,
+                    Err(error) => {
+                        warn!(session_key, error = %error, "failed to persist btw timeline");
+                        false
+                    }
+                };
+                (
+                    OutboundMessage {
+                        channel: msg.channel,
+                        chat_id: msg.chat_id,
+                        content,
+                        metadata: HashMap::new(),
+                    },
+                    persisted,
+                )
+            }
+            BtwCompletion::Stale(content) => {
+                let persisted = match self
+                    .append_btw_to_timeline(
+                        session_key,
+                        &msg.content,
+                        &content,
+                        msg.timestamp,
+                        true,
+                    )
                     .await
                 {
                     Ok(()) => true,
@@ -1772,13 +1808,20 @@ impl AgentLoop {
         role: &str,
         content: String,
         timestamp: chrono::DateTime<Utc>,
+        timeline_kind: &str,
+        btw_id: &str,
+        stale: bool,
     ) -> SessionMessage {
         let mut extra = serde_json::Map::new();
         extra.insert(
             EXCLUDE_FROM_CONTEXT_EXTRA_KEY.to_string(),
             json!(true),
         );
-        extra.insert(TIMELINE_KIND_EXTRA_KEY.to_string(), json!("btw"));
+        extra.insert(TIMELINE_KIND_EXTRA_KEY.to_string(), json!(timeline_kind));
+        extra.insert(BTW_ID_EXTRA_KEY.to_string(), json!(btw_id));
+        if stale {
+            extra.insert(BTW_STALE_EXTRA_KEY.to_string(), json!(true));
+        }
         SessionMessage {
             role: role.to_string(),
             content: json!(content),
@@ -1829,21 +1872,32 @@ impl AgentLoop {
         user_content: &str,
         assistant_content: &str,
         user_timestamp: chrono::DateTime<Utc>,
+        stale: bool,
     ) -> Result<()> {
         let lock = self.session_persistence_lock(session_key).await;
         let _guard = lock.lock().await;
         let mut session = self
             .sessions
             .get_or_create_with_default_profile(session_key, &self.default_profile)?;
+        let question = Self::btw_question(user_content)
+            .and_then(|question| question)
+            .unwrap_or_else(|| user_content.trim().to_string());
+        let btw_id = Uuid::new_v4().to_string();
         session.messages.push(Self::timeline_only_message(
             "user",
-            user_content.to_string(),
+            question,
             user_timestamp,
+            "btw_query",
+            &btw_id,
+            false,
         ));
         session.messages.push(Self::timeline_only_message(
             "assistant",
             assistant_content.to_string(),
             Utc::now(),
+            "btw_answer",
+            &btw_id,
+            stale,
         ));
         session.updated_at = Utc::now();
         self.sessions.save(&session)

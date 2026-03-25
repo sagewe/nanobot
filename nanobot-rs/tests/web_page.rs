@@ -131,6 +131,18 @@ fn page_shell_preserves_ephemeral_chat_replies_after_session_reload() {
 }
 
 #[test]
+fn page_shell_renders_btw_threads_as_dedicated_blocks() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("if (message.kind === \"btw_thread\")"));
+    assert!(html.contains("btw-thread"));
+    assert!(html.contains("btw-thread-query"));
+    assert!(html.contains("btw-thread-answer"));
+    assert!(html.contains("btw-thread-label"));
+    assert!(html.contains("message.query || \"\""));
+}
+
+#[test]
 fn page_shell_commits_session_selection_only_after_detail_load() {
     let html = nanobot_rs::web::page::render_index_html();
 
