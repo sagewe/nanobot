@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -30,6 +30,9 @@ const EXCLUDE_FROM_CONTEXT_EXTRA_KEY: &str = "_exclude_from_context";
 const TIMELINE_KIND_EXTRA_KEY: &str = "_timeline_kind";
 const BTW_ID_EXTRA_KEY: &str = "_btw_id";
 const BTW_STALE_EXTRA_KEY: &str = "_btw_stale";
+const TIMELINE_AFTER_ROLE_EXTRA_KEY: &str = "_timeline_after_role";
+const TIMELINE_AFTER_CONTENT_EXTRA_KEY: &str = "_timeline_after_content";
+const TIMELINE_AFTER_TIMESTAMP_EXTRA_KEY: &str = "_timeline_after_timestamp";
 
 enum BtwAdmission {
     Allowed(u64),
@@ -135,6 +138,76 @@ impl ContextBuilder {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, TimeZone};
+
+    #[test]
+    fn merge_timeline_only_messages_does_not_reorder_existing_session_turns() {
+        let base = Utc.with_ymd_and_hms(2026, 3, 25, 16, 0, 0).unwrap();
+
+        let mut current = Session::new("web:test");
+        current.messages.push(SessionMessage {
+            role: "assistant".to_string(),
+            content: json!("main reply"),
+            timestamp: Some(base),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            extra: Default::default(),
+        });
+        current.messages.push(SessionMessage {
+            role: "user".to_string(),
+            content: json!("main query"),
+            timestamp: Some(base + Duration::milliseconds(1)),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            extra: Default::default(),
+        });
+
+        let mut existing = Session::new("web:test");
+        existing.messages.push(AgentLoop::timeline_only_message(
+            "user",
+            "side question".to_string(),
+            base - Duration::seconds(5),
+            "btw_query",
+            "btw-1",
+            false,
+            None,
+        ));
+        existing.messages.push(AgentLoop::timeline_only_message(
+            "assistant",
+            "side answer".to_string(),
+            base - Duration::seconds(4),
+            "btw_answer",
+            "btw-1",
+            false,
+            None,
+        ));
+
+        AgentLoop::merge_timeline_only_messages(&mut current, &existing);
+
+        let contents = current
+            .messages
+            .iter()
+            .map(|message| {
+                message
+                    .content
+                    .as_str()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| message.content.to_string())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            contents,
+            vec!["main reply", "main query", "side question", "side answer"]
+        );
+    }
+}
+
 fn truncate_chars(input: &str, max_chars: usize) -> String {
     input.chars().take(max_chars).collect()
 }
@@ -192,12 +265,20 @@ struct PendingBurst {
     generation: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug)]
+struct MainLaneAnchor {
+    role: String,
+    content: String,
+    timestamp: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Default)]
 struct SessionLaneState {
     next_main_generation: u64,
     active_main_generation: Option<u64>,
     stopped_generation: Option<u64>,
     btw_reserved_generation: Option<u64>,
+    active_main_anchor: Option<MainLaneAnchor>,
 }
 
 struct BtwTask {
@@ -692,7 +773,7 @@ impl AgentLoop {
             return Ok(());
         }
         let main_generation = if self.is_main_lane_message(&msg) {
-            Some(self.begin_main_task(&session_key).await)
+            Some(self.begin_main_task(&session_key, &msg).await)
         } else {
             None
         };
@@ -1028,7 +1109,7 @@ impl AgentLoop {
         let lock = self.session_lock(session_key).await;
         let _guard = lock.lock().await;
         let main_generation = if self.is_main_lane_message(&msg) {
-            Some(self.begin_main_task(session_key).await)
+            Some(self.begin_main_task(session_key, &msg).await)
         } else {
             None
         };
@@ -1351,6 +1432,7 @@ impl AgentLoop {
                         &msg.content,
                         &content,
                         msg.timestamp,
+                        bound_generation,
                         false,
                     )
                     .await
@@ -1378,6 +1460,7 @@ impl AgentLoop {
                         &msg.content,
                         &content,
                         msg.timestamp,
+                        bound_generation,
                         true,
                     )
                     .await
@@ -1574,12 +1657,17 @@ impl AgentLoop {
         *generation
     }
 
-    async fn begin_main_task(&self, session_key: &str) -> u64 {
+    async fn begin_main_task(&self, session_key: &str, msg: &InboundMessage) -> u64 {
         let mut states = self.lane_states.lock().await;
         let state = states.entry(session_key.to_string()).or_default();
         state.next_main_generation += 1;
         state.active_main_generation = Some(state.next_main_generation);
         state.stopped_generation = None;
+        state.active_main_anchor = Some(MainLaneAnchor {
+            role: "user".to_string(),
+            content: msg.content.clone(),
+            timestamp: msg.timestamp,
+        });
         let generation = state.next_main_generation;
         generation
     }
@@ -1589,8 +1677,22 @@ impl AgentLoop {
         if let Some(state) = states.get_mut(session_key) {
             if state.active_main_generation == Some(generation) {
                 state.active_main_generation = None;
+                state.active_main_anchor = None;
             }
         }
+    }
+
+    async fn main_anchor_for_generation(
+        &self,
+        session_key: &str,
+        generation: u64,
+    ) -> Option<MainLaneAnchor> {
+        self.lane_states
+            .lock()
+            .await
+            .get(session_key)
+            .filter(|state| state.active_main_generation == Some(generation))
+            .and_then(|state| state.active_main_anchor.clone())
     }
 
     async fn admit_btw(&self, session_key: &str) -> BtwAdmission {
@@ -1634,6 +1736,7 @@ impl AgentLoop {
             return false;
         };
         state.active_main_generation = None;
+        state.active_main_anchor = None;
         state.stopped_generation = Some(active);
         true
     }
@@ -1811,6 +1914,7 @@ impl AgentLoop {
         timeline_kind: &str,
         btw_id: &str,
         stale: bool,
+        anchor: Option<&MainLaneAnchor>,
     ) -> SessionMessage {
         let mut extra = serde_json::Map::new();
         extra.insert(
@@ -1821,6 +1925,17 @@ impl AgentLoop {
         extra.insert(BTW_ID_EXTRA_KEY.to_string(), json!(btw_id));
         if stale {
             extra.insert(BTW_STALE_EXTRA_KEY.to_string(), json!(true));
+        }
+        if let Some(anchor) = anchor {
+            extra.insert(TIMELINE_AFTER_ROLE_EXTRA_KEY.to_string(), json!(anchor.role));
+            extra.insert(
+                TIMELINE_AFTER_CONTENT_EXTRA_KEY.to_string(),
+                json!(anchor.content),
+            );
+            extra.insert(
+                TIMELINE_AFTER_TIMESTAMP_EXTRA_KEY.to_string(),
+                json!(anchor.timestamp),
+            );
         }
         SessionMessage {
             role: role.to_string(),
@@ -1834,16 +1949,117 @@ impl AgentLoop {
     }
 
     fn merge_timeline_only_messages(into: &mut Session, existing: &Session) {
-        for message in existing
-            .messages
-            .iter()
-            .filter(|message| message.excluded_from_context())
-        {
-            if !into.messages.iter().any(|candidate| candidate == message) {
-                into.messages.push(message.clone());
+        let current_messages = std::mem::take(&mut into.messages);
+        let mut insert_before = HashMap::<usize, Vec<SessionMessage>>::new();
+        let mut insert_after = HashMap::<usize, Vec<SessionMessage>>::new();
+        let mut trailing = Vec::<SessionMessage>::new();
+
+        for (idx, message) in existing.messages.iter().enumerate() {
+            if !message.excluded_from_context()
+                || current_messages.iter().any(|candidate| candidate == message)
+            {
+                continue;
+            }
+
+            let previous_anchor = existing.messages[..idx]
+                .iter()
+                .rev()
+                .find(|candidate| !candidate.excluded_from_context())
+                .and_then(|anchor| current_messages.iter().position(|candidate| candidate == anchor));
+
+            if let Some(anchor_idx) = previous_anchor {
+                insert_after
+                    .entry(anchor_idx)
+                    .or_default()
+                    .push(message.clone());
+                continue;
+            }
+
+            if let Some(anchor) = Self::timeline_after_anchor(message) {
+                if let Some(anchor_idx) = Self::find_anchor_position(&current_messages, &anchor) {
+                    insert_after
+                        .entry(anchor_idx)
+                        .or_default()
+                        .push(message.clone());
+                    continue;
+                }
+            }
+
+            let next_anchor = existing.messages[idx + 1..]
+                .iter()
+                .find(|candidate| !candidate.excluded_from_context())
+                .and_then(|anchor| current_messages.iter().position(|candidate| candidate == anchor));
+
+            if let Some(anchor_idx) = next_anchor {
+                insert_before
+                    .entry(anchor_idx)
+                    .or_default()
+                    .push(message.clone());
+            } else {
+                trailing.push(message.clone());
             }
         }
-        into.messages.sort_by_key(|message| message.timestamp);
+
+        let mut merged = Vec::with_capacity(
+            current_messages.len()
+                + insert_before.values().map(Vec::len).sum::<usize>()
+                + insert_after.values().map(Vec::len).sum::<usize>()
+                + trailing.len(),
+        );
+
+        for (idx, message) in current_messages.iter().cloned().enumerate() {
+            if let Some(messages) = insert_before.remove(&idx) {
+                merged.extend(messages);
+            }
+            merged.push(message);
+            if let Some(messages) = insert_after.remove(&idx) {
+                merged.extend(messages);
+            }
+        }
+        merged.extend(trailing);
+        into.messages = merged;
+    }
+
+    fn timeline_after_anchor(message: &SessionMessage) -> Option<MainLaneAnchor> {
+        let role = message
+            .extra
+            .get(TIMELINE_AFTER_ROLE_EXTRA_KEY)
+            .and_then(Value::as_str)?
+            .to_string();
+        let content = message
+            .extra
+            .get(TIMELINE_AFTER_CONTENT_EXTRA_KEY)
+            .and_then(Value::as_str)?
+            .to_string();
+        let timestamp = message
+            .extra
+            .get(TIMELINE_AFTER_TIMESTAMP_EXTRA_KEY)
+            .and_then(Value::as_str)
+            .and_then(|raw| DateTime::parse_from_rfc3339(raw).ok())
+            .map(|timestamp| timestamp.with_timezone(&Utc))?;
+        Some(MainLaneAnchor {
+            role,
+            content,
+            timestamp,
+        })
+    }
+
+    fn matches_anchor(message: &SessionMessage, anchor: &MainLaneAnchor) -> bool {
+        message.role == anchor.role
+            && message.timestamp == Some(anchor.timestamp)
+            && message.content.as_str() == Some(anchor.content.as_str())
+    }
+
+    fn find_anchor_position(messages: &[SessionMessage], anchor: &MainLaneAnchor) -> Option<usize> {
+        messages
+            .iter()
+            .position(|message| Self::matches_anchor(message, anchor))
+            .or_else(|| {
+                messages.iter().rposition(|message| {
+                    message.role == anchor.role
+                        && message.content.as_str() == Some(anchor.content.as_str())
+                })
+            })
     }
 
     async fn save_session_with_timeline_merge(&self, session: &Session) -> Result<()> {
@@ -1872,6 +2088,7 @@ impl AgentLoop {
         user_content: &str,
         assistant_content: &str,
         user_timestamp: chrono::DateTime<Utc>,
+        bound_generation: u64,
         stale: bool,
     ) -> Result<()> {
         let lock = self.session_persistence_lock(session_key).await;
@@ -1883,6 +2100,7 @@ impl AgentLoop {
             .and_then(|question| question)
             .unwrap_or_else(|| user_content.trim().to_string());
         let btw_id = Uuid::new_v4().to_string();
+        let anchor = self.main_anchor_for_generation(session_key, bound_generation).await;
         session.messages.push(Self::timeline_only_message(
             "user",
             question,
@@ -1890,6 +2108,7 @@ impl AgentLoop {
             "btw_query",
             &btw_id,
             false,
+            anchor.as_ref(),
         ));
         session.messages.push(Self::timeline_only_message(
             "assistant",
@@ -1898,6 +2117,7 @@ impl AgentLoop {
             "btw_answer",
             &btw_id,
             stale,
+            anchor.as_ref(),
         ));
         session.updated_at = Utc::now();
         self.sessions.save(&session)

@@ -2691,6 +2691,85 @@ async fn btw_persists_to_timeline_but_not_model_history() {
 }
 
 #[tokio::test]
+async fn btw_timeline_merge_keeps_the_query_before_the_main_reply() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(BtwState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(BtwTestProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus.clone(), provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "order",
+        "cli:order",
+        "main-hold",
+    ))
+    .await
+    .expect("publish main");
+    wait_for_flag(&state.main_started, &state.main_started_notify).await;
+
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "order",
+        "cli:order",
+        "/btw order-check",
+    ))
+    .await
+    .expect("publish btw");
+    let _ = tokio::time::timeout(Duration::from_millis(200), bus.consume_outbound())
+        .await
+        .expect("btw outbound")
+        .expect("btw outbound");
+
+    state.main_released.store(true, Ordering::SeqCst);
+    state.main_release_notify.notify_waiters();
+    let _ = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
+        .await
+        .expect("main outbound")
+        .expect("main outbound");
+
+    let session = agent
+        .load_session_by_key("cli:order")
+        .expect("load session")
+        .expect("session exists");
+    let contents = session
+        .messages
+        .iter()
+        .map(|message| {
+            message
+                .content
+                .as_str()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| message.content.to_string())
+        })
+        .collect::<Vec<_>>();
+
+    let query_index = contents
+        .iter()
+        .position(|content| content.contains("order-check"))
+        .expect("btw query");
+    let answer_index = contents
+        .iter()
+        .position(|content| content.contains("btw reply"))
+        .expect("btw answer");
+    let main_reply_index = contents
+        .iter()
+        .position(|content| content.contains("main final"))
+        .expect("main reply");
+
+    assert!(query_index < answer_index, "{contents:?}");
+    assert!(query_index < main_reply_index, "{contents:?}");
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
 async fn btw_requires_an_active_main_task() {
     let dir = tempdir().expect("tempdir");
     let state = Arc::new(BtwState::default());
