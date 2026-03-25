@@ -581,14 +581,16 @@
       }
 
       .btw-thread {
-        justify-self: start;
-        max-width: min(40rem, 100%);
-        border-left: 2px solid rgba(193, 95, 60, 0.3);
-        padding-left: 0.75rem;
+        justify-self: end;
+        max-width: min(36rem, 100%);
+        border-right: 2px solid rgba(193, 95, 60, 0.3);
+        padding-right: 0.75rem;
+        text-align: right;
       }
 
       .btw-thread-header {
         display: flex;
+        flex-direction: row-reverse;
         align-items: baseline;
         gap: 0.4rem;
         cursor: pointer;
@@ -641,7 +643,6 @@
         text-overflow: ellipsis;
       }
 
-      /* When open, allow query to wrap */
       .btw-thread[data-open="true"] .btw-thread-query {
         white-space: normal;
         overflow: visible;
@@ -651,11 +652,12 @@
       .btw-thread-answer {
         display: none;
         margin-top: 0.5rem;
-        padding-left: 0.6rem;
-        border-left: 2px solid rgba(193, 95, 60, 0.15);
+        padding-right: 0.6rem;
+        border-right: 2px solid rgba(193, 95, 60, 0.15);
         color: var(--muted2);
         font-size: 0.9rem;
         line-height: 1.6;
+        text-align: left;
       }
 
       .btw-thread[data-open="true"] .btw-thread-answer {
@@ -668,7 +670,7 @@
       }
 
       .btw-thread[data-stale="true"] {
-        border-left-color: rgba(162, 123, 59, 0.25);
+        border-right-color: rgba(162, 123, 59, 0.25);
       }
 
       .btw-thread[data-pending="true"] .btw-thread-answer {
