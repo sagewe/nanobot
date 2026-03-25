@@ -268,6 +268,16 @@ impl SessionStore {
         Ok(sessions)
     }
 
+    pub fn delete_session(&self, key: &str) -> Result<bool> {
+        let path = self.path_for(key);
+        if !path.exists() {
+            return Ok(false);
+        }
+        std::fs::remove_file(&path)
+            .with_context(|| format!("failed to delete session {}", path.display()))?;
+        Ok(true)
+    }
+
     pub fn duplicate_session_to_web(&self, source_key: &str) -> Result<Session> {
         let source = self
             .load(source_key)?

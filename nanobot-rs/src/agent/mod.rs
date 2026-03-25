@@ -797,6 +797,10 @@ impl AgentLoop {
         Ok(session)
     }
 
+    pub fn delete_session(&self, session_key: &str) -> Result<bool> {
+        self.sessions.delete_session(session_key)
+    }
+
     pub fn duplicate_session_to_web(&self, source_key: &str) -> Result<Session> {
         let mut session = self.sessions.duplicate_session_to_web(source_key)?;
         self.normalize_session_profile(&mut session);

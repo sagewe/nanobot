@@ -4,6 +4,7 @@ import {
   fetchSessionDetail,
   createSession,
   duplicateSession,
+  deleteSession,
   setSessionProfile,
   sendChat,
   fetchWeixinAccount,
@@ -382,6 +383,21 @@ tabButtons.forEach((btn) => {
 sessionsSearch.addEventListener("input", syncSessionsList);
 
 document.getElementById("sessions-list").addEventListener("click", async (e) => {
+  // Delete button
+  const deleteBtn = e.target.closest(".session-delete-btn");
+  if (deleteBtn) {
+    e.stopPropagation();
+    const { channel, sessionId } = deleteBtn.dataset;
+    if (!confirm(t("session_delete_confirm"))) return;
+    try {
+      await deleteSession(channel, sessionId);
+      await refreshSessions();
+    } catch (err) {
+      alert(err.message);
+    }
+    return;
+  }
+
   const item = e.target.closest(".session-item");
   if (!item) return;
   const { channel, sessionId } = item.dataset;

@@ -420,8 +420,17 @@ export function renderSessionsList(groups, currentChannel, currentSessionId, fil
     timeEl.textContent = relativeTime(session.updatedAt);
     bottomRow.appendChild(timeEl);
 
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "session-delete-btn";
+    deleteBtn.dataset.channel = session.channel;
+    deleteBtn.dataset.sessionId = session.sessionId;
+    deleteBtn.setAttribute("aria-label", t("session_delete_confirm"));
+    deleteBtn.innerHTML =
+      '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,4 13,4"/><path d="M5 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M6 7v5M10 7v5"/><rect x="3" y="4" width="10" height="9" rx="1"/></svg>';
+
     item.appendChild(topRow);
     item.appendChild(bottomRow);
+    item.appendChild(deleteBtn);
     frag.appendChild(item);
   }
 

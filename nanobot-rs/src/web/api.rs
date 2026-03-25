@@ -166,6 +166,20 @@ pub async fn set_session_profile(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+pub async fn delete_session(
+    Path((channel, session_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<StatusCode, ApiError> {
+    let channel = validate_channel(&channel)?.to_string();
+    let session_id = validate_session_id(&session_id)?.to_string();
+    state
+        .chat
+        .delete_session(&channel, &session_id)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn duplicate_session(
     State(state): State<AppState>,
     Json(request): Json<DuplicateSessionRequest>,

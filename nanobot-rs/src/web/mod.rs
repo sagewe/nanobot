@@ -87,6 +87,10 @@ pub trait ChatService: Send + Sync {
     ) -> Result<()> {
         bail!("profile setting is not implemented for this service")
     }
+
+    async fn delete_session(&self, _channel: &str, _session_id: &str) -> Result<bool> {
+        bail!("session deletion is not implemented for this service")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -301,7 +305,7 @@ pub fn build_router(state: AppState) -> Router {
             get(api::list_sessions).post(api::create_session),
         )
         .route("/api/sessions/duplicate", post(api::duplicate_session))
-        .route("/api/sessions/{channel}/{id}", get(api::get_session))
+        .route("/api/sessions/{channel}/{id}", get(api::get_session).delete(api::delete_session))
         .route(
             "/api/sessions/{channel}/{id}/profile",
             post(api::set_session_profile),
@@ -568,6 +572,10 @@ impl ChatService for AgentChatService {
     ) -> Result<()> {
         self.agent
             .set_session_profile(&session_key(channel, session_id), profile)
+    }
+
+    async fn delete_session(&self, channel: &str, session_id: &str) -> Result<bool> {
+        self.agent.delete_session(&session_key(channel, session_id))
     }
 }
 

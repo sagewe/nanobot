@@ -42,6 +42,16 @@ export async function duplicateSession(channel, sessionId) {
   return payload;
 }
 
+export async function deleteSession(channel, sessionId) {
+  const response = await fetch(`/api/sessions/${channel}/${sessionId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok && response.status !== 404) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || t("failed_delete_session"));
+  }
+}
+
 export async function setSessionProfile(channel, sessionId, profile) {
   await fetch(`/api/sessions/${channel}/${sessionId}/profile`, {
     method: "POST",
