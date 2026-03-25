@@ -1,15 +1,15 @@
       :root {
         --paper: #faf9f5;
         --ink: #2c2c2c;
-        --muted: #a19a94;
-        --muted2: #6a6a6a;
+        --muted: #8c857f;   /* faint text — contrast ≥3:1 on paper */
+        --dim: #5e5854;     /* secondary text — contrast ≥5:1 on paper */
         --accent: #C15F3C;
         --accent-dark: #A14A2F;
         --panel: rgba(253, 252, 251, 0.92);
         --sidebar-bg: #f0efed;
         --line: #e8e6e3;
         --shadow: 0 8px 32px rgba(44, 44, 44, 0.1);
-        --input-bg: #ffffff;
+        --input-bg: #fffef9; /* warm white, blends with paper */
         --error: #d73a49;
       }
 
@@ -48,7 +48,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: var(--muted2);
+        color: var(--dim);
         background: transparent;
         cursor: pointer;
         transition: color 0.15s, border-color 0.15s;
@@ -67,7 +67,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: var(--muted2);
+        color: var(--dim);
         background: transparent;
         cursor: pointer;
         font-size: 0.78rem;
@@ -355,7 +355,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: var(--muted2);
+        color: var(--dim);
         background: var(--input-bg);
         cursor: pointer;
         transition: color 0.15s, background 0.15s, border-color 0.15s;
@@ -444,7 +444,7 @@
       .transcript-empty-title {
         font-size: 0.85rem;
         font-weight: 600;
-        color: var(--muted2);
+        color: var(--dim);
       }
 
       .transcript-empty-hint {
@@ -586,7 +586,7 @@
         gap: 0.4rem;
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.78rem;
-        color: var(--muted2);
+        color: var(--dim);
         flex-wrap: wrap;
       }
 
@@ -608,7 +608,7 @@
         padding: 0.05rem 0.35rem;
         border-radius: 0.25rem;
         background: var(--line);
-        color: var(--muted2);
+        color: var(--dim);
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.65rem;
       }
@@ -616,7 +616,7 @@
       .msg-group[data-role="tool"] .msg-avatar {
         background: var(--sidebar-bg);
         border: 1px solid var(--line);
-        color: var(--muted2);
+        color: var(--dim);
       }
 
       .msg-group[data-role="tool"] .msg-bubble {
@@ -682,7 +682,7 @@
       }
 
       .btw-thread-query {
-        color: var(--muted2);
+        color: var(--dim);
         font-size: 0.88rem;
         line-height: 1.45;
         white-space: nowrap;
@@ -701,7 +701,7 @@
         margin-top: 0.5rem;
         padding-right: 0.6rem;
         border-right: 2px solid rgba(193, 95, 60, 0.15);
-        color: var(--muted2);
+        color: var(--dim);
         font-size: 0.9rem;
         line-height: 1.6;
         text-align: left;
@@ -731,7 +731,7 @@
         gap: 0.4rem;
         cursor: pointer;
         user-select: none;
-        color: var(--muted2);
+        color: var(--dim);
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.78rem;
       }
@@ -839,7 +839,7 @@
         padding: 0.3rem 0.75rem;
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.75rem;
-        color: var(--muted2);
+        color: var(--dim);
         background: var(--input-bg);
         cursor: pointer;
         transition: color 0.15s, border-color 0.15s;
@@ -858,7 +858,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: var(--muted2);
+        color: var(--dim);
         background: var(--input-bg);
         cursor: pointer;
         flex-shrink: 0;
@@ -932,15 +932,15 @@
       :root[data-theme="light"] {
         --paper: #faf9f5;
         --ink: #2c2c2c;
-        --muted: #a19a94;
-        --muted2: #6a6a6a;
+        --muted: #8c857f;
+        --dim: #5e5854;
         --accent: #C15F3C;
         --accent-dark: #A14A2F;
         --panel: rgba(253, 252, 251, 0.92);
         --sidebar-bg: #f0efed;
         --line: #e8e6e3;
         --shadow: 0 8px 32px rgba(44, 44, 44, 0.1);
-        --input-bg: #ffffff;
+        --input-bg: #fffef9;
         --error: #d73a49;
       }
 
@@ -951,12 +951,12 @@
       .dark-vars {
         --paper: #1e1c1a;
         --ink: #e8e4de;
-        --muted: #7a746e;
-        --muted2: #9a9490;
-        --accent: #d4724a;
-        --accent-dark: #b85c38;
+        --muted: #6e6862;   /* faint text on dark */
+        --dim: #9a938d;     /* secondary text on dark */
+        --accent: #e07850;  /* brighter on dark for presence */
+        --accent-dark: #c06038;
         --panel: rgba(30, 28, 26, 0.95);
-        --sidebar-bg: #1a1815;
+        --sidebar-bg: #161412; /* clearly darker than paper */
         --line: #333028;
         --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
         --input-bg: #252320;
@@ -967,12 +967,12 @@
         :root:not([data-theme="light"]):not([data-theme="dark"]) {
           --paper: #1e1c1a;
           --ink: #e8e4de;
-          --muted: #7a746e;
-          --muted2: #9a9490;
-          --accent: #d4724a;
-          --accent-dark: #b85c38;
+          --muted: #6e6862;
+          --dim: #9a938d;
+          --accent: #e07850;
+          --accent-dark: #c06038;
           --panel: rgba(30, 28, 26, 0.95);
-          --sidebar-bg: #1a1815;
+          --sidebar-bg: #161412;
           --line: #333028;
           --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
           --input-bg: #252320;
@@ -997,7 +997,7 @@
         --paper: #1e1c1a;
         --ink: #e8e4de;
         --muted: #7a746e;
-        --muted2: #9a9490;
+        --dim: #9a9490;
         --accent: #d4724a;
         --accent-dark: #b85c38;
         --panel: rgba(30, 28, 26, 0.95);
@@ -1038,7 +1038,7 @@
         height: 2.25rem;
         align-items: center;
         justify-content: center;
-        color: var(--muted2);
+        color: var(--dim);
         background: transparent;
         cursor: pointer;
         flex-shrink: 0;
