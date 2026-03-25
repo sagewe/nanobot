@@ -24,6 +24,7 @@ import {
   renderSessionDetail,
   renderSessionSelect,
   renderSessionsList,
+  renderEmptyState,
   renderWeixinAccount,
   normalizeWeixinQrSource,
 } from "./render.js";
@@ -124,6 +125,7 @@ function setSelectedSession(channel, sessionId) {
     localStorage.removeItem(SELECTED_CHANNEL_KEY);
     localStorage.removeItem(SELECTED_SESSION_KEY);
     localStorage.removeItem(SESSION_KEY);
+    renderEmptyState();
   }
 }
 

@@ -314,6 +314,25 @@ function batchRender(messages, activeProfile) {
   transcript.scrollTop = transcript.scrollHeight;
 }
 
+export function renderEmptyState() {
+  transcript.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "transcript-empty";
+  const icon = document.createElement("div");
+  icon.className = "transcript-empty-icon";
+  icon.textContent = "◌";
+  const title = document.createElement("div");
+  title.className = "transcript-empty-title";
+  title.textContent = t("no_session_title");
+  const hint = document.createElement("div");
+  hint.className = "transcript-empty-hint";
+  hint.textContent = t("no_session_hint");
+  wrap.appendChild(icon);
+  wrap.appendChild(title);
+  wrap.appendChild(hint);
+  transcript.appendChild(wrap);
+}
+
 export function renderTranscript(messages, activeProfile) {
   if (!messages.length) {
     transcript.innerHTML = "";
