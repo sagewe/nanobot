@@ -340,65 +340,92 @@ export function renderWeixinAccount(account) {
   weixinUserLabel.textContent = userId;
 }
 
+function relativeTime(dateStr) {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return t("time_just_now");
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return new Date(dateStr).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
 export function renderSessionsList(groups, currentChannel, currentSessionId, filterText) {
   const listEl = document.getElementById("sessions-list");
   const query = (filterText || "").toLowerCase().trim();
   const frag = document.createDocumentFragment();
-  let totalVisible = 0;
 
+  // Flatten all sessions, attach channel, sort by updatedAt desc
+  const allSessions = [];
   for (const group of groups) {
-    const matchingSessions = (group.sessions || []).filter((session) => {
-      if (!query) return true;
-      return (
-        (session.sessionId || "").toLowerCase().includes(query) ||
-        (session.preview || "").toLowerCase().includes(query) ||
-        (session.channel || "").toLowerCase().includes(query)
-      );
-    });
-    if (!matchingSessions.length) continue;
-    totalVisible += matchingSessions.length;
-
-    const groupEl = document.createElement("div");
-    groupEl.className = "sessions-channel-group";
-
-    const label = document.createElement("div");
-    label.className = "sessions-channel-label";
-    label.textContent = tChannel(group.channel);
-    groupEl.appendChild(label);
-
-    for (const session of matchingSessions) {
-      const item = document.createElement("div");
-      item.className = "session-item";
-      item.dataset.channel = session.channel;
-      item.dataset.sessionId = session.sessionId;
-      item.dataset.active = String(
-        session.channel === currentChannel && session.sessionId === currentSessionId
-      );
-      item.setAttribute("role", "button");
-      item.setAttribute("tabindex", "0");
-
-      const textWrap = document.createElement("div");
-      textWrap.className = "session-item-text";
-
-      if (session.preview) {
-        const previewEl = document.createElement("div");
-        previewEl.className = "session-item-preview";
-        previewEl.textContent = session.preview;
-        textWrap.appendChild(previewEl);
-      }
-
-      const idEl = document.createElement("div");
-      idEl.className = "session-item-id";
-      idEl.textContent = session.sessionId;
-      textWrap.appendChild(idEl);
-
-      item.appendChild(textWrap);
-      groupEl.appendChild(item);
+    for (const session of group.sessions || []) {
+      allSessions.push({ ...session, channel: session.channel || group.channel });
     }
-    frag.appendChild(groupEl);
+  }
+  allSessions.sort((a, b) => {
+    const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    return tb - ta;
+  });
+
+  const filtered = query
+    ? allSessions.filter(
+        (s) =>
+          (s.sessionId || "").toLowerCase().includes(query) ||
+          (s.preview || "").toLowerCase().includes(query) ||
+          (s.channel || "").toLowerCase().includes(query)
+      )
+    : allSessions;
+
+  for (const session of filtered) {
+    const item = document.createElement("div");
+    item.className = "session-item";
+    item.dataset.channel = session.channel;
+    item.dataset.sessionId = session.sessionId;
+    item.dataset.active = String(
+      session.channel === currentChannel && session.sessionId === currentSessionId
+    );
+    item.setAttribute("role", "button");
+    item.setAttribute("tabindex", "0");
+
+    // Top row: preview + channel badge
+    const topRow = document.createElement("div");
+    topRow.className = "session-item-top";
+
+    const previewEl = document.createElement("div");
+    previewEl.className = "session-item-preview";
+    previewEl.textContent = session.preview || session.sessionId;
+    topRow.appendChild(previewEl);
+
+    const badge = document.createElement("span");
+    badge.className = "session-channel-badge";
+    badge.dataset.channel = session.channel;
+    badge.textContent = tChannel(session.channel);
+    topRow.appendChild(badge);
+
+    // Bottom row: session ID + relative time
+    const bottomRow = document.createElement("div");
+    bottomRow.className = "session-item-bottom";
+
+    const idEl = document.createElement("div");
+    idEl.className = "session-item-id";
+    idEl.textContent = session.sessionId;
+    bottomRow.appendChild(idEl);
+
+    const timeEl = document.createElement("span");
+    timeEl.className = "session-item-time";
+    timeEl.textContent = relativeTime(session.updatedAt);
+    bottomRow.appendChild(timeEl);
+
+    item.appendChild(topRow);
+    item.appendChild(bottomRow);
+    frag.appendChild(item);
   }
 
-  if (totalVisible === 0) {
+  if (filtered.length === 0) {
     const empty = document.createElement("div");
     empty.className = "sessions-empty";
     empty.textContent = t("sessions_empty");
