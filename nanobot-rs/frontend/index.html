@@ -97,7 +97,10 @@
                   <button id="duplicate-session-button" type="button" data-i18n="duplicate_to_web" hidden>Duplicate to Web</button>
                 </div>
                 <div class="composer-toolbar-right">
-                  <select id="profile-select" data-i18n-aria-label="select_model" aria-label="Select model"></select>
+                  <button id="profile-picker-btn" type="button" class="profile-picker-btn" aria-haspopup="listbox">
+                    <span id="profile-picker-label">–</span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
                   <button id="send-button" type="submit" data-i18n-title="send_button" title="Send (Enter)">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                   </button>
@@ -108,6 +111,7 @@
         </section>
       </section>
     </main>
+    <div id="profile-picker-menu" class="profile-picker-menu" role="listbox" hidden></div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

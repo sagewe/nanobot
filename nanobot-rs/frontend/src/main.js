@@ -42,7 +42,8 @@ const DRAFT_KEY_PREFIX = "pikachu.draft";
 // ── DOM references ────────────────────────────────────────────────────────────
 const composer = document.getElementById("composer");
 const sessionSelect = document.getElementById("session-select");
-const profileSelect = document.getElementById("profile-select");
+const profilePickerBtn = document.getElementById("profile-picker-btn");
+const profilePickerMenu = document.getElementById("profile-picker-menu");
 const messageInput = document.getElementById("message-input");
 const sendButton = document.getElementById("send-button");
 const duplicateButton = document.getElementById("duplicate-session-button");
@@ -430,13 +431,27 @@ langToggleBtn.addEventListener("click", () => {
   syncSessionsList();
 });
 
-profileSelect.addEventListener("change", async () => {
-  const profile = profileSelect.value;
+profilePickerBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const rect = profilePickerBtn.getBoundingClientRect();
+  profilePickerMenu.style.bottom = `${window.innerHeight - rect.top + 6}px`;
+  profilePickerMenu.style.right = `${window.innerWidth - rect.right}px`;
+  profilePickerMenu.hidden = !profilePickerMenu.hidden;
+});
+
+profilePickerMenu.addEventListener("click", async (e) => {
+  const item = e.target.closest(".profile-picker-item");
+  if (!item) return;
+  const profile = item.dataset.profile;
+  profilePickerMenu.hidden = true;
+  setCurrentProfile(profile);
   if (!profile || !currentChannel || !currentSessionId) return;
   try {
     await setSessionProfile(currentChannel, currentSessionId, profile);
   } catch (_) {}
 });
+
+document.addEventListener("click", () => { profilePickerMenu.hidden = true; });
 
 sessionSelect.addEventListener("change", async () => {
   if (sessionSelect.value === "__new__") {

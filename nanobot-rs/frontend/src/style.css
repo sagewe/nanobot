@@ -1014,23 +1014,69 @@
         border-color: var(--accent);
       }
 
-      #profile-select {
-        appearance: none;
-        -webkit-appearance: none;
-        border: none;
+      .profile-picker-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        border: 1px solid var(--line);
         border-radius: 999px;
-        padding: 0.22rem 1.5rem 0.22rem 0.55rem;
+        padding: 0.22rem 0.6rem;
         font-size: 0.78rem;
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         color: var(--dim);
-        background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 0.35rem center;
-        background-size: 10px;
+        background: transparent;
         cursor: pointer;
-        transition: color 0.15s;
+        white-space: nowrap;
+        transition: color 0.15s, border-color 0.15s;
       }
 
-      #profile-select:hover { color: var(--ink); }
-      #profile-select:focus { outline: none; }
+      .profile-picker-btn:hover {
+        color: var(--ink);
+        border-color: var(--accent);
+      }
+
+      .profile-picker-menu {
+        position: fixed;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 0.75rem;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.06);
+        padding: 0.3rem;
+        z-index: 500;
+        min-width: 13rem;
+      }
+
+      .profile-picker-menu[hidden] { display: none; }
+
+      .profile-picker-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.5rem 0.7rem;
+        border-radius: 0.5rem;
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+
+      .profile-picker-item:hover {
+        background: rgba(193, 95, 60, 0.08);
+      }
+
+      .profile-picker-item-name {
+        font-size: 0.88rem;
+        font-weight: 500;
+        color: var(--ink);
+      }
+
+      .profile-picker-check {
+        color: var(--accent);
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+      }
+
+      .profile-picker-check[hidden] { display: none; }
 
       #send-button {
         border: 0;

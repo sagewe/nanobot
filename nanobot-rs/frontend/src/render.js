@@ -13,7 +13,9 @@ hljs.registerLanguage("xml", xml);
 
 const transcript = document.getElementById("transcript");
 const sessionSelect = document.getElementById("session-select");
-const profileSelect = document.getElementById("profile-select");
+const profilePickerLabel = document.getElementById("profile-picker-label");
+const profilePickerMenu = document.getElementById("profile-picker-menu");
+let _currentProfileValue = "";
 const statusNode = document.getElementById("status");
 const weixinStatusLabel = document.getElementById("weixin-status-label");
 const weixinUserLabel = document.getElementById("weixin-user-label");
@@ -57,18 +59,36 @@ export function setStatus(message, variant = "idle") {
 }
 
 export function setCurrentProfile(profile) {
-  if (profile && profileSelect.querySelector(`option[value="${CSS.escape(profile)}"]`)) {
-    profileSelect.value = profile;
-  }
+  if (!profile) return;
+  _currentProfileValue = profile;
+  profilePickerLabel.textContent = profile;
+  profilePickerMenu.querySelectorAll(".profile-picker-check").forEach((el) => {
+    el.hidden = el.dataset.profile !== profile;
+  });
 }
 
 export function renderProfiles(profiles) {
-  profileSelect.innerHTML = "";
+  profilePickerMenu.innerHTML = "";
+  const CHECK_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
   for (const p of profiles) {
-    const opt = document.createElement("option");
-    opt.value = p;
-    opt.textContent = p;
-    profileSelect.appendChild(opt);
+    const item = document.createElement("div");
+    item.className = "profile-picker-item";
+    item.dataset.profile = p;
+    item.setAttribute("role", "option");
+
+    const name = document.createElement("span");
+    name.className = "profile-picker-item-name";
+    name.textContent = p;
+
+    const check = document.createElement("span");
+    check.className = "profile-picker-check";
+    check.dataset.profile = p;
+    check.hidden = p !== _currentProfileValue;
+    check.innerHTML = CHECK_SVG;
+
+    item.appendChild(name);
+    item.appendChild(check);
+    profilePickerMenu.appendChild(item);
   }
 }
 
