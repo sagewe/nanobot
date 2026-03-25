@@ -237,6 +237,15 @@
         font-weight: 600;
       }
 
+      .tab-btn svg {
+        transition: stroke-width 0.15s;
+        stroke-width: 1.75;
+      }
+
+      .tab-btn[data-active="true"] svg {
+        stroke-width: 2.2;
+      }
+
       .sidebar-title {
         margin: 0;
         font-size: 1.05rem;
@@ -436,9 +445,13 @@
       }
 
       .transcript-empty-icon {
-        font-size: 2rem;
-        opacity: 0.35;
+        opacity: 0.3;
         line-height: 1;
+      }
+
+      .transcript-empty-icon svg {
+        width: 2.8rem;
+        height: 2.8rem;
       }
 
       .transcript-empty-title {
@@ -614,9 +627,15 @@
       }
 
       .msg-group[data-role="tool"] .msg-avatar {
-        background: var(--sidebar-bg);
-        border: 1px solid var(--line);
-        color: var(--dim);
+        background: rgba(196, 148, 32, 0.12);
+        border: 1px solid rgba(196, 148, 32, 0.28);
+        color: #9a7418;
+      }
+
+      :root[data-theme="dark"] .msg-group[data-role="tool"] .msg-avatar {
+        background: rgba(212, 165, 50, 0.15);
+        border-color: rgba(212, 165, 50, 0.25);
+        color: #d4a532;
       }
 
       .msg-group[data-role="tool"] .msg-bubble {
@@ -882,7 +901,12 @@
         background: linear-gradient(135deg, var(--accent), var(--accent-dark));
         cursor: pointer;
         flex-shrink: 0;
-        transition: opacity 0.15s;
+        transition: opacity 0.15s, background 0.15s, color 0.15s;
+      }
+
+      #send-button[data-empty="true"] {
+        background: var(--line);
+        color: var(--muted);
       }
 
       #send-button[disabled],

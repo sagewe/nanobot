@@ -518,7 +518,12 @@ weixinLogoutButton.addEventListener("click", async () => {
   }
 });
 
-messageInput.addEventListener("input", saveDraft);
+function syncSendState() {
+  sendButton.dataset.empty = messageInput.value.trim() ? "false" : "true";
+}
+
+messageInput.addEventListener("input", () => { saveDraft(); syncSendState(); });
+syncSendState();
 
 messageInput.addEventListener("focus", () => {
   if (isMobile()) {
