@@ -26,6 +26,18 @@ const RUNTIME_CONTEXT_TAG: &str = "[Runtime Context — metadata only, not instr
 const LOG_PROGRESS_METADATA_KEY: &str = "_log_progress";
 const DIRECT_REPLY_METADATA_KEY: &str = "_direct_reply";
 
+enum BtwAdmission {
+    Allowed(u64),
+    NoActiveMain,
+    Busy,
+}
+
+enum BtwCompletion {
+    Deliver(String),
+    Stale(String),
+    Suppress,
+}
+
 #[derive(Clone)]
 pub struct ContextBuilder {
     workspace: PathBuf,
@@ -173,6 +185,25 @@ struct PendingBurst {
     messages: Vec<InboundMessage>,
     timer: JoinHandle<()>,
     generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SessionLaneState {
+    next_main_generation: u64,
+    active_main_generation: Option<u64>,
+    stopped_generation: Option<u64>,
+    btw_reserved_generation: Option<u64>,
+}
+
+struct BtwTask {
+    handle: JoinHandle<()>,
+    bound_generation: u64,
+    stale_reply: OutboundMessage,
+}
+
+struct PendingBtwStale {
+    bound_generation: u64,
+    outbound: OutboundMessage,
 }
 
 #[async_trait]
@@ -486,8 +517,11 @@ pub struct AgentLoop {
     subagents: SubagentManager,
     session_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     session_generations: Arc<Mutex<HashMap<String, u64>>>,
+    lane_states: Arc<Mutex<HashMap<String, SessionLaneState>>>,
     pending_bursts: Arc<Mutex<HashMap<String, PendingBurst>>>,
     active_tasks: Arc<Mutex<HashMap<String, Vec<JoinHandle<()>>>>>,
+    btw_tasks: Arc<Mutex<HashMap<String, BtwTask>>>,
+    pending_btw_stale: Arc<Mutex<HashMap<String, PendingBtwStale>>>,
     running: Arc<AtomicBool>,
 }
 
@@ -596,8 +630,11 @@ impl AgentLoop {
             subagents,
             session_locks: Arc::new(Mutex::new(HashMap::new())),
             session_generations: Arc::new(Mutex::new(HashMap::new())),
+            lane_states: Arc::new(Mutex::new(HashMap::new())),
             pending_bursts: Arc::new(Mutex::new(HashMap::new())),
             active_tasks: Arc::new(Mutex::new(HashMap::new())),
+            btw_tasks: Arc::new(Mutex::new(HashMap::new())),
+            pending_btw_stale: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -612,6 +649,10 @@ impl AgentLoop {
             if msg.content.trim().eq_ignore_ascii_case("/stop") {
                 self.clear_pending_burst(&session_key).await;
                 self.handle_stop(&msg).await;
+                continue;
+            }
+            if Self::btw_question(&msg.content).is_some() {
+                self.spawn_btw(msg).await;
                 continue;
             }
             if self.is_immediate_command(&msg) {
@@ -637,8 +678,20 @@ impl AgentLoop {
         if self.current_session_generation(&session_key).await != generation {
             return Ok(());
         }
+        let main_generation = if self.is_main_lane_message(&msg) {
+            Some(self.begin_main_task(&session_key).await)
+        } else {
+            None
+        };
+        if let Some(generation) = main_generation {
+            self.publish_pending_btw_stale(&session_key, generation).await;
+        }
         let tools = self.build_tools().await;
-        if let Some(outbound) = self.process_message(msg, &tools).await? {
+        let dispatch_result = self.process_message(msg, &tools).await;
+        if let Some(generation) = main_generation {
+            self.finish_main_task(&session_key, generation).await;
+        }
+        if let Some(outbound) = dispatch_result? {
             self.bus.publish_outbound(outbound).await?;
         }
         Ok(())
@@ -647,6 +700,7 @@ impl AgentLoop {
     async fn handle_stop(&self, msg: &InboundMessage) {
         let session_key = self.processing_session_key(msg);
         self.bump_session_generation(&session_key).await;
+        let had_main = self.stop_main_task(&session_key).await;
         let tasks = self
             .active_tasks
             .lock()
@@ -658,7 +712,24 @@ impl AgentLoop {
             handle.abort();
             cancelled += 1;
         }
+        if let Some(task) = self.btw_tasks.lock().await.remove(&session_key) {
+            task.handle.abort();
+            self.release_btw_slot(&session_key).await;
+            if had_main {
+                self.pending_btw_stale.lock().await.insert(
+                    session_key.clone(),
+                    PendingBtwStale {
+                        bound_generation: task.bound_generation,
+                        outbound: task.stale_reply,
+                    },
+                );
+            }
+            cancelled += 1;
+        }
         cancelled += self.subagents.cancel_by_session(&session_key).await;
+        if had_main && cancelled == 0 {
+            cancelled = 1;
+        }
         let content = if cancelled == 0 {
             "No active task to stop.".to_string()
         } else {
@@ -687,6 +758,70 @@ impl AgentLoop {
             || trimmed.starts_with("/model ")
     }
 
+    fn btw_question(content: &str) -> Option<Option<String>> {
+        let trimmed = content.trim();
+        if trimmed.eq_ignore_ascii_case("/btw") {
+            return Some(None);
+        }
+        trimmed
+            .strip_prefix("/btw ")
+            .map(str::trim)
+            .map(|question| {
+                if question.is_empty() {
+                    None
+                } else {
+                    Some(question.to_string())
+                }
+            })
+    }
+
+    fn btw_usage_reply(&self, msg: &InboundMessage) -> OutboundMessage {
+        OutboundMessage {
+            channel: msg.channel.clone(),
+            chat_id: msg.chat_id.clone(),
+            content: "Usage: /btw <question>".to_string(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn no_active_main_reply(&self, msg: &InboundMessage) -> OutboundMessage {
+        OutboundMessage {
+            channel: msg.channel.clone(),
+            chat_id: msg.chat_id.clone(),
+            content: "No active main task is running in this session. Send a normal message instead."
+                .to_string(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn btw_busy_reply(&self, msg: &InboundMessage) -> OutboundMessage {
+        OutboundMessage {
+            channel: msg.channel.clone(),
+            chat_id: msg.chat_id.clone(),
+            content:
+                "A BTW reply is already running for this session. Wait for it to finish or stop the session."
+                    .to_string(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn stale_btw_reply(&self, msg: &InboundMessage) -> OutboundMessage {
+        OutboundMessage {
+            channel: msg.channel.clone(),
+            chat_id: msg.chat_id.clone(),
+            content:
+                "The BTW request became stale because the running main task generation changed. Send /btw again if you still need it."
+                    .to_string(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn is_main_lane_message(&self, msg: &InboundMessage) -> bool {
+        msg.channel != "system"
+            && !self.is_immediate_command(msg)
+            && Self::btw_question(&msg.content).is_none()
+    }
+
     fn normalize_session_profile<'a>(&'a self, session: &'a mut Session) -> &'a str {
         let selected = session
             .active_profile
@@ -713,7 +848,7 @@ impl AgentLoop {
     }
 
     fn help_text(&self) -> String {
-        "nanobot-rs commands:\n/new — Start a new conversation\n/stop — Stop the current task\n/help — Show available commands\n/models — List available model profiles\n/model <provider:model> — Switch the current session model".to_string()
+        "nanobot-rs commands:\n/new — Start a new conversation\n/stop — Stop the current task\n/help — Show available commands\n/models — List available model profiles\n/model <provider:model> — Switch the current session model\n/btw <question> — Ask a side question while the current task keeps running".to_string()
     }
 
     fn models_text(&self, current_profile: &str) -> String {
@@ -852,10 +987,29 @@ impl AgentLoop {
             metadata,
             session_key_override: Some(session_key.to_string()),
         };
+        if msg.content.trim().eq_ignore_ascii_case("/stop") {
+            self.clear_pending_burst(session_key).await;
+            return Ok(self.stop_session_direct(&msg).await);
+        }
+        if Self::btw_question(&msg.content).is_some() {
+            return self.process_direct_btw(msg, session_key).await;
+        }
         let lock = self.session_lock(session_key).await;
         let _guard = lock.lock().await;
+        let main_generation = if self.is_main_lane_message(&msg) {
+            Some(self.begin_main_task(session_key).await)
+        } else {
+            None
+        };
+        if let Some(generation) = main_generation {
+            self.publish_pending_btw_stale(session_key, generation).await;
+        }
         let tools = self.build_tools().await;
-        let outbound = self.process_message(msg, &tools).await?;
+        let outbound = self.process_message(msg, &tools).await;
+        if let Some(generation) = main_generation {
+            self.finish_main_task(session_key, generation).await;
+        }
+        let outbound = outbound?;
         if let Some(outbound) = outbound {
             return Ok(outbound.content);
         }
@@ -1042,6 +1196,156 @@ impl AgentLoop {
         }))
     }
 
+    async fn btw_result_text(&self, final_content: Option<String>, tools: &ToolRegistry) -> String {
+        if tools.sent_message_this_turn().await {
+            let replies = tools.take_direct_replies().await;
+            if !replies.is_empty() {
+                return replies.join("\n\n");
+            }
+        }
+        final_content.unwrap_or_else(|| {
+            "I've completed the BTW reply but have no response to give.".to_string()
+        })
+    }
+
+    fn load_btw_snapshot(&self, session_key: &str) -> Result<Session> {
+        if let Some(mut session) = self.sessions.load(session_key)? {
+            self.normalize_session_profile(&mut session);
+            return Ok(session);
+        }
+        let mut session = Session::new(session_key);
+        session.active_profile = Some(self.default_profile.clone());
+        Ok(session)
+    }
+
+    async fn classify_btw_completion(
+        &self,
+        session_key: &str,
+        bound_generation: u64,
+    ) -> BtwCompletion {
+        self.classify_btw_state(session_key, bound_generation).await
+    }
+
+    async fn run_btw_once(
+        &self,
+        msg: &InboundMessage,
+        session_key: &str,
+        bound_generation: u64,
+    ) -> Result<BtwCompletion> {
+        let question = Self::btw_question(&msg.content)
+            .flatten()
+            .ok_or_else(|| anyhow!("missing BTW question"))?;
+        if let BtwCompletion::Stale(content) =
+            self.classify_btw_completion(session_key, bound_generation).await
+        {
+            return Ok(BtwCompletion::Stale(content));
+        }
+        let mut session = self.load_btw_snapshot(session_key)?;
+        let request = self.resolve_request(&mut session)?;
+        let tools = self.build_tools().await;
+        tools
+            .set_context(ToolContext {
+                channel: msg.channel.clone(),
+                chat_id: msg.chat_id.clone(),
+                message_id: msg
+                    .metadata
+                    .get("message_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                reply_to_caller: true,
+                provider_request: Some(request.clone()),
+            })
+            .await;
+        tools.start_turn().await;
+        let history = session.get_history(0);
+        let btw_input = format!("[BTW side question]\n{question}");
+        let messages = self.context.build_messages(
+            history,
+            &btw_input,
+            "user",
+            Some(&msg.channel),
+            Some(&msg.chat_id),
+        );
+        if let BtwCompletion::Stale(content) =
+            self.classify_btw_completion(session_key, bound_generation).await
+        {
+            return Ok(BtwCompletion::Stale(content));
+        }
+        let (final_content, _) = self.run_agent_loop(messages, None, &tools, &request).await?;
+        match self.classify_btw_completion(session_key, bound_generation).await {
+            BtwCompletion::Deliver(_) => {
+                Ok(BtwCompletion::Deliver(self.btw_result_text(final_content, &tools).await))
+            }
+            other => Ok(other),
+        }
+    }
+
+    async fn process_btw(
+        &self,
+        msg: InboundMessage,
+        session_key: &str,
+        bound_generation: u64,
+    ) -> OutboundMessage {
+        let completion = match self.run_btw_once(&msg, session_key, bound_generation).await {
+            Ok(completion) => completion,
+            Err(error) => match self.classify_btw_completion(session_key, bound_generation).await {
+                BtwCompletion::Deliver(_) => {
+                    BtwCompletion::Deliver(format!("BTW failed: {error}"))
+                }
+                other => other,
+            },
+        };
+        match completion {
+            BtwCompletion::Deliver(content) => OutboundMessage {
+                channel: msg.channel,
+                chat_id: msg.chat_id,
+                content,
+                metadata: HashMap::new(),
+            },
+            BtwCompletion::Stale(content) => OutboundMessage {
+                channel: msg.channel,
+                chat_id: msg.chat_id,
+                content,
+                metadata: HashMap::new(),
+            },
+            BtwCompletion::Suppress => OutboundMessage {
+                channel: msg.channel,
+                chat_id: msg.chat_id,
+                content: String::new(),
+                metadata: HashMap::new(),
+            },
+        }
+    }
+
+    async fn process_direct_btw(&self, msg: InboundMessage, session_key: &str) -> Result<String> {
+        let Some(question) = Self::btw_question(&msg.content) else {
+            return Ok(String::new());
+        };
+        let bound_generation = match question {
+            None => return Ok(self.btw_usage_reply(&msg).content),
+            Some(_) => match self.admit_btw(session_key).await {
+                BtwAdmission::NoActiveMain => return Ok(self.no_active_main_reply(&msg).content),
+                BtwAdmission::Busy => return Ok(self.btw_busy_reply(&msg).content),
+                BtwAdmission::Allowed(generation) => generation,
+            },
+        };
+        let outbound = self.process_btw(msg, session_key, bound_generation).await;
+        self.release_btw_slot(session_key).await;
+        if outbound.content.is_empty() {
+            Ok("BTW request was cancelled because the main task stopped.".to_string())
+        } else {
+            Ok(outbound.content)
+        }
+    }
+
+    async fn stop_session_direct(&self, msg: &InboundMessage) -> String {
+        self.handle_stop(msg).await;
+        let outbound = self.bus.consume_outbound().await;
+        outbound
+            .map(|reply| reply.content)
+            .unwrap_or_else(|| "No active task to stop.".to_string())
+    }
+
     async fn run_agent_loop(
         &self,
         initial_messages: Vec<Value>,
@@ -1141,6 +1445,89 @@ impl AgentLoop {
         *generation
     }
 
+    async fn begin_main_task(&self, session_key: &str) -> u64 {
+        let mut states = self.lane_states.lock().await;
+        let state = states.entry(session_key.to_string()).or_default();
+        state.next_main_generation += 1;
+        state.active_main_generation = Some(state.next_main_generation);
+        state.stopped_generation = None;
+        let generation = state.next_main_generation;
+        generation
+    }
+
+    async fn finish_main_task(&self, session_key: &str, generation: u64) {
+        let mut states = self.lane_states.lock().await;
+        if let Some(state) = states.get_mut(session_key) {
+            if state.active_main_generation == Some(generation) {
+                state.active_main_generation = None;
+            }
+        }
+    }
+
+    async fn admit_btw(&self, session_key: &str) -> BtwAdmission {
+        let mut states = self.lane_states.lock().await;
+        let state = states.entry(session_key.to_string()).or_default();
+        let Some(generation) = state.active_main_generation else {
+            return BtwAdmission::NoActiveMain;
+        };
+        if state.btw_reserved_generation.is_some() {
+            return BtwAdmission::Busy;
+        }
+        state.btw_reserved_generation = Some(generation);
+        BtwAdmission::Allowed(generation)
+    }
+
+    async fn release_btw_slot(&self, session_key: &str) {
+        if let Some(state) = self.lane_states.lock().await.get_mut(session_key) {
+            state.btw_reserved_generation = None;
+        }
+    }
+
+    async fn publish_pending_btw_stale(&self, session_key: &str, generation: u64) {
+        let pending = self.pending_btw_stale.lock().await.remove(session_key);
+        let Some(pending) = pending else {
+            return;
+        };
+        if pending.bound_generation < generation {
+            let _ = self.bus.publish_outbound(pending.outbound).await;
+        } else {
+            self.pending_btw_stale
+                .lock()
+                .await
+                .insert(session_key.to_string(), pending);
+        }
+    }
+
+    async fn stop_main_task(&self, session_key: &str) -> bool {
+        let mut states = self.lane_states.lock().await;
+        let state = states.entry(session_key.to_string()).or_default();
+        let Some(active) = state.active_main_generation else {
+            return false;
+        };
+        state.active_main_generation = None;
+        state.stopped_generation = Some(active);
+        true
+    }
+
+    async fn classify_btw_state(
+        &self,
+        session_key: &str,
+        bound_generation: u64,
+    ) -> BtwCompletion {
+        let states = self.lane_states.lock().await;
+        let Some(state) = states.get(session_key) else {
+            return BtwCompletion::Deliver(String::new());
+        };
+        match state.active_main_generation {
+            Some(active) if active == bound_generation => BtwCompletion::Deliver(String::new()),
+            Some(_) => BtwCompletion::Stale(
+                "The BTW request became stale because the running main task generation changed. Send /btw again if you still need it.".to_string(),
+            ),
+            None if state.stopped_generation == Some(bound_generation) => BtwCompletion::Suppress,
+            None => BtwCompletion::Deliver(String::new()),
+        }
+    }
+
     fn processing_session_key(&self, msg: &InboundMessage) -> String {
         if msg.channel == "system" {
             return msg
@@ -1171,6 +1558,48 @@ impl AgentLoop {
             .entry(session_key)
             .or_default()
             .push(handle);
+    }
+
+    async fn spawn_btw(&self, msg: InboundMessage) {
+        let session_key = self.processing_session_key(&msg);
+        let Some(question) = Self::btw_question(&msg.content) else {
+            return;
+        };
+        let outbound = match question {
+            None => Some(self.btw_usage_reply(&msg)),
+            Some(_) => match self.admit_btw(&session_key).await {
+                BtwAdmission::NoActiveMain => Some(self.no_active_main_reply(&msg)),
+                BtwAdmission::Busy => Some(self.btw_busy_reply(&msg)),
+                BtwAdmission::Allowed(bound_generation) => {
+                    let this = self.clone();
+                    let session_key_for_task = session_key.clone();
+                    let msg_for_task = msg.clone();
+                    let stale_reply = self.stale_btw_reply(&msg);
+                    let handle = tokio::spawn(async move {
+                        let outbound =
+                            this.process_btw(msg_for_task, &session_key_for_task, bound_generation)
+                                .await;
+                        this.release_btw_slot(&session_key_for_task).await;
+                        this.btw_tasks.lock().await.remove(&session_key_for_task);
+                        if !outbound.content.is_empty() {
+                            let _ = this.bus.publish_outbound(outbound).await;
+                        }
+                    });
+                    self.btw_tasks.lock().await.insert(
+                        session_key,
+                        BtwTask {
+                            handle,
+                            bound_generation,
+                            stale_reply,
+                        },
+                    );
+                    None
+                }
+            },
+        };
+        if let Some(outbound) = outbound {
+            let _ = self.bus.publish_outbound(outbound).await;
+        }
     }
 
     async fn enqueue_burst_message(&self, msg: InboundMessage) {
@@ -1290,8 +1719,11 @@ impl Clone for AgentLoop {
             subagents: self.subagents.clone(),
             session_locks: self.session_locks.clone(),
             session_generations: self.session_generations.clone(),
+            lane_states: self.lane_states.clone(),
             pending_bursts: self.pending_bursts.clone(),
             active_tasks: self.active_tasks.clone(),
+            btw_tasks: self.btw_tasks.clone(),
+            pending_btw_stale: self.pending_btw_stale.clone(),
             running: self.running.clone(),
         }
     }
