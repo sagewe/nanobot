@@ -12,6 +12,20 @@ fn page_shell_contains_core_ui_regions() {
 }
 
 #[test]
+fn page_shell_uses_a_wide_desktop_chat_layout() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains(".conversation-pane {"));
+    assert!(html.contains("flex: 1;"));
+    assert!(html.contains(".msg-group {"));
+    assert!(html.contains("max-width: min(72rem, 100%);"));
+    assert!(html.contains(".btw-thread {"));
+    assert!(html.contains("max-width: min(56rem, 100%);"));
+    assert!(html.contains(".account-panel {"));
+    assert!(html.contains("max-width: 48rem;"));
+}
+
+#[test]
 fn page_shell_includes_backend_session_api_hooks() {
     let html = nanobot_rs::web::page::render_index_html();
 
