@@ -37,6 +37,7 @@ const SELECTED_CHANNEL_KEY = "pikachu.selectedChannel";
 const SELECTED_SESSION_KEY = "pikachu.selectedSessionId";
 const THEME_KEY = "pikachu.theme";
 const COLLAPSED_KEY = "pikachu.sidebarCollapsed";
+const WIDE_KEY = "pikachu.wideLayout";
 const DRAFT_KEY_PREFIX = "pikachu.draft";
 
 // ── DOM references ────────────────────────────────────────────────────────────
@@ -56,6 +57,8 @@ const weixinLoginButton = document.getElementById("weixin-login-button");
 const weixinLogoutButton = document.getElementById("weixin-logout-button");
 const themeToggle = document.getElementById("theme-toggle");
 const themeIcon = document.getElementById("theme-icon");
+const wideToggle = document.getElementById("wide-toggle");
+const wideIcon = document.getElementById("wide-icon");
 const sidebarToggle = document.getElementById("sidebar-toggle");
 const backdropEl = document.getElementById("sidebar-backdrop");
 const mobileMenuBtn = document.getElementById("mobile-menu-btn");
@@ -67,6 +70,8 @@ const sessionsPane = document.querySelector(".sessions-pane");
 const sessionsSearch = document.getElementById("sessions-search");
 const sessionRail = document.querySelector(".session-rail");
 const transcript = document.getElementById("transcript");
+const slashMenu = document.getElementById("slash-menu");
+const slashMenuList = document.getElementById("slash-menu-list");
 
 const legacyStoredSessionId = localStorage.getItem(SESSION_KEY);
 
@@ -82,6 +87,16 @@ let weixinPollTimer = null;
 let busyTimer = null;
 let busyStart = null;
 let isBusy = false;
+let slashState = { open: false, items: [], selectedIndex: 0 };
+
+const SLASH_COMMANDS = [
+  { name: "/new", insertText: "/new", hintKey: "command_new_hint" },
+  { name: "/help", insertText: "/help", hintKey: "command_help_hint" },
+  { name: "/stop", insertText: "/stop", hintKey: "command_stop_hint" },
+  { name: "/models", insertText: "/models", hintKey: "command_models_hint" },
+  { name: "/model", insertText: "/model ", hintKey: "command_model_hint" },
+  { name: "/btw", insertText: "/btw ", hintKey: "command_btw_hint" },
+];
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 function startBusyTimer() {
@@ -148,6 +163,7 @@ function restoreDraft() {
   const key = draftKey();
   messageInput.value = (key && localStorage.getItem(key)) || "";
   autoResize();
+  updateSlashMenu();
 }
 
 function clearDraft() {
@@ -198,6 +214,85 @@ function updateSessionMetadata(channel, sessionId, activeProfile) {
 function appendEphemeralExchange(message, payload) {
   appendMessage("user", message);
   appendAssistantMessage(payload.replyHtml || payload.reply);
+}
+
+function closeSlashMenu() {
+  slashState = { open: false, items: [], selectedIndex: 0 };
+  slashMenu.hidden = true;
+  slashMenuList.innerHTML = "";
+}
+
+function renderSlashMenu() {
+  slashMenuList.innerHTML = "";
+  for (const [index, command] of slashState.items.entries()) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "slash-item";
+    item.dataset.selected = String(index === slashState.selectedIndex);
+
+    const name = document.createElement("span");
+    name.className = "slash-name";
+    name.textContent = command.name;
+
+    const hint = document.createElement("span");
+    hint.className = "slash-hint";
+    hint.textContent = t(command.hintKey);
+
+    item.appendChild(name);
+    item.appendChild(hint);
+    item.addEventListener("mousedown", (event) => event.preventDefault());
+    item.addEventListener("click", () => applySlashCommand(command));
+    slashMenuList.appendChild(item);
+  }
+  slashMenu.hidden = !slashState.open;
+}
+
+function applySlashCommand(command) {
+  messageInput.value = command.insertText;
+  saveDraft();
+  syncSendState();
+  autoResize();
+  closeSlashMenu();
+  messageInput.focus();
+  messageInput.setSelectionRange(messageInput.value.length, messageInput.value.length);
+}
+
+function getSlashQuery(value) {
+  const match = value.match(/^\s*\/([^\s]*)$/);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function filterSlashCommands(query) {
+  if (!query) return [...SLASH_COMMANDS];
+  const prefixMatches = SLASH_COMMANDS.filter((command) =>
+    command.name.slice(1).toLowerCase().startsWith(query)
+  );
+  const containsMatches = SLASH_COMMANDS.filter((command) =>
+    !prefixMatches.includes(command) &&
+    command.name.slice(1).toLowerCase().includes(query)
+  );
+  return [...prefixMatches, ...containsMatches];
+}
+
+function updateSlashMenu() {
+  const query = getSlashQuery(messageInput.value);
+  if (query === null) {
+    closeSlashMenu();
+    return;
+  }
+
+  const items = filterSlashCommands(query);
+  if (!items.length) {
+    closeSlashMenu();
+    return;
+  }
+
+  slashState = {
+    open: true,
+    items,
+    selectedIndex: Math.min(slashState.selectedIndex, items.length - 1),
+  };
+  renderSlashMenu();
 }
 
 // ── Session management ────────────────────────────────────────────────────────
@@ -339,6 +434,20 @@ const savedTheme =
   (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 applyTheme(savedTheme);
 
+// ── Wide layout ───────────────────────────────────────────────────────────────
+const WIDE_ICON = '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>';
+const NARROW_ICON = '<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/>';
+
+function applyWide(wide) {
+  document.body.setAttribute("data-wide", String(wide));
+  wideIcon.innerHTML = wide ? WIDE_ICON : NARROW_ICON;
+  wideToggle.title = wide ? t("switch_narrow") : t("switch_wide");
+  localStorage.setItem(WIDE_KEY, String(wide));
+}
+
+const savedWide = localStorage.getItem(WIDE_KEY) !== "false";
+applyWide(savedWide);
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function isMobile() {
   return window.matchMedia("(max-width: 640px)").matches;
@@ -365,6 +474,10 @@ setSidebarCollapsed(localStorage.getItem(COLLAPSED_KEY) === "true");
 themeToggle.addEventListener("click", () => {
   const current = document.documentElement.getAttribute("data-theme");
   applyTheme(current === "dark" ? "light" : "dark");
+});
+
+wideToggle.addEventListener("click", () => {
+  applyWide(document.body.getAttribute("data-wide") !== "true");
 });
 
 sidebarToggle.addEventListener("click", () => {
@@ -428,6 +541,7 @@ langToggleBtn.addEventListener("click", () => {
   setLang(getLang() === "en" ? "zh" : "en");
   applyI18n();
   applyTheme(document.documentElement.getAttribute("data-theme") || "light");
+  applyWide(document.body.getAttribute("data-wide") !== "false");
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
   syncSessionsList();
 });
@@ -452,7 +566,12 @@ profilePickerMenu.addEventListener("click", async (e) => {
   } catch (_) {}
 });
 
-document.addEventListener("click", () => { profilePickerMenu.hidden = true; });
+document.addEventListener("click", (event) => {
+  profilePickerMenu.hidden = true;
+  if (event.target !== messageInput && !slashMenu.contains(event.target)) {
+    closeSlashMenu();
+  }
+});
 
 sessionSelect.addEventListener("change", async () => {
   if (sessionSelect.value === "__new__") {
@@ -543,7 +662,12 @@ function autoResize() {
   messageInput.style.height = messageInput.scrollHeight + "px";
 }
 
-messageInput.addEventListener("input", () => { saveDraft(); syncSendState(); autoResize(); });
+messageInput.addEventListener("input", () => {
+  saveDraft();
+  syncSendState();
+  autoResize();
+  updateSlashMenu();
+});
 syncSendState();
 
 messageInput.addEventListener("focus", () => {
@@ -573,6 +697,32 @@ messageInput.addEventListener("focus", () => {
 })();
 
 messageInput.addEventListener("keydown", (event) => {
+  if (slashState.open && slashState.items.length) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      slashState.selectedIndex = (slashState.selectedIndex + 1) % slashState.items.length;
+      renderSlashMenu();
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      slashState.selectedIndex =
+        (slashState.selectedIndex - 1 + slashState.items.length) % slashState.items.length;
+      renderSlashMenu();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeSlashMenu();
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applySlashCommand(slashState.items[slashState.selectedIndex]);
+      return;
+    }
+  }
+
   if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
     event.preventDefault();
     composer.requestSubmit();
@@ -596,6 +746,7 @@ composer.addEventListener("submit", async (event) => {
   appendMessage("user", message);
   messageInput.value = "";
   autoResize();
+  closeSlashMenu();
   clearDraft();
   setBusy(true);
   setStatus(t("pikachu_working"), "loading");

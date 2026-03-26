@@ -12,13 +12,44 @@ fn page_shell_contains_core_ui_regions() {
 }
 
 #[test]
+fn page_shell_includes_slash_command_palette_shell() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("id=\"slash-menu\""));
+    assert!(html.contains("id=\"slash-menu-list\""));
+    assert!(html.contains("const SLASH_COMMANDS = ["));
+    assert!(html.contains("name: \"/new\""));
+    assert!(html.contains("name: \"/help\""));
+    assert!(html.contains("name: \"/stop\""));
+    assert!(html.contains("name: \"/models\""));
+    assert!(html.contains("name: \"/model\""));
+    assert!(html.contains("name: \"/btw\""));
+}
+
+#[test]
+fn page_shell_supports_keyboard_driven_slash_command_selection() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("insertText: \"/model \""));
+    assert!(html.contains("insertText: \"/btw \""));
+    assert!(html.contains("function updateSlashMenu()"));
+    assert!(html.contains("function applySlashCommand(command)"));
+    assert!(html.contains("event.key === \"ArrowDown\""));
+    assert!(html.contains("event.key === \"ArrowUp\""));
+    assert!(html.contains("event.key === \"Escape\""));
+    assert!(html.contains("if (slashState.open && slashState.items.length)"));
+}
+
+#[test]
 fn page_shell_uses_a_wide_desktop_chat_layout() {
     let html = nanobot_rs::web::page::render_index_html();
 
+    assert!(html.contains("id=\"wide-toggle\""));
+    assert!(html.contains("const WIDE_KEY = \"pikachu.wideLayout\";"));
     assert!(html.contains(".conversation-pane {"));
     assert!(html.contains("flex: 1;"));
-    assert!(html.contains(".msg-group {"));
-    assert!(html.contains("max-width: min(72rem, 100%);"));
+    assert!(html.contains("body[data-wide=\"false\"] #transcript,"));
+    assert!(html.contains("max-width: 52rem;"));
     assert!(html.contains(".btw-thread {"));
     assert!(html.contains("max-width: min(56rem, 100%);"));
     assert!(html.contains(".account-panel {"));
