@@ -948,11 +948,14 @@
       #message-input {
         display: block;
         width: 100%;
-        min-height: 4.5rem;
+        min-height: 2.4rem;
+        max-height: 14rem;
         resize: none;
+        overflow-y: auto;
         border: none;
-        padding: 0.75rem 1.1rem 0.5rem;
+        padding: 0.65rem 1.1rem 0.45rem;
         font: inherit;
+        line-height: 1.5;
         color: var(--ink);
         background: transparent;
         outline: none;
@@ -967,7 +970,6 @@
         align-items: center;
         justify-content: space-between;
         padding: 0.3rem 0.45rem 0.4rem;
-        border-top: 1px solid var(--line);
       }
 
       .composer-toolbar-left,
@@ -1204,7 +1206,6 @@
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="tool"] .msg-avatar { background: #1a1815; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-tool-output-content { background: #252320; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .tab-btn[data-active="true"] { background: #252320; }
-        :root:not([data-theme="light"]):not([data-theme="dark"]) .composer-toolbar { border-top-color: #3d3830; }
       }
 
       :root[data-theme="dark"] {
@@ -1231,7 +1232,6 @@
       :root[data-theme="dark"] .msg-group[data-role="tool"] .msg-avatar { background: #1a1815; }
       :root[data-theme="dark"] .msg-tool-output-content { background: #252320; }
       :root[data-theme="dark"] .tab-btn[data-active="true"] { background: #252320; }
-      :root[data-theme="dark"] .composer-toolbar { border-top-color: #3d3830; }
       :root[data-theme="dark"] #export-button:hover { background: rgba(255,255,255,0.06); }
 
       #sidebar-backdrop {
@@ -1337,10 +1337,7 @@
         }
 
         #message-input {
-          min-height: unset;
-          height: 5rem;
-          resize: none;
-          padding: 0.65rem 1rem 3rem 1rem;
+          padding: 0.65rem 1rem 0.5rem 1rem;
         }
 
         #send-button,

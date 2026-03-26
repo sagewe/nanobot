@@ -147,6 +147,7 @@ function saveDraft() {
 function restoreDraft() {
   const key = draftKey();
   messageInput.value = (key && localStorage.getItem(key)) || "";
+  autoResize();
 }
 
 function clearDraft() {
@@ -537,7 +538,12 @@ function syncSendState() {
   sendButton.dataset.empty = messageInput.value.trim() ? "false" : "true";
 }
 
-messageInput.addEventListener("input", () => { saveDraft(); syncSendState(); });
+function autoResize() {
+  messageInput.style.height = "auto";
+  messageInput.style.height = messageInput.scrollHeight + "px";
+}
+
+messageInput.addEventListener("input", () => { saveDraft(); syncSendState(); autoResize(); });
 syncSendState();
 
 messageInput.addEventListener("focus", () => {
@@ -589,6 +595,7 @@ composer.addEventListener("submit", async (event) => {
 
   appendMessage("user", message);
   messageInput.value = "";
+  autoResize();
   clearDraft();
   setBusy(true);
   setStatus(t("pikachu_working"), "loading");
