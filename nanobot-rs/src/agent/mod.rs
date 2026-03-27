@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use crate::cron::CronService;
+
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -610,6 +612,7 @@ pub struct AgentLoop {
     btw_tasks: Arc<Mutex<HashMap<String, BtwTask>>>,
     pending_btw_stale: Arc<Mutex<HashMap<String, PendingBtwStale>>>,
     running: Arc<AtomicBool>,
+    cron: Arc<Mutex<Option<Arc<CronService>>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -730,7 +733,13 @@ impl AgentLoop {
             btw_tasks: Arc::new(Mutex::new(HashMap::new())),
             pending_btw_stale: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(AtomicBool::new(false)),
+            cron: Arc::new(Mutex::new(None)),
         })
+    }
+
+    /// Attach a cron service so the `cron` tool is available to the agent.
+    pub fn attach_cron(&self, cron: Arc<CronService>) {
+        *self.cron.blocking_lock() = Some(cron);
     }
 
     pub async fn run(&self) {
@@ -1166,6 +1175,7 @@ impl AgentLoop {
                 .set_context(ToolContext {
                     channel: channel.clone(),
                     chat_id: chat_id.clone(),
+                    session_key: format!("{channel}:{chat_id}"),
                     message_id: None,
                     reply_to_caller: false,
                     provider_request: Some(request.clone()),
@@ -1256,6 +1266,7 @@ impl AgentLoop {
             .set_context(ToolContext {
                 channel: msg.channel.clone(),
                 chat_id: msg.chat_id.clone(),
+                session_key: session_key.clone(),
                 message_id: msg
                     .metadata
                     .get("message_id")
@@ -1376,6 +1387,7 @@ impl AgentLoop {
             .set_context(ToolContext {
                 channel: msg.channel.clone(),
                 chat_id: msg.chat_id.clone(),
+                session_key: msg.session_key(),
                 message_id: msg
                     .metadata
                     .get("message_id")
@@ -1614,6 +1626,7 @@ impl AgentLoop {
     }
 
     async fn build_tools(&self) -> ToolRegistry {
+        let cron = self.cron.lock().await.clone();
         build_default_tools(
             self.workspace.clone(),
             self.bus.clone(),
@@ -1621,6 +1634,7 @@ impl AgentLoop {
             self.restrict_to_workspace,
             self.subagents.clone(),
             self.web_tools.clone(),
+            cron,
         )
         .await
     }
@@ -2174,6 +2188,7 @@ impl Clone for AgentLoop {
             btw_tasks: self.btw_tasks.clone(),
             pending_btw_stale: self.pending_btw_stale.clone(),
             running: self.running.clone(),
+            cron: self.cron.clone(),
         }
     }
 }

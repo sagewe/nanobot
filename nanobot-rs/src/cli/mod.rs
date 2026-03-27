@@ -296,6 +296,7 @@ async fn gateway(args: GatewayArgs) -> Result<()> {
     // -----------------------------------------------------------------------
     let cron_store_path = config.workspace_path().join("cron").join("jobs.json");
     let cron = Arc::new(CronService::new(cron_store_path));
+    agent.attach_cron(cron.clone());
     {
         let agent = agent.clone();
         let bus = bus.clone();
