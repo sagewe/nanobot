@@ -7,9 +7,11 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::agent::AgentLoop;
-use crate::bus::{InboundMessage, MessageBus};
+use crate::bus::{MessageBus, OutboundMessage, InboundMessage};
 use crate::channels::ChannelManager;
 use crate::config::{Config, default_workspace_path, load_config, save_config};
+use crate::cron::{CronJob, CronService};
+use crate::heartbeat::HeartbeatService;
 use crate::providers::build_provider_from_config;
 use crate::web;
 
@@ -287,12 +289,113 @@ async fn gateway(args: GatewayArgs) -> Result<()> {
     ensure_workspace(&config.workspace_path())?;
     let bus = MessageBus::new(256);
     let provider = build_provider_from_config(&config)?;
-    let agent = AgentLoop::from_config(bus.clone(), provider, config.clone()).await?;
+    let agent = AgentLoop::from_config(bus.clone(), provider.clone(), config.clone()).await?;
+
+    // -----------------------------------------------------------------------
+    // Cron service
+    // -----------------------------------------------------------------------
+    let cron_store_path = config.workspace_path().join("cron").join("jobs.json");
+    let cron = Arc::new(CronService::new(cron_store_path));
+    {
+        let agent = agent.clone();
+        let bus = bus.clone();
+        cron.set_on_job(move |job: CronJob| {
+            let agent = agent.clone();
+            let bus = bus.clone();
+            async move {
+                let reminder = format!(
+                    "[Scheduled Task] Timer finished.\n\nTask '{}' has been triggered.\nScheduled instruction: {}",
+                    job.name, job.payload.message
+                );
+                let channel = job.payload.channel.clone().unwrap_or_else(|| "cli".to_string());
+                let chat_id = job.payload.to.clone().unwrap_or_else(|| "direct".to_string());
+                let session_key = format!("cron:{}", job.id);
+
+                match agent.process_direct(&reminder, &session_key, &channel, &chat_id).await {
+                    Ok(response) => {
+                        if job.payload.deliver && job.payload.to.is_some() && !response.is_empty() {
+                            let _ = bus.publish_outbound(OutboundMessage {
+                                channel,
+                                chat_id: job.payload.to.clone().unwrap_or_default(),
+                                content: response.clone(),
+                                metadata: Default::default(),
+                            }).await;
+                        }
+                        Some(response)
+                    }
+                    Err(e) => {
+                        tracing::error!("Cron job '{}' agent error: {}", job.name, e);
+                        None
+                    }
+                }
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Heartbeat service
+    // -----------------------------------------------------------------------
+    let hb_cfg = config.tools.heartbeat.clone();
+    let heartbeat = Arc::new(HeartbeatService::new(
+        config.workspace_path(),
+        provider,
+        config.agents.defaults.model.clone(),
+        hb_cfg.interval_s,
+        hb_cfg.enabled,
+    ));
+    {
+        let agent = agent.clone();
+        heartbeat.set_on_execute(move |tasks: String| {
+            let agent = agent.clone();
+            async move {
+                agent
+                    .process_direct(&tasks, "heartbeat", "cli", "direct")
+                    .await
+                    .unwrap_or_default()
+            }
+        });
+    }
+    {
+        let bus = bus.clone();
+        heartbeat.set_on_notify(move |response: String| {
+            let bus = bus.clone();
+            async move {
+                // Only deliver if there is a non-CLI outbound channel available.
+                // For now we silently drop CLI-only responses; a future version
+                // can pick an active channel from the session store.
+                let _ = bus
+                    .publish_outbound(OutboundMessage {
+                        channel: "cli".to_string(),
+                        chat_id: "direct".to_string(),
+                        content: response,
+                        metadata: Default::default(),
+                    })
+                    .await;
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Start cron + heartbeat, then run the gateway, then tear down
+    // -----------------------------------------------------------------------
+    cron.start().await;
+    heartbeat.start().await;
+
+    let status = cron.status();
+    if status.get("jobs").and_then(|v| v.as_u64()).unwrap_or(0) > 0 {
+        println!("Cron: {} scheduled job(s)", status["jobs"]);
+    }
+
     let runtime = Arc::new(LiveGatewayRuntime {
         agent,
         manager: ChannelManager::new(&config, bus),
     });
-    run_gateway_command(runtime, args).await
+    let result = run_gateway_command(runtime, args).await;
+
+    heartbeat.stop();
+    cron.stop();
+
+    result
 }
 
 async fn web_command(

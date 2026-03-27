@@ -3,6 +3,8 @@ pub mod bus;
 pub mod channels;
 pub mod cli;
 pub mod config;
+pub mod cron;
+pub mod heartbeat;
 pub mod presentation;
 pub mod providers;
 pub mod security;

@@ -19,6 +19,8 @@ anyhow = "1.0.100"
 async-trait = "0.1.89"
 axum = "0.8.6"
 chrono = { version = "0.4.42", features = ["clock", "serde"] }
+chrono-tz = "0.10"
+croner = "2"
 clap = { version = "4.5.53", features = ["derive"] }
 dirs = "6.0.0"
 futures-util = "0.3.31"
