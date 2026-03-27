@@ -24,6 +24,7 @@ use uuid::Uuid;
 use crate::agent::AgentLoop;
 use crate::channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinLoginManager};
 use crate::config::WeixinConfig;
+use crate::cron::CronService;
 use crate::presentation::render_web_html;
 use crate::session::{
     Session, SessionGroupSummary, SessionMessage, SessionSummary, split_session_key,
@@ -295,11 +296,12 @@ impl StdError for WeixinWorkflowError {}
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) chat: Arc<dyn ChatService>,
+    pub(crate) cron: Option<Arc<CronService>>,
 }
 
 impl AppState {
-    pub fn new(chat: Arc<dyn ChatService>) -> Self {
-        Self { chat }
+    pub fn new(chat: Arc<dyn ChatService>, cron: Option<Arc<CronService>>) -> Self {
+        Self { chat, cron }
     }
 }
 
@@ -324,6 +326,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/weixin/login/status", get(api::poll_weixin_login))
         .route("/api/weixin/logout", post(api::logout_weixin))
         .route("/api/chat", post(api::chat))
+        .route("/api/cron/jobs", get(api::list_cron_jobs).post(api::add_cron_job))
+        .route("/api/cron/jobs/{id}", axum::routing::delete(api::delete_cron_job))
+        .route("/api/cron/jobs/{id}/toggle", post(api::toggle_cron_job))
+        .route("/api/cron/jobs/{id}/run", post(api::run_cron_job))
         .with_state(state)
 }
 
@@ -589,7 +595,8 @@ impl ChatService for AgentChatService {
 }
 
 pub async fn serve(agent: AgentLoop, host: &str, port: u16) -> Result<()> {
-    let state = AppState::new(Arc::new(AgentChatService::new(agent)));
+    let cron = agent.cron_service().await;
+    let state = AppState::new(Arc::new(AgentChatService::new(agent)), cron);
     let listener = TcpListener::bind(format!("{host}:{port}")).await?;
     axum::serve(listener, build_router(state)).await?;
     Ok(())

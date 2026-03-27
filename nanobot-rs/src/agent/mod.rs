@@ -742,6 +742,11 @@ impl AgentLoop {
         *self.cron.blocking_lock() = Some(cron);
     }
 
+    /// Return the attached cron service, if any.
+    pub async fn cron_service(&self) -> Option<Arc<CronService>> {
+        self.cron.lock().await.clone()
+    }
+
     pub async fn run(&self) {
         self.running.store(true, Ordering::SeqCst);
         while self.running.load(Ordering::SeqCst) {

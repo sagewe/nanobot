@@ -109,6 +109,54 @@ export async function logoutWeixin() {
   return payload;
 }
 
+export async function fetchCronJobs() {
+  const response = await fetch("/api/cron/jobs");
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to load jobs");
+  }
+  return payload.jobs || [];
+}
+
+export async function addCronJob(params) {
+  const response = await fetch("/api/cron/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || t("jobs_add_failed"));
+  }
+  return payload;
+}
+
+export async function deleteCronJob(id) {
+  const response = await fetch(`/api/cron/jobs/${id}`, { method: "DELETE" });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || t("jobs_delete_failed"));
+  }
+}
+
+export async function toggleCronJob(id) {
+  const response = await fetch(`/api/cron/jobs/${id}/toggle`, { method: "POST" });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || t("jobs_toggle_failed"));
+  }
+  return payload;
+}
+
+export async function runCronJob(id) {
+  const response = await fetch(`/api/cron/jobs/${id}/run`, { method: "POST" });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || t("jobs_run_failed"));
+  }
+  return payload;
+}
+
 export async function loadProfiles() {
   try {
     const response = await fetch("/api/profiles");

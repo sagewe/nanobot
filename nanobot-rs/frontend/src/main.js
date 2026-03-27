@@ -12,6 +12,11 @@ import {
   fetchWeixinLoginStatus,
   logoutWeixin,
   loadProfiles,
+  fetchCronJobs,
+  addCronJob,
+  deleteCronJob,
+  toggleCronJob,
+  runCronJob,
 } from "./api.js";
 import {
   setStatus,
@@ -67,6 +72,7 @@ const tabButtons = document.querySelectorAll(".tab-btn");
 const conversationPane = document.querySelector(".conversation-pane");
 const channelsPane = document.querySelector(".channels-pane");
 const sessionsPane = document.querySelector(".sessions-pane");
+const jobsPane = document.querySelector(".jobs-pane");
 const sessionsSearch = document.getElementById("sessions-search");
 const sessionRail = document.querySelector(".session-rail");
 const transcript = document.getElementById("transcript");
@@ -496,6 +502,8 @@ function switchTab(tab) {
   conversationPane.hidden = tab !== "chat";
   sessionsPane.hidden = tab !== "sessions";
   channelsPane.hidden = tab !== "channels";
+  if (jobsPane) jobsPane.hidden = tab !== "jobs";
+  if (tab === "jobs") refreshJobs();
 }
 
 tabButtons.forEach((btn) => {
@@ -913,3 +921,136 @@ Promise.all([
   clearWeixinPollTimer();
   setStatus(error?.message || t("failed_load_sessions"), "error");
 });
+
+// ── Jobs tab ──────────────────────────────────────────────────────────────────
+
+function formatMs(ms) {
+  if (!ms) return "—";
+  return new Date(ms).toLocaleString();
+}
+
+function formatSchedule(schedule) {
+  if (!schedule) return "—";
+  if (schedule.kind === "Every" && schedule.everyMs) {
+    const ms = schedule.everyMs;
+    if (ms % 3600000 === 0) return `every ${ms / 3600000}h`;
+    if (ms % 60000 === 0) return `every ${ms / 60000}m`;
+    if (ms % 1000 === 0) return `every ${ms / 1000}s`;
+    return `every ${ms}ms`;
+  }
+  if (schedule.kind === "Cron" && schedule.expr) {
+    return schedule.tz ? `cron: ${schedule.expr} (${schedule.tz})` : `cron: ${schedule.expr}`;
+  }
+  if (schedule.kind === "At" && schedule.atMs) {
+    return `at ${new Date(schedule.atMs).toLocaleString()}`;
+  }
+  return schedule.kind || "—";
+}
+
+function renderJobsList(jobs) {
+  const list = document.getElementById("jobs-list");
+  if (!list) return;
+  if (!jobs.length) {
+    list.innerHTML = `<div class="jobs-empty">${t("jobs_empty")}</div>`;
+    return;
+  }
+  list.innerHTML = jobs.map((job) => {
+    const timing = formatSchedule(job.schedule);
+    const nextRun = job.state?.nextRunAtMs ? formatMs(job.state.nextRunAtMs) : "—";
+    const lastRun = job.state?.lastRunAtMs ? formatMs(job.state.lastRunAtMs) : "—";
+    const enabledLabel = job.enabled ? t("jobs_toggle_disable") : t("jobs_toggle_enable");
+    const statusBadge = job.enabled
+      ? `<span class="job-badge job-badge--active">on</span>`
+      : `<span class="job-badge job-badge--inactive">off</span>`;
+    return `<div class="job-item" data-id="${job.id}">
+  <div class="job-item-header">
+    <span class="job-name">${job.name}</span>
+    ${statusBadge}
+    <span class="job-timing">${timing}</span>
+  </div>
+  <div class="job-item-meta">
+    <span>${t("jobs_next_run")}: ${nextRun}</span>
+    <span>${t("jobs_last_run")}: ${lastRun}</span>
+  </div>
+  <div class="job-item-actions">
+    <button class="job-run-btn" data-id="${job.id}" title="${t("jobs_run")}">${t("jobs_run")}</button>
+    <button class="job-toggle-btn" data-id="${job.id}">${enabledLabel}</button>
+    <button class="job-delete-btn" data-id="${job.id}">${t("jobs_delete")}</button>
+  </div>
+</div>`;
+  }).join("");
+}
+
+async function refreshJobs() {
+  try {
+    const jobs = await fetchCronJobs();
+    renderJobsList(jobs);
+  } catch (_) {
+    const list = document.getElementById("jobs-list");
+    if (list) list.innerHTML = `<div class="jobs-empty">${t("jobs_empty")}</div>`;
+  }
+}
+
+const jobsRefreshBtn = document.getElementById("jobs-refresh-btn");
+if (jobsRefreshBtn) {
+  jobsRefreshBtn.addEventListener("click", refreshJobs);
+}
+
+const jobsList = document.getElementById("jobs-list");
+if (jobsList) {
+  jobsList.addEventListener("click", async (e) => {
+    const runBtn = e.target.closest(".job-run-btn");
+    if (runBtn) {
+      try { await runCronJob(runBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
+      return;
+    }
+    const toggleBtn = e.target.closest(".job-toggle-btn");
+    if (toggleBtn) {
+      try { await toggleCronJob(toggleBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
+      return;
+    }
+    const deleteBtn = e.target.closest(".job-delete-btn");
+    if (deleteBtn) {
+      if (!confirm(t("jobs_delete_confirm"))) return;
+      try { await deleteCronJob(deleteBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
+    }
+  });
+}
+
+const addJobForm = document.getElementById("add-job-form");
+const jobScheduleType = document.getElementById("job-schedule-type");
+if (jobScheduleType) {
+  jobScheduleType.addEventListener("change", () => {
+    const val = jobScheduleType.value;
+    document.getElementById("job-every-label").hidden = val !== "every";
+    document.getElementById("job-cron-label").hidden = val !== "cron";
+    document.getElementById("job-tz-label").hidden = val !== "cron";
+    document.getElementById("job-at-label").hidden = val !== "at";
+  });
+}
+
+if (addJobForm) {
+  addJobForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const message = document.getElementById("job-message").value.trim();
+    if (!message) return;
+    const schedType = document.getElementById("job-schedule-type").value;
+    const params = { message };
+    if (schedType === "every") {
+      params.every_seconds = parseInt(document.getElementById("job-every-seconds").value, 10);
+    } else if (schedType === "cron") {
+      params.cron_expr = document.getElementById("job-cron-expr").value.trim();
+      const tz = document.getElementById("job-tz").value.trim();
+      if (tz) params.tz = tz;
+    } else if (schedType === "at") {
+      params.at = document.getElementById("job-at").value.trim();
+    }
+    try {
+      await addCronJob(params);
+      addJobForm.reset();
+      await refreshJobs();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+}

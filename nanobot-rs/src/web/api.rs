@@ -5,6 +5,8 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::cron::{CronJob, CronSchedule};
+
 use super::{
     AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary, WebWeixinAccount,
     WebWeixinLoginStatus, WeixinLoginStartResponse, WeixinWorkflowError, WeixinWorkflowErrorKind,
@@ -243,6 +245,115 @@ pub async fn logout_weixin(
         .await
         .map_err(map_weixin_workflow_error)?;
     Ok(Json(account))
+}
+
+// ---------------------------------------------------------------------------
+// Cron API
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct CronJobListResponse {
+    pub jobs: Vec<CronJob>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddCronJobRequest {
+    pub message: String,
+    pub every_seconds: Option<i64>,
+    pub cron_expr: Option<String>,
+    pub tz: Option<String>,
+    pub at: Option<String>,
+    pub channel: Option<String>,
+    pub chat_id: Option<String>,
+}
+
+pub async fn list_cron_jobs(
+    State(state): State<AppState>,
+) -> Result<Json<CronJobListResponse>, ApiError> {
+    let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let jobs = cron.list_jobs(true);
+    Ok(Json(CronJobListResponse { jobs }))
+}
+
+pub async fn add_cron_job(
+    State(state): State<AppState>,
+    Json(req): Json<AddCronJobRequest>,
+) -> Result<Json<CronJob>, ApiError> {
+    let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    if req.message.is_empty() {
+        return Err(ApiError::bad_request("message is required"));
+    }
+    let schedule = if let Some(every_s) = req.every_seconds {
+        CronSchedule::every(every_s * 1000)
+    } else if let Some(expr) = req.cron_expr {
+        CronSchedule::cron(expr, req.tz)
+    } else if let Some(at_str) = req.at {
+        let dt = chrono::DateTime::parse_from_rfc3339(&at_str)
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(&at_str, "%Y-%m-%dT%H:%M:%S")
+                    .map(|ndt| ndt.and_utc().fixed_offset())
+            })
+            .map_err(|_| ApiError::bad_request(format!("invalid datetime: {at_str}")))?;
+        CronSchedule::at(dt.timestamp_millis())
+    } else {
+        return Err(ApiError::bad_request("one of every_seconds, cron_expr, or at is required"));
+    };
+    let delete_after = matches!(schedule.kind, crate::cron::ScheduleKind::At);
+    let name_len = req.message.len().min(30);
+    let job = cron
+        .add_job(
+            &req.message[..name_len],
+            schedule,
+            req.message.clone(),
+            true,
+            req.channel,
+            req.chat_id,
+            delete_after,
+        )
+        .map_err(ApiError::internal)?;
+    Ok(Json(job))
+}
+
+pub async fn delete_cron_job(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    if cron.remove_job(&id) {
+        Ok(Json(json!({ "ok": true })))
+    } else {
+        Err(ApiError::not_found(format!("job {id} not found")))
+    }
+}
+
+pub async fn toggle_cron_job(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<CronJob>, ApiError> {
+    let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    // Find current enabled state, then flip it.
+    let current_enabled = cron
+        .list_jobs(true)
+        .into_iter()
+        .find(|j| j.id == id)
+        .ok_or_else(|| ApiError::not_found(format!("job {id} not found")))?
+        .enabled;
+    let job = cron
+        .enable_job(&id, !current_enabled)
+        .ok_or_else(|| ApiError::not_found(format!("job {id} not found")))?;
+    Ok(Json(job))
+}
+
+pub async fn run_cron_job(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    if cron.run_job(&id, true).await {
+        Ok(Json(json!({ "ok": true })))
+    } else {
+        Err(ApiError::not_found(format!("job {id} not found")))
+    }
 }
 
 pub struct ApiError {
