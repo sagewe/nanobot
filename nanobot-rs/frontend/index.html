@@ -29,6 +29,10 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
               <span class="tab-label" data-i18n="tab_channels">Channels</span>
             </button>
+            <button class="tab-btn" data-tab="jobs" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span class="tab-label" data-i18n="tab_jobs">Jobs</span>
+            </button>
           </div>
           <div class="sidebar-footer">
             <button id="theme-toggle" data-i18n-title="toggle_theme" title="Toggle theme">
@@ -46,6 +50,49 @@
             <input type="search" id="sessions-search" data-i18n-placeholder="sessions_search_placeholder" placeholder="Filter sessions…" autocomplete="off" />
           </div>
           <div id="sessions-list" class="sessions-list"></div>
+        </section>
+        <section class="jobs-pane" hidden>
+          <div class="jobs-header">
+            <h2 class="jobs-title" data-i18n="jobs_title">Scheduled Jobs</h2>
+            <button id="jobs-refresh-btn" type="button" data-i18n-title="jobs_refresh" title="Refresh">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+          </div>
+          <div id="jobs-list" class="jobs-list"></div>
+          <details class="jobs-add-form">
+            <summary data-i18n="jobs_add">Add Job</summary>
+            <form id="add-job-form">
+              <label>
+                <span data-i18n="jobs_message">Message</span>
+                <textarea id="job-message" rows="2" required></textarea>
+              </label>
+              <label>
+                <span data-i18n="jobs_schedule_type">Schedule type</span>
+                <select id="job-schedule-type">
+                  <option value="every" data-i18n="jobs_schedule_every">Every N seconds</option>
+                  <option value="cron" data-i18n="jobs_schedule_cron">Cron expression</option>
+                  <option value="at" data-i18n="jobs_schedule_at">One-time (at datetime)</option>
+                </select>
+              </label>
+              <label id="job-every-label">
+                <span data-i18n="jobs_every_seconds">Interval (seconds)</span>
+                <input type="number" id="job-every-seconds" min="1" value="3600" />
+              </label>
+              <label id="job-cron-label" hidden>
+                <span data-i18n="jobs_cron_expr">Cron expression</span>
+                <input type="text" id="job-cron-expr" placeholder="0 9 * * *" />
+              </label>
+              <label id="job-tz-label" hidden>
+                <span data-i18n="jobs_tz">Timezone (optional)</span>
+                <input type="text" id="job-tz" placeholder="America/Vancouver" />
+              </label>
+              <label id="job-at-label" hidden>
+                <span data-i18n="jobs_at">Date/time (ISO)</span>
+                <input type="text" id="job-at" placeholder="2026-01-01T09:00:00" />
+              </label>
+              <button type="submit" data-i18n="jobs_add_submit">Add Job</button>
+            </form>
+          </details>
         </section>
         <section class="channels-pane" hidden>
           <section id="weixin-account-panel" class="account-panel">
