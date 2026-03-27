@@ -113,7 +113,7 @@ export async function fetchCronJobs() {
   const response = await fetch("/api/cron/jobs");
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error || "Failed to load jobs");
+    throw new Error(payload.error || t("jobs_load_failed"));
   }
   return payload.jobs || [];
 }

@@ -404,6 +404,29 @@ impl CronService {
         }
     }
 
+    /// Toggle a job's enabled state atomically.  Returns the updated job or
+    /// `None` if no job with that ID exists.
+    pub fn toggle_job(&self, job_id: &str) -> Option<CronJob> {
+        let mut inner = self.inner.lock().unwrap();
+        self.load_store_locked(&mut inner);
+        let now = now_ms();
+        if let Some(job) = inner.store.jobs.iter_mut().find(|j| j.id == job_id) {
+            job.enabled = !job.enabled;
+            job.updated_at_ms = now;
+            job.state.next_run_at_ms = if job.enabled {
+                compute_next_run(&job.schedule, now)
+            } else {
+                None
+            };
+            let result = job.clone();
+            self.save_store_locked(&inner);
+            self.notify.notify_waiters();
+            Some(result)
+        } else {
+            None
+        }
+    }
+
     /// Manually trigger a job regardless of its schedule.
     pub async fn run_job(self: &Arc<Self>, job_id: &str, force: bool) -> bool {
         let job = {

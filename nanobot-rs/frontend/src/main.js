@@ -502,7 +502,7 @@ function switchTab(tab) {
   conversationPane.hidden = tab !== "chat";
   sessionsPane.hidden = tab !== "sessions";
   channelsPane.hidden = tab !== "channels";
-  if (jobsPane) jobsPane.hidden = tab !== "jobs";
+  jobsPane.hidden = tab !== "jobs";
   if (tab === "jobs") refreshJobs();
 }
 
@@ -924,6 +924,10 @@ Promise.all([
 
 // ── Jobs tab ──────────────────────────────────────────────────────────────────
 
+function escapeHtml(str) {
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function formatMs(ms) {
   if (!ms) return "—";
   return new Date(ms).toLocaleString();
@@ -948,14 +952,12 @@ function formatSchedule(schedule) {
 }
 
 function renderJobsList(jobs) {
-  const list = document.getElementById("jobs-list");
-  if (!list) return;
   if (!jobs.length) {
-    list.innerHTML = `<div class="jobs-empty">${t("jobs_empty")}</div>`;
+    jobsList.innerHTML = `<div class="jobs-empty">${t("jobs_empty")}</div>`;
     return;
   }
-  list.innerHTML = jobs.map((job) => {
-    const timing = formatSchedule(job.schedule);
+  jobsList.innerHTML = jobs.map((job) => {
+    const timing = escapeHtml(formatSchedule(job.schedule));
     const nextRun = job.state?.nextRunAtMs ? formatMs(job.state.nextRunAtMs) : "—";
     const lastRun = job.state?.lastRunAtMs ? formatMs(job.state.lastRunAtMs) : "—";
     const enabledLabel = job.enabled ? t("jobs_toggle_disable") : t("jobs_toggle_enable");
@@ -964,7 +966,7 @@ function renderJobsList(jobs) {
       : `<span class="job-badge job-badge--inactive">off</span>`;
     return `<div class="job-item" data-id="${job.id}">
   <div class="job-item-header">
-    <span class="job-name">${job.name}</span>
+    <span class="job-name">${escapeHtml(job.name)}</span>
     ${statusBadge}
     <span class="job-timing">${timing}</span>
   </div>
@@ -986,71 +988,63 @@ async function refreshJobs() {
     const jobs = await fetchCronJobs();
     renderJobsList(jobs);
   } catch (_) {
-    const list = document.getElementById("jobs-list");
-    if (list) list.innerHTML = `<div class="jobs-empty">${t("jobs_empty")}</div>`;
+    jobsList.innerHTML = `<div class="jobs-empty">${t("jobs_empty")}</div>`;
   }
 }
 
 const jobsRefreshBtn = document.getElementById("jobs-refresh-btn");
-if (jobsRefreshBtn) {
-  jobsRefreshBtn.addEventListener("click", refreshJobs);
-}
+jobsRefreshBtn.addEventListener("click", refreshJobs);
 
 const jobsList = document.getElementById("jobs-list");
-if (jobsList) {
-  jobsList.addEventListener("click", async (e) => {
-    const runBtn = e.target.closest(".job-run-btn");
-    if (runBtn) {
-      try { await runCronJob(runBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
-      return;
-    }
-    const toggleBtn = e.target.closest(".job-toggle-btn");
-    if (toggleBtn) {
-      try { await toggleCronJob(toggleBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
-      return;
-    }
-    const deleteBtn = e.target.closest(".job-delete-btn");
-    if (deleteBtn) {
-      if (!confirm(t("jobs_delete_confirm"))) return;
-      try { await deleteCronJob(deleteBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
-    }
-  });
-}
+jobsList.addEventListener("click", async (e) => {
+  const runBtn = e.target.closest(".job-run-btn");
+  if (runBtn) {
+    try { await runCronJob(runBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
+    return;
+  }
+  const toggleBtn = e.target.closest(".job-toggle-btn");
+  if (toggleBtn) {
+    try { await toggleCronJob(toggleBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
+    return;
+  }
+  const deleteBtn = e.target.closest(".job-delete-btn");
+  if (deleteBtn) {
+    if (!confirm(t("jobs_delete_confirm"))) return;
+    try { await deleteCronJob(deleteBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
+  }
+});
 
 const addJobForm = document.getElementById("add-job-form");
 const jobScheduleType = document.getElementById("job-schedule-type");
-if (jobScheduleType) {
-  jobScheduleType.addEventListener("change", () => {
-    const val = jobScheduleType.value;
-    document.getElementById("job-every-label").hidden = val !== "every";
-    document.getElementById("job-cron-label").hidden = val !== "cron";
-    document.getElementById("job-tz-label").hidden = val !== "cron";
-    document.getElementById("job-at-label").hidden = val !== "at";
-  });
-}
+jobScheduleType.addEventListener("change", () => {
+  const val = jobScheduleType.value;
+  document.getElementById("job-every-label").hidden = val !== "every";
+  document.getElementById("job-cron-label").hidden = val !== "cron";
+  document.getElementById("job-tz-label").hidden = val !== "cron";
+  document.getElementById("job-at-label").hidden = val !== "at";
+});
 
-if (addJobForm) {
-  addJobForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const message = document.getElementById("job-message").value.trim();
-    if (!message) return;
-    const schedType = document.getElementById("job-schedule-type").value;
-    const params = { message };
-    if (schedType === "every") {
-      params.every_seconds = parseInt(document.getElementById("job-every-seconds").value, 10);
-    } else if (schedType === "cron") {
-      params.cron_expr = document.getElementById("job-cron-expr").value.trim();
-      const tz = document.getElementById("job-tz").value.trim();
-      if (tz) params.tz = tz;
-    } else if (schedType === "at") {
-      params.at = document.getElementById("job-at").value.trim();
-    }
-    try {
-      await addCronJob(params);
-      addJobForm.reset();
-      await refreshJobs();
-    } catch (err) {
-      alert(err.message);
-    }
-  });
-}
+addJobForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const message = document.getElementById("job-message").value.trim();
+  if (!message) return;
+  const schedType = document.getElementById("job-schedule-type").value;
+  const params = { message };
+  if (schedType === "every") {
+    params.every_seconds = parseInt(document.getElementById("job-every-seconds").value, 10);
+  } else if (schedType === "cron") {
+    params.cron_expr = document.getElementById("job-cron-expr").value.trim();
+    const tz = document.getElementById("job-tz").value.trim();
+    if (tz) params.tz = tz;
+  } else if (schedType === "at") {
+    params.at = document.getElementById("job-at").value.trim();
+  }
+  try {
+    await addCronJob(params);
+    addJobForm.reset();
+    setStatus(t("jobs_add_success"), "idle");
+    await refreshJobs();
+  } catch (err) {
+    alert(err.message);
+  }
+});

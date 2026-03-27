@@ -331,15 +331,8 @@ pub async fn toggle_cron_job(
     State(state): State<AppState>,
 ) -> Result<Json<CronJob>, ApiError> {
     let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
-    // Find current enabled state, then flip it.
-    let current_enabled = cron
-        .list_jobs(true)
-        .into_iter()
-        .find(|j| j.id == id)
-        .ok_or_else(|| ApiError::not_found(format!("job {id} not found")))?
-        .enabled;
     let job = cron
-        .enable_job(&id, !current_enabled)
+        .toggle_job(&id)
         .ok_or_else(|| ApiError::not_found(format!("job {id} not found")))?;
     Ok(Json(job))
 }

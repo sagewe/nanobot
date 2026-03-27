@@ -110,6 +110,7 @@ export const TRANSLATIONS = {
     jobs_toggle_failed: "Failed to toggle job",
     jobs_next_run: "Next run",
     jobs_last_run: "Last run",
+    jobs_load_failed: "Failed to load jobs",
   },
   zh: {
     app_name: "Pikachu",
@@ -222,6 +223,7 @@ export const TRANSLATIONS = {
     jobs_toggle_failed: "\u5207\u6362\u4efb\u52a1\u72b6\u6001\u5931\u8d25",
     jobs_next_run: "\u4e0b\u6b21\u6267\u884c",
     jobs_last_run: "\u4e0a\u6b21\u6267\u884c",
+    jobs_load_failed: "\u52a0\u8f7d\u4efb\u52a1\u5931\u8d25",
   },
 };
 
