@@ -17,6 +17,7 @@ use walkdir::WalkDir;
 use crate::agent::SubagentManager;
 use crate::bus::{MessageBus, OutboundMessage};
 use crate::config::WebToolsConfig;
+use crate::cron::{CronSchedule, CronService};
 use crate::providers::ProviderRequestDescriptor;
 use crate::security::network::contains_internal_url;
 
@@ -36,6 +37,7 @@ fn take_last_chars(input: &str, max_chars: usize) -> String {
 pub struct ToolContext {
     pub channel: String,
     pub chat_id: String,
+    pub session_key: String,
     pub message_id: Option<String>,
     pub reply_to_caller: bool,
     pub provider_request: Option<ProviderRequestDescriptor>,
@@ -883,6 +885,7 @@ pub async fn build_default_tools(
     restrict_to_workspace: bool,
     subagent_manager: SubagentManager,
     web: WebToolsConfig,
+    cron: Option<Arc<CronService>>,
 ) -> ToolRegistry {
     let registry = ToolRegistry::new();
     registry
@@ -910,6 +913,9 @@ pub async fn build_default_tools(
     registry.register(WebFetchTool::new(web.fetch)).await;
     registry.register(MessageTool::new(bus)).await;
     registry.register(SpawnTool::new(subagent_manager)).await;
+    if let Some(cron) = cron {
+        registry.register(CronTool::new(cron)).await;
+    }
     registry
 }
 
@@ -960,4 +966,265 @@ pub fn system_message(content: &str) -> Value {
         "role": "system",
         "content": content,
     })
+}
+
+// ---------------------------------------------------------------------------
+// CronTool — lets the agent manage scheduled jobs
+// ---------------------------------------------------------------------------
+
+/// Tool that exposes add / list / remove cron job operations to the agent.
+pub struct CronTool {
+    cron: Arc<CronService>,
+    context: Mutex<ToolContext>,
+}
+
+impl CronTool {
+    pub fn new(cron: Arc<CronService>) -> Self {
+        Self {
+            cron,
+            context: Mutex::new(ToolContext::default()),
+        }
+    }
+
+    fn is_cron_context(session_key: &str) -> bool {
+        session_key.starts_with("cron:")
+    }
+
+    fn add_job(
+        &self,
+        message: &str,
+        every_seconds: Option<i64>,
+        cron_expr: Option<&str>,
+        tz: Option<&str>,
+        at: Option<&str>,
+        channel: &str,
+        chat_id: &str,
+    ) -> String {
+        if message.is_empty() {
+            return "Error: message is required for add".to_string();
+        }
+        if channel.is_empty() || chat_id.is_empty() {
+            return "Error: no session context (channel/chat_id)".to_string();
+        }
+        if tz.is_some() && cron_expr.is_none() {
+            return "Error: tz can only be used with cron_expr".to_string();
+        }
+
+        let (schedule, delete_after) = if let Some(every_s) = every_seconds {
+            if every_s <= 0 {
+                return "Error: every_seconds must be positive".to_string();
+            }
+            (CronSchedule::every(every_s * 1000), false)
+        } else if let Some(expr) = cron_expr {
+            (CronSchedule::cron(expr, tz.map(str::to_string)), false)
+        } else if let Some(at_str) = at {
+            // Parse ISO datetime
+            let ts_ms = parse_iso_datetime_ms(at_str);
+            match ts_ms {
+                Ok(ms) => (CronSchedule::at(ms), true),
+                Err(e) => return format!("Error: {e}"),
+            }
+        } else {
+            return "Error: either every_seconds, cron_expr, or at is required".to_string();
+        };
+
+        match self.cron.add_job(
+            message.chars().take(30).collect::<String>(),
+            schedule,
+            message,
+            true,
+            Some(channel.to_string()),
+            Some(chat_id.to_string()),
+            delete_after,
+        ) {
+            Ok(job) => format!("Created job '{}' (id: {})", job.name, job.id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    fn list_jobs(&self) -> String {
+        let jobs = self.cron.list_jobs(false);
+        if jobs.is_empty() {
+            return "No scheduled jobs.".to_string();
+        }
+        let mut lines = vec!["Scheduled jobs:".to_string()];
+        for j in &jobs {
+            let timing = format_schedule_timing(&j.schedule);
+            lines.push(format!("- {} (id: {}, {})", j.name, j.id, timing));
+            if let Some(last_ms) = j.state.last_run_at_ms {
+                let last = chrono::DateTime::from_timestamp_millis(last_ms)
+                    .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                    .unwrap_or_default();
+                let status = j.state.last_status.as_deref().unwrap_or("unknown");
+                let err = j
+                    .state
+                    .last_error
+                    .as_deref()
+                    .map(|e| format!(" ({e})"))
+                    .unwrap_or_default();
+                lines.push(format!("  Last run: {last} — {status}{err}"));
+            }
+            if let Some(next_ms) = j.state.next_run_at_ms {
+                let next = chrono::DateTime::from_timestamp_millis(next_ms)
+                    .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                    .unwrap_or_default();
+                lines.push(format!("  Next run: {next}"));
+            }
+        }
+        lines.join("\n")
+    }
+
+    fn remove_job(&self, job_id: Option<&str>) -> String {
+        let Some(id) = job_id else {
+            return "Error: job_id is required for remove".to_string();
+        };
+        if self.cron.remove_job(id) {
+            format!("Removed job {id}")
+        } else {
+            format!("Job {id} not found")
+        }
+    }
+}
+
+fn format_schedule_timing(schedule: &CronSchedule) -> String {
+    use crate::cron::ScheduleKind;
+    match schedule.kind {
+        ScheduleKind::Cron => {
+            let expr = schedule.expr.as_deref().unwrap_or("");
+            let tz = schedule
+                .tz
+                .as_deref()
+                .map(|t| format!(" ({t})"))
+                .unwrap_or_default();
+            format!("cron: {expr}{tz}")
+        }
+        ScheduleKind::Every => {
+            let ms = schedule.every_ms.unwrap_or(0);
+            if ms % 3_600_000 == 0 {
+                format!("every {}h", ms / 3_600_000)
+            } else if ms % 60_000 == 0 {
+                format!("every {}m", ms / 60_000)
+            } else if ms % 1_000 == 0 {
+                format!("every {}s", ms / 1_000)
+            } else {
+                format!("every {ms}ms")
+            }
+        }
+        ScheduleKind::At => {
+            let dt = schedule
+                .at_ms
+                .and_then(chrono::DateTime::from_timestamp_millis)
+                .map(|dt: chrono::DateTime<chrono::Utc>| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                .unwrap_or_default();
+            format!("at {dt}")
+        }
+    }
+}
+
+fn parse_iso_datetime_ms(s: &str) -> Result<i64, String> {
+    // Try with timezone suffix first, then assume local time.
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.timestamp_millis());
+    }
+    // Try naive datetime and treat as local.
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        use chrono::TimeZone;
+        let dt = chrono::Local.from_local_datetime(&ndt).earliest();
+        if let Some(dt) = dt {
+            return Ok(dt.timestamp_millis());
+        }
+    }
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        use chrono::TimeZone;
+        let dt = chrono::Local.from_local_datetime(&ndt).earliest();
+        if let Some(dt) = dt {
+            return Ok(dt.timestamp_millis());
+        }
+    }
+    Err(format!(
+        "invalid datetime '{s}'. Expected ISO format, e.g. '2026-03-01T09:00:00'"
+    ))
+}
+
+#[async_trait]
+impl Tool for CronTool {
+    fn name(&self) -> &'static str {
+        "cron"
+    }
+
+    fn description(&self) -> &'static str {
+        "Schedule reminders and recurring tasks. Actions: add, list, remove."
+    }
+
+    fn schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["add", "list", "remove"],
+                    "description": "Action to perform"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Reminder message or task instruction (required for add)"
+                },
+                "every_seconds": {
+                    "type": "integer",
+                    "description": "Repeat interval in seconds (for recurring jobs)"
+                },
+                "cron_expr": {
+                    "type": "string",
+                    "description": "Standard 5-field cron expression, e.g. '0 9 * * *'"
+                },
+                "tz": {
+                    "type": "string",
+                    "description": "IANA timezone for cron expressions, e.g. 'America/Vancouver'"
+                },
+                "at": {
+                    "type": "string",
+                    "description": "ISO datetime for a one-time job, e.g. '2026-06-01T09:00:00'"
+                },
+                "job_id": {
+                    "type": "string",
+                    "description": "Job ID (required for remove)"
+                }
+            },
+            "required": ["action"]
+        })
+    }
+
+    async fn set_context(&self, context: ToolContext) {
+        *self.context.lock().await = context;
+    }
+
+    async fn execute(&self, args: Value) -> String {
+        let action = args
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let ctx = self.context.lock().await.clone();
+
+        match action.as_str() {
+            "add" => {
+                if Self::is_cron_context(&ctx.session_key) {
+                    return "Error: cannot schedule new jobs from within a cron job execution"
+                        .to_string();
+                }
+                self.add_job(
+                    args.get("message").and_then(Value::as_str).unwrap_or(""),
+                    args.get("every_seconds").and_then(Value::as_i64),
+                    args.get("cron_expr").and_then(Value::as_str),
+                    args.get("tz").and_then(Value::as_str),
+                    args.get("at").and_then(Value::as_str),
+                    &ctx.channel,
+                    &ctx.chat_id,
+                )
+            }
+            "list" => self.list_jobs(),
+            "remove" => self.remove_job(args.get("job_id").and_then(Value::as_str)),
+            other => format!("Unknown action: {other}"),
+        }
+    }
 }

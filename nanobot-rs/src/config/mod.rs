@@ -544,10 +544,27 @@ pub struct WebToolsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
+pub struct HeartbeatConfig {
+    pub enabled: bool,
+    pub interval_s: u64,
+}
+
+impl Default for HeartbeatConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_s: 30 * 60,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct ToolsConfig {
     pub exec: ExecToolConfig,
     pub restrict_to_workspace: bool,
     pub web: WebToolsConfig,
+    pub heartbeat: HeartbeatConfig,
 }
 
 impl Default for ToolsConfig {
@@ -556,6 +573,7 @@ impl Default for ToolsConfig {
             exec: ExecToolConfig::default(),
             restrict_to_workspace: false,
             web: WebToolsConfig::default(),
+            heartbeat: HeartbeatConfig::default(),
         }
     }
 }
