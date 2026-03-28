@@ -45,8 +45,8 @@ pub struct ToolContext {
 
 #[async_trait]
 pub trait Tool: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn description(&self) -> &'static str;
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
     fn schema(&self) -> Value;
 
     async fn execute(&self, args: Value) -> String;
@@ -185,10 +185,10 @@ impl ReadFileTool {
 
 #[async_trait]
 impl Tool for ReadFileTool {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "read_file"
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Read a file with line numbers and pagination."
     }
     fn schema(&self) -> Value {
@@ -268,10 +268,10 @@ impl WriteFileTool {
 
 #[async_trait]
 impl Tool for WriteFileTool {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "write_file"
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Write content to a file."
     }
     fn schema(&self) -> Value {
@@ -357,10 +357,10 @@ impl EditFileTool {
 
 #[async_trait]
 impl Tool for EditFileTool {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "edit_file"
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Edit a file by replacing old_text with new_text."
     }
     fn schema(&self) -> Value {
@@ -453,10 +453,10 @@ impl ListDirTool {
 
 #[async_trait]
 impl Tool for ListDirTool {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "list_dir"
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "List directory contents, optionally recursively."
     }
     fn schema(&self) -> Value {
@@ -633,10 +633,10 @@ fn extract_absolute_paths(command: &str) -> Vec<String> {
 
 #[async_trait]
 impl Tool for ExecTool {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "exec"
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Execute a shell command and return its output."
     }
     fn schema(&self) -> Value {
@@ -738,10 +738,10 @@ impl MessageTool {
 
 #[async_trait]
 impl Tool for MessageTool {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "message"
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Send a message to the user."
     }
     fn schema(&self) -> Value {
@@ -830,10 +830,10 @@ impl SpawnTool {
 
 #[async_trait]
 impl Tool for SpawnTool {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "spawn"
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Spawn a background subagent for a longer task."
     }
     fn schema(&self) -> Value {
@@ -1148,11 +1148,11 @@ fn parse_iso_datetime_ms(s: &str) -> Result<i64, String> {
 
 #[async_trait]
 impl Tool for CronTool {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "cron"
     }
 
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Schedule reminders and recurring tasks. Actions: add, list, remove."
     }
 

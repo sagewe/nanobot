@@ -558,6 +558,46 @@ impl Default for HeartbeatConfig {
     }
 }
 
+/// Configuration for a single MCP server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct McpServerConfig {
+    /// Transport type: "stdio", "sse", or "streamableHttp".
+    /// Inferred from `command`/`url` when absent.
+    #[serde(rename = "type")]
+    pub transport_type: Option<String>,
+    /// Command to spawn for stdio transport.
+    pub command: Option<String>,
+    /// Arguments for the stdio command.
+    pub args: Vec<String>,
+    /// Extra environment variables for the stdio process.
+    pub env: HashMap<String, String>,
+    /// URL for SSE / streamable-HTTP transport.
+    pub url: Option<String>,
+    /// Additional HTTP headers (SSE / streamable-HTTP only).
+    pub headers: HashMap<String, String>,
+    /// Tool names (raw or `mcp_{server}_{name}`) to expose.
+    /// `["*"]` (the default) exposes all tools.
+    pub enabled_tools: Vec<String>,
+    /// Per-call timeout in seconds.
+    pub tool_timeout: u64,
+}
+
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            transport_type: None,
+            command: None,
+            args: Vec::new(),
+            env: HashMap::new(),
+            url: None,
+            headers: HashMap::new(),
+            enabled_tools: vec!["*".to_string()],
+            tool_timeout: 30,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ToolsConfig {
@@ -565,6 +605,8 @@ pub struct ToolsConfig {
     pub restrict_to_workspace: bool,
     pub web: WebToolsConfig,
     pub heartbeat: HeartbeatConfig,
+    /// MCP server connections.  Keys are arbitrary server names.
+    pub mcp: HashMap<String, McpServerConfig>,
 }
 
 impl Default for ToolsConfig {
@@ -574,6 +616,7 @@ impl Default for ToolsConfig {
             restrict_to_workspace: false,
             web: WebToolsConfig::default(),
             heartbeat: HeartbeatConfig::default(),
+            mcp: HashMap::new(),
         }
     }
 }

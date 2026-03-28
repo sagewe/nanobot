@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::cron::CronService;
+use crate::mcp::McpClients;
 
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -613,6 +614,7 @@ pub struct AgentLoop {
     pending_btw_stale: Arc<Mutex<HashMap<String, PendingBtwStale>>>,
     running: Arc<AtomicBool>,
     cron: Arc<Mutex<Option<Arc<CronService>>>>,
+    mcp: Arc<Mutex<Option<McpClients>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -734,6 +736,7 @@ impl AgentLoop {
             pending_btw_stale: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(AtomicBool::new(false)),
             cron: Arc::new(Mutex::new(None)),
+            mcp: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -745,6 +748,11 @@ impl AgentLoop {
     /// Return the attached cron service, if any.
     pub async fn cron_service(&self) -> Option<Arc<CronService>> {
         self.cron.lock().await.clone()
+    }
+
+    /// Attach MCP clients so their tools are available to the agent.
+    pub async fn attach_mcp(&self, clients: McpClients) {
+        *self.mcp.lock().await = Some(clients);
     }
 
     pub async fn run(&self) {
@@ -1632,7 +1640,7 @@ impl AgentLoop {
 
     async fn build_tools(&self) -> ToolRegistry {
         let cron = self.cron.lock().await.clone();
-        build_default_tools(
+        let registry = build_default_tools(
             self.workspace.clone(),
             self.bus.clone(),
             self.exec_timeout,
@@ -1641,7 +1649,11 @@ impl AgentLoop {
             self.web_tools.clone(),
             cron,
         )
-        .await
+        .await;
+        if let Some(mcp) = &*self.mcp.lock().await {
+            mcp.register_tools(&registry).await;
+        }
+        registry
     }
 
     async fn session_lock(&self, session_key: &str) -> Arc<Mutex<()>> {
@@ -2194,6 +2206,7 @@ impl Clone for AgentLoop {
             pending_btw_stale: self.pending_btw_stale.clone(),
             running: self.running.clone(),
             cron: self.cron.clone(),
+            mcp: self.mcp.clone(),
         }
     }
 }
