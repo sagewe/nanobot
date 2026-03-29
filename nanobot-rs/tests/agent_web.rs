@@ -107,6 +107,7 @@ async fn build_default_tools_exposes_web_search_and_web_fetch() {
         false,
         subagents,
         WebToolsConfig::default(),
+        None,
     )
     .await;
     let defs = tools.definitions().await;

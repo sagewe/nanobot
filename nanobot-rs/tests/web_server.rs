@@ -49,7 +49,7 @@ impl ChatService for StaticChatService {
 }
 
 fn test_state() -> AppState {
-    AppState::new(Arc::new(StaticChatService))
+    AppState::new(Arc::new(StaticChatService), None)
 }
 
 #[derive(Clone)]
@@ -86,14 +86,14 @@ fn test_state_with_reply(reply: &str) -> AppState {
     AppState::new(Arc::new(ReplyChatService {
         reply: reply.to_string(),
         persisted: true,
-    }))
+    }), None)
 }
 
 fn test_state_with_ephemeral_reply(reply: &str) -> AppState {
     AppState::new(Arc::new(ReplyChatService {
         reply: reply.to_string(),
         persisted: false,
-    }))
+    }), None)
 }
 
 #[derive(Clone)]
@@ -120,7 +120,7 @@ impl ChatService for ErrorChatService {
 }
 
 fn test_state_with_error() -> AppState {
-    AppState::new(Arc::new(ErrorChatService))
+    AppState::new(Arc::new(ErrorChatService), None)
 }
 
 #[derive(Clone)]
@@ -210,7 +210,7 @@ async fn build_test_router_with_weixin_account_state(account: WeixinAccountState
     store.save_account(&account).expect("save account");
     web::build_router(AppState::new(Arc::new(WeixinAccountChatService::new(
         true, dir, store,
-    ))))
+    )), None))
 }
 
 fn sample_weixin_account() -> WeixinAccountState {
@@ -283,7 +283,7 @@ async fn agent_app(dir: &TempDir, responses: Vec<LlmResponse>) -> Router {
     )
     .await
     .expect("agent");
-    web::build_router(AppState::new(Arc::new(AgentChatService::new(agent))))
+    web::build_router(AppState::new(Arc::new(AgentChatService::new(agent)), None))
 }
 
 async fn agent_app_with_config(
@@ -297,7 +297,7 @@ async fn agent_app_with_config(
     let agent = AgentLoop::from_config(bus, provider, config)
         .await
         .expect("agent");
-    web::build_router(AppState::new(Arc::new(AgentChatService::new(agent))))
+    web::build_router(AppState::new(Arc::new(AgentChatService::new(agent)), None))
 }
 
 async fn agent_app_with_profiles(
@@ -333,7 +333,7 @@ async fn agent_app_with_profiles(
     let agent = AgentLoop::from_config(bus, provider, config)
         .await
         .expect("agent");
-    web::build_router(AppState::new(Arc::new(AgentChatService::new(agent))))
+    web::build_router(AppState::new(Arc::new(AgentChatService::new(agent)), None))
 }
 
 #[derive(Clone, Default)]
