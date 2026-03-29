@@ -1,31 +1,45 @@
+use std::path::Path;
 use std::process::Command;
 
 fn main() {
-    // Tell cargo to re-run if frontend source changes
-    println!("cargo:rerun-if-changed=frontend/src/main.js");
-    println!("cargo:rerun-if-changed=frontend/src/style.css");
-    println!("cargo:rerun-if-changed=frontend/index.html");
+    // Re-run this build script when any frontend source file changes.
+    // Cargo watches these paths and only re-invokes build.rs when they differ.
+    let sources = [
+        "frontend/index.html",
+        "frontend/src/main.js",
+        "frontend/src/render.js",
+        "frontend/src/style.css",
+        "frontend/src/api.js",
+        "frontend/src/i18n.js",
+        "frontend/package.json",
+    ];
+    for src in &sources {
+        println!("cargo:rerun-if-changed={src}");
+    }
 
-    // Only build if dist doesn't exist or sources changed
-    let dist = std::path::Path::new("frontend/dist");
+    let frontend_dir = Path::new("frontend");
 
-    // Run npm install if node_modules missing
-    if !std::path::Path::new("frontend/node_modules").exists() {
+    // Skip frontend build when the frontend directory is missing (e.g. in
+    // downstream crate consumers or CI jobs that don't need it).
+    if !frontend_dir.exists() {
+        return;
+    }
+
+    // Run `npm install` only when node_modules is absent.
+    if !frontend_dir.join("node_modules").exists() {
         let status = Command::new("npm")
             .args(["install"])
-            .current_dir("frontend")
+            .current_dir(frontend_dir)
             .status()
-            .expect("failed to run npm install");
+            .expect("failed to run npm install — is Node.js installed?");
         assert!(status.success(), "npm install failed");
     }
 
-    // Run vite build
+    // Run `npm run build` (vite) to produce frontend/dist/.
     let status = Command::new("npm")
         .args(["run", "build"])
-        .current_dir("frontend")
+        .current_dir(frontend_dir)
         .status()
-        .expect("failed to run vite build");
+        .expect("failed to run npm run build — is Node.js installed?");
     assert!(status.success(), "vite build failed");
-
-    let _ = dist;
 }
