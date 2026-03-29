@@ -115,11 +115,11 @@ impl WebSearchTool {
 
 #[async_trait]
 impl Tool for WebSearchTool {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "web_search"
     }
 
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Search the web and return a concise list of results."
     }
 
@@ -188,11 +188,11 @@ impl WebFetchTool {
 
 #[async_trait]
 impl Tool for WebFetchTool {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "web_fetch"
     }
 
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Fetch a web page or text resource and return extracted content as JSON."
     }
 

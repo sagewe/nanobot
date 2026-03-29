@@ -12,6 +12,7 @@ use crate::channels::ChannelManager;
 use crate::config::{Config, default_workspace_path, load_config, save_config};
 use crate::cron::{CronJob, CronService};
 use crate::heartbeat::HeartbeatService;
+use crate::mcp::connect_mcp_servers;
 use crate::providers::build_provider_from_config;
 use crate::web;
 
@@ -142,6 +143,11 @@ async fn agent(
     let bus = MessageBus::new(128);
     let provider = build_provider_from_config(&config)?;
     let agent = AgentLoop::from_config(bus.clone(), provider, config.clone()).await?;
+
+    if !config.tools.mcp.is_empty() {
+        let mcp_clients = connect_mcp_servers(&config.tools.mcp).await;
+        agent.attach_mcp(mcp_clients).await;
+    }
 
     if let Some(message) = message {
         let (channel, chat_id) = parse_session(&session);
@@ -290,6 +296,11 @@ async fn gateway(args: GatewayArgs) -> Result<()> {
     let bus = MessageBus::new(256);
     let provider = build_provider_from_config(&config)?;
     let agent = AgentLoop::from_config(bus.clone(), provider.clone(), config.clone()).await?;
+
+    if !config.tools.mcp.is_empty() {
+        let mcp_clients = connect_mcp_servers(&config.tools.mcp).await;
+        agent.attach_mcp(mcp_clients).await;
+    }
 
     // -----------------------------------------------------------------------
     // Cron service
