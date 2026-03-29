@@ -59,9 +59,13 @@
             </button>
           </div>
           <div id="jobs-list" class="jobs-list"></div>
-          <details class="jobs-add-form">
+          <details class="jobs-add-form" id="jobs-add-details">
             <summary data-i18n="jobs_add">Add Job</summary>
             <form id="add-job-form">
+              <label>
+                <span data-i18n="jobs_name">Name (optional)</span>
+                <input type="text" id="job-name" data-i18n-placeholder="jobs_name_placeholder" placeholder="Give this task a short name" />
+              </label>
               <label>
                 <span data-i18n="jobs_message">Message</span>
                 <textarea id="job-message" rows="2" required></textarea>
@@ -75,20 +79,33 @@
                 </select>
               </label>
               <label id="job-every-label">
-                <span data-i18n="jobs_every_seconds">Interval (seconds)</span>
-                <input type="number" id="job-every-seconds" min="1" value="3600" />
+                <span data-i18n="jobs_interval">Interval</span>
+                <div class="job-interval-row">
+                  <input type="number" id="job-every-value" min="1" value="1" />
+                  <select id="job-every-unit">
+                    <option value="60" data-i18n="jobs_unit_minutes">Minutes</option>
+                    <option value="3600" selected data-i18n="jobs_unit_hours">Hours</option>
+                    <option value="86400" data-i18n="jobs_unit_days">Days</option>
+                    <option value="1" data-i18n="jobs_unit_seconds">Seconds</option>
+                  </select>
+                </div>
               </label>
               <label id="job-cron-label" hidden>
                 <span data-i18n="jobs_cron_expr">Cron expression</span>
                 <input type="text" id="job-cron-expr" placeholder="0 9 * * *" />
               </label>
               <label id="job-tz-label" hidden>
-                <span data-i18n="jobs_tz">Timezone (optional)</span>
-                <input type="text" id="job-tz" placeholder="America/Vancouver" />
+                <span data-i18n="jobs_tz">Timezone</span>
+                <div class="job-tz-search-wrap">
+                  <input type="text" id="job-tz-search" data-i18n-placeholder="jobs_tz_search" placeholder="Filter timezones…" autocomplete="off" />
+                  <select id="job-tz" size="6">
+                    <option value="">— auto (local) —</option>
+                  </select>
+                </div>
               </label>
               <label id="job-at-label" hidden>
-                <span data-i18n="jobs_at">Date/time (ISO)</span>
-                <input type="text" id="job-at" placeholder="2026-01-01T09:00:00" />
+                <span data-i18n="jobs_at">Date/time</span>
+                <input type="datetime-local" id="job-at" />
               </label>
               <button type="submit" data-i18n="jobs_add_submit">Add Job</button>
             </form>

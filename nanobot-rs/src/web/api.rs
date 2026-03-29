@@ -259,6 +259,7 @@ pub struct CronJobListResponse {
 #[derive(Debug, Deserialize)]
 pub struct AddCronJobRequest {
     pub message: String,
+    pub name: Option<String>,
     pub every_seconds: Option<i64>,
     pub cron_expr: Option<String>,
     pub tz: Option<String>,
@@ -299,10 +300,13 @@ pub async fn add_cron_job(
         return Err(ApiError::bad_request("one of every_seconds, cron_expr, or at is required"));
     };
     let delete_after = matches!(schedule.kind, crate::cron::ScheduleKind::At);
-    let name_len = req.message.len().min(30);
+    let job_name = req.name.filter(|n| !n.is_empty()).unwrap_or_else(|| {
+        let name_len = req.message.len().min(30);
+        req.message[..name_len].to_string()
+    });
     let job = cron
         .add_job(
-            &req.message[..name_len],
+            &job_name,
             schedule,
             req.message.clone(),
             true,

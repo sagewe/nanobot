@@ -738,8 +738,8 @@ impl AgentLoop {
     }
 
     /// Attach a cron service so the `cron` tool is available to the agent.
-    pub fn attach_cron(&self, cron: Arc<CronService>) {
-        *self.cron.blocking_lock() = Some(cron);
+    pub async fn attach_cron(&self, cron: Arc<CronService>) {
+        *self.cron.lock().await = Some(cron);
     }
 
     /// Return the attached cron service, if any.

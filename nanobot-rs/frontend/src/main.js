@@ -951,10 +951,28 @@ function formatSchedule(schedule) {
   return schedule.kind || "—";
 }
 
+function showToast(message, variant = "success") {
+  const el = document.createElement("div");
+  el.className = `toast toast--${variant}`;
+  el.textContent = message;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("toast--visible"));
+  setTimeout(() => {
+    el.classList.remove("toast--visible");
+    el.addEventListener("transitionend", () => el.remove());
+    setTimeout(() => el.remove(), 500); // fallback
+  }, 2400);
+}
+
 function renderJobsList(jobs) {
+  const addDetails = document.getElementById("jobs-add-details");
   if (!jobs.length) {
-    jobsList.innerHTML = `<div class="jobs-empty">${t("jobs_empty")}</div>`;
+    jobsList.innerHTML = `<div class="jobs-empty">${t("jobs_empty")}<br><span class="jobs-empty-hint">${t("jobs_empty_hint")}</span></div>`;
+    if (addDetails) addDetails.open = true;
     return;
+  }
+  if (addDetails && addDetails.open && jobs.length) {
+    // keep it open if user just added, otherwise close
   }
   jobsList.innerHTML = jobs.map((job) => {
     const timing = escapeHtml(formatSchedule(job.schedule));
@@ -964,12 +982,15 @@ function renderJobsList(jobs) {
     const statusBadge = job.enabled
       ? `<span class="job-badge job-badge--active">on</span>`
       : `<span class="job-badge job-badge--inactive">off</span>`;
+    const msgPreview = job.payload?.message
+      ? `<div class="job-item-preview">${escapeHtml(job.payload.message)}</div>` : "";
     return `<div class="job-item" data-id="${job.id}">
   <div class="job-item-header">
     <span class="job-name">${escapeHtml(job.name)}</span>
     ${statusBadge}
     <span class="job-timing">${timing}</span>
   </div>
+  ${msgPreview}
   <div class="job-item-meta">
     <span>${t("jobs_next_run")}: ${nextRun}</span>
     <span>${t("jobs_last_run")}: ${lastRun}</span>
@@ -999,23 +1020,73 @@ const jobsList = document.getElementById("jobs-list");
 jobsList.addEventListener("click", async (e) => {
   const runBtn = e.target.closest(".job-run-btn");
   if (runBtn) {
-    try { await runCronJob(runBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
+    try {
+      await runCronJob(runBtn.dataset.id);
+      showToast(t("jobs_run_success"));
+      await refreshJobs();
+    } catch (err) { showToast(err.message, "error"); }
     return;
   }
   const toggleBtn = e.target.closest(".job-toggle-btn");
   if (toggleBtn) {
-    try { await toggleCronJob(toggleBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
+    try {
+      await toggleCronJob(toggleBtn.dataset.id);
+      showToast(t("jobs_toggle_success"));
+      await refreshJobs();
+    } catch (err) { showToast(err.message, "error"); }
     return;
   }
   const deleteBtn = e.target.closest(".job-delete-btn");
   if (deleteBtn) {
     if (!confirm(t("jobs_delete_confirm"))) return;
-    try { await deleteCronJob(deleteBtn.dataset.id); await refreshJobs(); } catch (err) { alert(err.message); }
+    try {
+      await deleteCronJob(deleteBtn.dataset.id);
+      showToast(t("jobs_delete_success"));
+      await refreshJobs();
+    } catch (err) { showToast(err.message, "error"); }
   }
 });
 
 const addJobForm = document.getElementById("add-job-form");
 const jobScheduleType = document.getElementById("job-schedule-type");
+
+// Populate timezone dropdown with search filter
+const allTzOptions = [];
+{
+  const tzSelect = document.getElementById("job-tz");
+  const tzSearch = document.getElementById("job-tz-search");
+  try {
+    const zones = Intl.supportedValuesOf("timeZone");
+    const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const now = new Date();
+    for (const tz of zones) {
+      const fmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "shortOffset" });
+      const parts = fmt.formatToParts(now);
+      const offsetPart = parts.find(p => p.type === "timeZoneName");
+      const offset = offsetPart ? offsetPart.value : "";
+      const label = `${tz.replace(/_/g, " ")}  (${offset})`;
+      allTzOptions.push({ value: tz, label, isLocal: tz === localTz });
+    }
+    function renderTzOptions(filter) {
+      // keep the auto option
+      while (tzSelect.options.length > 1) tzSelect.options[tzSelect.options.length - 1] = null;
+      const lc = (filter || "").toLowerCase();
+      for (const o of allTzOptions) {
+        if (lc && !o.label.toLowerCase().includes(lc) && !o.value.toLowerCase().includes(lc)) continue;
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.label;
+        if (!lc && o.isLocal) opt.selected = true;
+        tzSelect.appendChild(opt);
+      }
+    }
+    renderTzOptions("");
+    tzSearch.addEventListener("input", () => renderTzOptions(tzSearch.value.trim()));
+  } catch (_) {
+    // Fallback: keep the empty auto option
+  }
+}
+
 jobScheduleType.addEventListener("change", () => {
   const val = jobScheduleType.value;
   document.getElementById("job-every-label").hidden = val !== "every";
@@ -1028,23 +1099,30 @@ addJobForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const message = document.getElementById("job-message").value.trim();
   if (!message) return;
+  const name = document.getElementById("job-name").value.trim();
   const schedType = document.getElementById("job-schedule-type").value;
   const params = { message };
+  if (name) params.name = name;
   if (schedType === "every") {
-    params.every_seconds = parseInt(document.getElementById("job-every-seconds").value, 10);
+    const value = parseInt(document.getElementById("job-every-value").value, 10) || 1;
+    const unit = parseInt(document.getElementById("job-every-unit").value, 10) || 3600;
+    params.every_seconds = value * unit;
   } else if (schedType === "cron") {
     params.cron_expr = document.getElementById("job-cron-expr").value.trim();
-    const tz = document.getElementById("job-tz").value.trim();
+    const tz = document.getElementById("job-tz").value;
     if (tz) params.tz = tz;
   } else if (schedType === "at") {
-    params.at = document.getElementById("job-at").value.trim();
+    const dtVal = document.getElementById("job-at").value;
+    if (dtVal) {
+      params.at = new Date(dtVal).toISOString();
+    }
   }
   try {
     await addCronJob(params);
     addJobForm.reset();
-    setStatus(t("jobs_add_success"), "idle");
+    showToast(t("jobs_add_success"));
     await refreshJobs();
   } catch (err) {
-    alert(err.message);
+    showToast(err.message, "error");
   }
 });
