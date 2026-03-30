@@ -130,6 +130,9 @@ export const TRANSLATIONS = {
     mcp_connected: "Connected",
     mcp_tools: "tools",
     mcp_show_tools: "Show tools",
+    mcp_enable_tool: "Enable tool",
+    mcp_disable_tool: "Disable tool",
+    mcp_toggle_failed: "Failed to update tool",
   },
   zh: {
     app_name: "Pikachu",
@@ -262,6 +265,9 @@ export const TRANSLATIONS = {
     mcp_connected: "\u5df2\u8fde\u63a5",
     mcp_tools: "\u4e2a\u5de5\u5177",
     mcp_show_tools: "\u67e5\u770b\u5de5\u5177",
+    mcp_enable_tool: "\u542f\u7528\u5de5\u5177",
+    mcp_disable_tool: "\u7981\u7528\u5de5\u5177",
+    mcp_toggle_failed: "\u66f4\u65b0\u5de5\u5177\u72b6\u6001\u5931\u8d25",
   },
 };
 

@@ -4,22 +4,28 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use axum::Router;
+use axum::{
+    Router,
+    body::{Body, to_bytes},
+    http::{Request, StatusCode},
+};
 use chrono::{Duration, Utc};
 use nanobot_rs::agent::AgentLoop;
 use nanobot_rs::bus::MessageBus;
 use nanobot_rs::channels::weixin::{WeixinAccountState, WeixinAccountStore};
 use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
+use nanobot_rs::mcp::{McpServerInfo, McpToolInfo};
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use nanobot_rs::session::{Session, SessionMessage, SessionStore};
 use nanobot_rs::web::{
     self, AgentChatService, AppState, ChatService, WebChatReply, WebSessionDetail,
 };
 use serde_json::{Map, json};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use tempfile::{TempDir, tempdir};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use tower::util::ServiceExt;
 
 #[derive(Clone, Default)]
 struct StaticChatService;
@@ -121,6 +127,97 @@ impl ChatService for ErrorChatService {
 
 fn test_state_with_error() -> AppState {
     AppState::new(Arc::new(ErrorChatService), None)
+}
+
+#[derive(Clone)]
+struct MockMcpTool {
+    name: String,
+    original_name: String,
+    description: String,
+}
+
+#[derive(Clone)]
+struct McpChatService {
+    server_name: String,
+    tools: Arc<Vec<MockMcpTool>>,
+    enabled: Arc<Mutex<HashMap<String, bool>>>,
+}
+
+impl McpChatService {
+    fn new(server_name: &str, tools: Vec<MockMcpTool>, enabled: HashMap<String, bool>) -> Self {
+        Self {
+            server_name: server_name.to_string(),
+            tools: Arc::new(tools),
+            enabled: Arc::new(Mutex::new(enabled)),
+        }
+    }
+}
+
+#[async_trait]
+impl ChatService for McpChatService {
+    async fn chat(
+        &self,
+        _message: &str,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebChatReply> {
+        anyhow::bail!("unused")
+    }
+
+    async fn duplicate_session(
+        &self,
+        _channel: &str,
+        _session_id: &str,
+    ) -> Result<WebSessionDetail> {
+        anyhow::bail!("unused")
+    }
+
+    async fn list_mcp_servers(&self) -> Result<Vec<McpServerInfo>> {
+        let enabled = self.enabled.lock().await;
+        Ok(vec![McpServerInfo {
+            name: self.server_name.clone(),
+            tool_count: self.tools.len(),
+            tools: self
+                .tools
+                .iter()
+                .map(|tool| McpToolInfo {
+                    name: tool.name.clone(),
+                    original_name: tool.original_name.clone(),
+                    description: tool.description.clone(),
+                    enabled: *enabled.get(&tool.name).unwrap_or(&true),
+                })
+                .collect(),
+        }])
+    }
+
+    async fn toggle_mcp_tool(&self, name: &str, enabled: bool) -> Result<bool> {
+        let mut states = self.enabled.lock().await;
+        let Some(state) = states.get_mut(name) else {
+            return Ok(false);
+        };
+        *state = enabled;
+        Ok(true)
+    }
+}
+
+fn test_state_with_mcp_tools() -> AppState {
+    let tools = vec![
+        MockMcpTool {
+            name: "mcp_demo_search".to_string(),
+            original_name: "search".to_string(),
+            description: "Search docs".to_string(),
+        },
+        MockMcpTool {
+            name: "mcp_demo_fetch".to_string(),
+            original_name: "fetch".to_string(),
+            description: "Fetch content".to_string(),
+        },
+    ];
+    let enabled = HashMap::from([
+        ("mcp_demo_search".to_string(), true),
+        ("mcp_demo_fetch".to_string(), false),
+    ]);
+    AppState::new(Arc::new(McpChatService::new("demo", tools, enabled)), None)
 }
 
 #[derive(Clone)]
@@ -266,6 +363,20 @@ async fn spawn_test_server(app: Router) -> SocketAddr {
         axum::serve(listener, app).await.expect("serve");
     });
     addr
+}
+
+async fn json_response(app: Router, request: Request<Body>) -> (StatusCode, serde_json::Value) {
+    let response = app.oneshot(request).await.expect("router response");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response bytes");
+    let payload = if bytes.is_empty() {
+        json!({})
+    } else {
+        serde_json::from_slice(&bytes).expect("json payload")
+    };
+    (status, payload)
 }
 
 async fn agent_app(dir: &TempDir, responses: Vec<LlmResponse>) -> Router {
@@ -446,6 +557,74 @@ async fn root_and_health_routes_respond() {
 
     assert!(html.to_ascii_lowercase().contains("<!doctype html>"));
     assert_eq!(health, "ok");
+}
+
+#[tokio::test]
+async fn mcp_servers_endpoint_returns_tool_enabled_state() {
+    let app = web::build_router(test_state_with_mcp_tools());
+    let (status, response) = json_response(
+        app,
+        Request::builder()
+            .method("GET")
+            .uri("/api/mcp/servers")
+            .body(Body::empty())
+            .expect("mcp servers request"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["servers"][0]["name"], "demo");
+    assert_eq!(response["servers"][0]["tool_count"], 2);
+    assert_eq!(response["servers"][0]["tools"][0]["name"], "mcp_demo_search");
+    assert_eq!(response["servers"][0]["tools"][0]["enabled"], true);
+    assert_eq!(response["servers"][0]["tools"][1]["name"], "mcp_demo_fetch");
+    assert_eq!(response["servers"][0]["tools"][1]["enabled"], false);
+}
+
+#[tokio::test]
+async fn mcp_toggle_endpoint_updates_tool_state_and_rejects_unknown_tools() {
+    let app = web::build_router(test_state_with_mcp_tools());
+    let (status, _) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/mcp/tools/mcp_demo_fetch/toggle")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"enabled":true}"#))
+            .expect("toggle mcp tool request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, servers) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("GET")
+            .uri("/api/mcp/servers")
+            .body(Body::empty())
+            .expect("mcp servers request"),
+    )
+    .await;
+    assert_eq!(servers["servers"][0]["tools"][1]["enabled"], true);
+
+    let (status, payload) = json_response(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/mcp/tools/mcp_demo_missing/toggle")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"enabled":false}"#))
+            .expect("missing toggle request"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not found")
+    );
 }
 
 #[tokio::test]

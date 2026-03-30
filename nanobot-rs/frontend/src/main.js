@@ -18,6 +18,7 @@ import {
   toggleCronJob,
   runCronJob,
   fetchMcpServers,
+  toggleMcpTool,
 } from "./api.js";
 import {
   setStatus,
@@ -1135,6 +1136,27 @@ addJobForm.addEventListener("submit", async (e) => {
 
 const mcpList = document.getElementById("mcp-list");
 
+function formatMcpToolCount(enabledCount, totalCount) {
+  return enabledCount === totalCount
+    ? `${totalCount} ${t("mcp_tools")}`
+    : `${enabledCount}/${totalCount} ${t("mcp_tools")}`;
+}
+
+function setMcpCardEnabled(card, enabled) {
+  card.dataset.enabled = enabled ? "true" : "false";
+  card.classList.toggle("mcp-tool-card--disabled", !enabled);
+}
+
+function updateMcpServerCount(serverCard) {
+  if (!serverCard) return;
+  const cards = [...serverCard.querySelectorAll(".mcp-tool-card")];
+  const enabledCount = cards.filter((card) => card.dataset.enabled !== "false").length;
+  const countNode = serverCard.querySelector(".mcp-server-count");
+  if (countNode) {
+    countNode.textContent = formatMcpToolCount(enabledCount, cards.length);
+  }
+}
+
 // ── MCP tool popover ──────────────────────────────────────────────────────────
 const mcpPopover = (() => {
   const el = document.createElement("div");
@@ -1142,8 +1164,17 @@ const mcpPopover = (() => {
   el.hidden = true;
   document.body.appendChild(el);
 
-  function show(card, name, desc) {
-    el.innerHTML = `<strong class="mcp-popover-name">${escapeHtml(name)}</strong><p class="mcp-popover-desc">${escapeHtml(desc)}</p>`;
+  function show(card, fullName, shortName, desc, enabled) {
+    document.querySelectorAll(".mcp-tool-card--active").forEach(c => c.classList.remove("mcp-tool-card--active"));
+    el.innerHTML = `
+      <div class="mcp-popover-header">
+        <strong class="mcp-popover-name">${escapeHtml(shortName)}</strong>
+        <label class="mcp-toggle" title="${enabled ? t("mcp_disable_tool") : t("mcp_enable_tool")}">
+          <input type="checkbox" class="mcp-toggle-input" ${enabled ? "checked" : ""}>
+          <span class="mcp-toggle-track"></span>
+        </label>
+      </div>
+      <p class="mcp-popover-desc">${escapeHtml(desc)}</p>`;
     el.hidden = false;
     const r = card.getBoundingClientRect();
     const pw = el.offsetWidth, ph = el.offsetHeight;
@@ -1154,6 +1185,28 @@ const mcpPopover = (() => {
     el.style.top = `${top}px`;
     el.style.left = `${left}px`;
     card.classList.add("mcp-tool-card--active");
+
+    el.querySelector(".mcp-toggle-input").addEventListener("change", async (e) => {
+      e.stopPropagation();
+      const previousEnabled = card.dataset.enabled !== "false";
+      const nowEnabled = e.target.checked;
+      const serverCard = card.closest(".mcp-server-card");
+      e.target.disabled = true;
+      setMcpCardEnabled(card, nowEnabled);
+      updateMcpServerCount(serverCard);
+      el.querySelector(".mcp-toggle").title = nowEnabled ? t("mcp_disable_tool") : t("mcp_enable_tool");
+      try {
+        await toggleMcpTool(fullName, nowEnabled);
+      } catch (error) {
+        e.target.checked = previousEnabled;
+        setMcpCardEnabled(card, previousEnabled);
+        updateMcpServerCount(serverCard);
+        el.querySelector(".mcp-toggle").title = previousEnabled ? t("mcp_disable_tool") : t("mcp_enable_tool");
+        setStatus(error?.message || t("mcp_toggle_failed"), "error");
+      } finally {
+        e.target.disabled = false;
+      }
+    });
   }
 
   function hide() {
@@ -1177,19 +1230,25 @@ function renderMcpList(servers) {
   mcpList.innerHTML = servers.map((server) => {
     const toolsHtml = server.tools.map((tool) => {
       const shortName = tool.original_name || tool.name;
+      const enabled = tool.enabled !== false;
       return `
-      <div class="mcp-tool-card" data-name="${escapeHtml(shortName)}" data-desc="${escapeHtml(tool.description)}">
+      <div class="mcp-tool-card${enabled ? "" : " mcp-tool-card--disabled"}"
+           data-name="${escapeHtml(tool.name)}"
+           data-short="${escapeHtml(shortName)}"
+           data-desc="${escapeHtml(tool.description)}"
+           data-enabled="${enabled}">
         <span class="mcp-tool-card-name">${escapeHtml(shortName)}</span>
         <span class="mcp-tool-card-desc">${escapeHtml(tool.description)}</span>
       </div>`;
     }).join("");
+    const enabledCount = server.tools.filter(t => t.enabled !== false).length;
     return `
 <div class="mcp-server-card">
   <div class="mcp-server-header">
     <div class="mcp-server-info">
       <span class="mcp-status-dot"></span>
       <strong class="mcp-server-name">${escapeHtml(server.name)}</strong>
-      <span class="mcp-server-count">${server.tool_count} ${t("mcp_tools")}</span>
+      <span class="mcp-server-count">${formatMcpToolCount(enabledCount, server.tool_count)}</span>
     </div>
   </div>
   ${server.tools.length ? `<div class="mcp-tool-grid">${toolsHtml}</div>` : ""}
@@ -1202,7 +1261,8 @@ function renderMcpList(servers) {
       if (card.classList.contains("mcp-tool-card--active")) {
         mcpPopover.hide();
       } else {
-        mcpPopover.show(card, card.dataset.name, card.dataset.desc);
+        const enabled = card.dataset.enabled !== "false";
+        mcpPopover.show(card, card.dataset.name, card.dataset.short, card.dataset.desc, enabled);
       }
     });
   });

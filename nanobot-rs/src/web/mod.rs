@@ -97,6 +97,10 @@ pub trait ChatService: Send + Sync {
     async fn list_mcp_servers(&self) -> Result<Vec<McpServerInfo>> {
         Ok(Vec::new())
     }
+
+    async fn toggle_mcp_tool(&self, _name: &str, _enabled: bool) -> Result<bool> {
+        bail!("toggle mcp tool is not implemented for this service")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -336,6 +340,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/cron/jobs/{id}/toggle", post(api::toggle_cron_job))
         .route("/api/cron/jobs/{id}/run", post(api::run_cron_job))
         .route("/api/mcp/servers", get(api::list_mcp_servers))
+        .route("/api/mcp/tools/{name}/toggle", post(api::toggle_mcp_tool))
         .with_state(state)
 }
 
@@ -601,6 +606,10 @@ impl ChatService for AgentChatService {
 
     async fn list_mcp_servers(&self) -> Result<Vec<McpServerInfo>> {
         Ok(self.agent.list_mcp_servers().await)
+    }
+
+    async fn toggle_mcp_tool(&self, name: &str, enabled: bool) -> Result<bool> {
+        Ok(self.agent.toggle_mcp_tool(name, enabled).await)
     }
 }
 

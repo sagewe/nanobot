@@ -166,6 +166,19 @@ export async function fetchMcpServers() {
   return payload.servers || [];
 }
 
+export async function toggleMcpTool(name, enabled) {
+  const response = await fetch(`/api/mcp/tools/${encodeURIComponent(name)}/toggle`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to toggle tool");
+  }
+  return payload;
+}
+
 export async function loadProfiles() {
   try {
     const response = await fetch("/api/profiles");

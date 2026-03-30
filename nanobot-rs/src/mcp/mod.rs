@@ -4,7 +4,7 @@
 //! transports.  SSE (legacy) servers are also accessed via streamable-HTTP
 //! when the URL ends with `/sse`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -129,6 +129,8 @@ pub struct McpClients {
     _services: Arc<std::sync::Mutex<Vec<Box<dyn std::any::Any + Send>>>>,
     /// Pre-built wrappers — cheap to clone into each fresh ToolRegistry.
     wrappers: Vec<McpToolWrapper>,
+    /// Tool names (full `mcp_{server}_{tool}` form) that are disabled by the user.
+    disabled_tools: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
 /// Info about a single MCP tool, exposed via the web API.
@@ -137,6 +139,7 @@ pub struct McpToolInfo {
     pub name: String,
     pub original_name: String,
     pub description: String,
+    pub enabled: bool,
 }
 
 /// Info about a connected MCP server, exposed via the web API.
@@ -148,10 +151,18 @@ pub struct McpServerInfo {
 }
 
 impl McpClients {
-    /// Register clones of all MCP tool wrappers into `registry`.
+    /// Register clones of all enabled MCP tool wrappers into `registry`.
     pub async fn register_tools(&self, registry: &ToolRegistry) {
-        for wrapper in &self.wrappers {
-            registry.register(wrapper.clone()).await;
+        let wrappers: Vec<McpToolWrapper> = {
+            let disabled = self.disabled_tools.lock().unwrap();
+            self.wrappers
+                .iter()
+                .filter(|wrapper| !disabled.contains(&wrapper.tool_name))
+                .cloned()
+                .collect()
+        };
+        for wrapper in wrappers {
+            registry.register(wrapper).await;
         }
     }
 
@@ -159,8 +170,25 @@ impl McpClients {
         self.wrappers.len()
     }
 
+    /// Enable or disable a tool by its full name (`mcp_{server}_{tool}`).
+    /// Returns `false` if the tool name is not found.
+    pub fn toggle_tool(&self, name: &str, enabled: bool) -> bool {
+        let exists = self.wrappers.iter().any(|w| w.tool_name == name);
+        if !exists {
+            return false;
+        }
+        let mut disabled = self.disabled_tools.lock().unwrap();
+        if enabled {
+            disabled.remove(name);
+        } else {
+            disabled.insert(name.to_string());
+        }
+        true
+    }
+
     /// Group wrappers by server name and return summary info.
     pub fn list_servers(&self) -> Vec<McpServerInfo> {
+        let disabled = self.disabled_tools.lock().unwrap();
         let mut order: Vec<String> = Vec::new();
         let mut map: HashMap<String, Vec<McpToolInfo>> = HashMap::new();
         for w in &self.wrappers {
@@ -173,6 +201,7 @@ impl McpClients {
                 name: w.tool_name.clone(),
                 original_name: w.original_name.clone(),
                 description: w.description.clone(),
+                enabled: !disabled.contains(&w.tool_name),
             });
         }
         order.into_iter()
@@ -211,6 +240,7 @@ pub async fn connect_mcp_servers(
     McpClients {
         _services: Arc::new(std::sync::Mutex::new(services)),
         wrappers: all_wrappers,
+        disabled_tools: Arc::new(std::sync::Mutex::new(HashSet::new())),
     }
 }
 

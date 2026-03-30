@@ -370,6 +370,24 @@ pub async fn list_mcp_servers(
     Ok(Json(McpServerListResponse { servers }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ToggleMcpToolRequest {
+    pub enabled: bool,
+}
+
+pub async fn toggle_mcp_tool(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<ToggleMcpToolRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let found = state.chat.toggle_mcp_tool(&name, body.enabled).await.map_err(ApiError::internal)?;
+    if found {
+        Ok(Json(json!({ "ok": true })))
+    } else {
+        Err(ApiError::not_found(format!("tool '{name}' not found")))
+    }
+}
+
 pub struct ApiError {
     status: StatusCode,
     message: String,

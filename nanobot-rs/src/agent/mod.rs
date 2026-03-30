@@ -762,6 +762,13 @@ impl AgentLoop {
         }
     }
 
+    pub async fn toggle_mcp_tool(&self, name: &str, enabled: bool) -> bool {
+        match &*self.mcp.lock().await {
+            Some(mcp) => mcp.toggle_tool(name, enabled),
+            None => false,
+        }
+    }
+
     pub async fn run(&self) {
         self.running.store(true, Ordering::SeqCst);
         while self.running.load(Ordering::SeqCst) {
