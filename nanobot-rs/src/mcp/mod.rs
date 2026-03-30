@@ -23,6 +23,9 @@ use serde::Serialize;
 use crate::config::McpServerConfig;
 use crate::tools::{Tool, ToolContext, ToolRegistry};
 
+/// Timeout for the initial MCP server handshake (transport connect + initialize).
+const CONNECT_TIMEOUT_SECS: u64 = 30;
+
 // ---------------------------------------------------------------------------
 // McpToolWrapper — cheap to clone (all Arc/String inside)
 // ---------------------------------------------------------------------------
@@ -33,6 +36,7 @@ pub struct McpToolWrapper {
     /// Name exposed to the agent: `mcp_{server}_{original}`.
     tool_name: String,
     original_name: String,
+    server_name: String,
     description: String,
     schema: Value,
     timeout_secs: u64,
@@ -96,10 +100,15 @@ impl Tool for McpToolWrapper {
                         other => format!("{other:?}"),
                     })
                     .collect();
-                if parts.is_empty() {
+                let text = if parts.is_empty() {
                     "(no output)".to_string()
                 } else {
                     parts.join("\n")
+                };
+                if result.is_error == Some(true) {
+                    format!("(MCP tool error: {text})")
+                } else {
+                    text
                 }
             }
         }
@@ -155,8 +164,7 @@ impl McpClients {
         let mut order: Vec<String> = Vec::new();
         let mut map: HashMap<String, Vec<McpToolInfo>> = HashMap::new();
         for w in &self.wrappers {
-            // tool_name = "mcp_{server}_{original_name}"
-            let server_name = w.tool_name[4..w.tool_name.len() - w.original_name.len() - 1].to_string();
+            let server_name = w.server_name.clone();
             if !map.contains_key(&server_name) {
                 order.push(server_name.clone());
             }
@@ -249,7 +257,12 @@ async fn connect_stdio(
     }
 
     let transport = TokioChildProcess::new(cmd)?;
-    let running = ().serve(transport).await?;
+    let running = tokio::time::timeout(
+        Duration::from_secs(CONNECT_TIMEOUT_SECS),
+        ().serve(transport),
+    )
+    .await
+    .map_err(|_| anyhow!("timed out connecting to MCP server after {CONNECT_TIMEOUT_SECS}s"))??;
     let peer = Arc::new(running.peer().clone());
     let wrappers = build_wrappers(name, cfg, &peer).await;
     Ok((Box::new(running), wrappers))
@@ -282,7 +295,12 @@ async fn connect_http(
 
     let transport = StreamableHttpClientTransport::from_config(config);
 
-    let running = ().serve(transport).await?;
+    let running = tokio::time::timeout(
+        Duration::from_secs(CONNECT_TIMEOUT_SECS),
+        ().serve(transport),
+    )
+    .await
+    .map_err(|_| anyhow!("timed out connecting to MCP server after {CONNECT_TIMEOUT_SECS}s"))??;
     let peer = Arc::new(running.peer().clone());
     let wrappers = build_wrappers(name, cfg, &peer).await;
     Ok((Box::new(running), wrappers))
@@ -329,6 +347,7 @@ async fn build_wrappers(
             peer: Arc::clone(peer),
             tool_name: wrapped_name,
             original_name: tool_def.name.to_string(),
+            server_name: server_name.to_string(),
             description: tool_def
                 .description
                 .as_deref()
