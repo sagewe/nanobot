@@ -18,6 +18,8 @@ use serde_json::{Map, Value};
 use tokio::process::Command;
 use tracing::{debug, error, info, warn};
 
+use serde::Serialize;
+
 use crate::config::McpServerConfig;
 use crate::tools::{Tool, ToolContext, ToolRegistry};
 
@@ -120,6 +122,22 @@ pub struct McpClients {
     wrappers: Vec<McpToolWrapper>,
 }
 
+/// Info about a single MCP tool, exposed via the web API.
+#[derive(Debug, Clone, Serialize)]
+pub struct McpToolInfo {
+    pub name: String,
+    pub original_name: String,
+    pub description: String,
+}
+
+/// Info about a connected MCP server, exposed via the web API.
+#[derive(Debug, Clone, Serialize)]
+pub struct McpServerInfo {
+    pub name: String,
+    pub tool_count: usize,
+    pub tools: Vec<McpToolInfo>,
+}
+
 impl McpClients {
     /// Register clones of all MCP tool wrappers into `registry`.
     pub async fn register_tools(&self, registry: &ToolRegistry) {
@@ -130,6 +148,30 @@ impl McpClients {
 
     pub fn tool_count(&self) -> usize {
         self.wrappers.len()
+    }
+
+    /// Group wrappers by server name and return summary info.
+    pub fn list_servers(&self) -> Vec<McpServerInfo> {
+        let mut order: Vec<String> = Vec::new();
+        let mut map: HashMap<String, Vec<McpToolInfo>> = HashMap::new();
+        for w in &self.wrappers {
+            // tool_name = "mcp_{server}_{original_name}"
+            let server_name = w.tool_name[4..w.tool_name.len() - w.original_name.len() - 1].to_string();
+            if !map.contains_key(&server_name) {
+                order.push(server_name.clone());
+            }
+            map.entry(server_name).or_default().push(McpToolInfo {
+                name: w.tool_name.clone(),
+                original_name: w.original_name.clone(),
+                description: w.description.clone(),
+            });
+        }
+        order.into_iter()
+            .map(|name| {
+                let tools = map.remove(&name).unwrap_or_default();
+                McpServerInfo { tool_count: tools.len(), name, tools }
+            })
+            .collect()
     }
 }
 

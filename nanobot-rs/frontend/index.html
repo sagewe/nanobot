@@ -33,6 +33,10 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
               <span class="tab-label" data-i18n="tab_jobs">Jobs</span>
             </button>
+            <button class="tab-btn" data-tab="mcp" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+              <span class="tab-label" data-i18n="tab_mcp">MCP</span>
+            </button>
           </div>
           <div class="sidebar-footer">
             <button id="theme-toggle" data-i18n-title="toggle_theme" title="Toggle theme">
@@ -110,6 +114,15 @@
               <button type="submit" data-i18n="jobs_add_submit">Add Job</button>
             </form>
           </details>
+        </section>
+        <section class="mcp-pane" hidden>
+          <div class="jobs-header">
+            <h2 class="jobs-title" data-i18n="mcp_title">MCP Servers</h2>
+            <button id="mcp-refresh-btn" type="button" data-i18n-title="mcp_refresh" title="Refresh">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+          </div>
+          <div id="mcp-list" class="jobs-list"></div>
         </section>
         <section class="channels-pane" hidden>
           <section id="weixin-account-panel" class="account-panel">

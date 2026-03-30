@@ -755,6 +755,13 @@ impl AgentLoop {
         *self.mcp.lock().await = Some(clients);
     }
 
+    pub async fn list_mcp_servers(&self) -> Vec<crate::mcp::McpServerInfo> {
+        match &*self.mcp.lock().await {
+            Some(mcp) => mcp.list_servers(),
+            None => Vec::new(),
+        }
+    }
+
     pub async fn run(&self) {
         self.running.store(true, Ordering::SeqCst);
         while self.running.load(Ordering::SeqCst) {

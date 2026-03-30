@@ -157,6 +157,15 @@ export async function runCronJob(id) {
   return payload;
 }
 
+export async function fetchMcpServers() {
+  const response = await fetch("/api/mcp/servers");
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to load MCP servers");
+  }
+  return payload.servers || [];
+}
+
 export async function loadProfiles() {
   try {
     const response = await fetch("/api/profiles");

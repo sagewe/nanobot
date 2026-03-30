@@ -17,6 +17,7 @@ import {
   deleteCronJob,
   toggleCronJob,
   runCronJob,
+  fetchMcpServers,
 } from "./api.js";
 import {
   setStatus,
@@ -73,6 +74,7 @@ const conversationPane = document.querySelector(".conversation-pane");
 const channelsPane = document.querySelector(".channels-pane");
 const sessionsPane = document.querySelector(".sessions-pane");
 const jobsPane = document.querySelector(".jobs-pane");
+const mcpPane = document.querySelector(".mcp-pane");
 const sessionsSearch = document.getElementById("sessions-search");
 const sessionRail = document.querySelector(".session-rail");
 const transcript = document.getElementById("transcript");
@@ -503,7 +505,9 @@ function switchTab(tab) {
   sessionsPane.hidden = tab !== "sessions";
   channelsPane.hidden = tab !== "channels";
   jobsPane.hidden = tab !== "jobs";
+  mcpPane.hidden = tab !== "mcp";
   if (tab === "jobs") refreshJobs();
+  if (tab === "mcp") refreshMcp();
 }
 
 tabButtons.forEach((btn) => {
@@ -1126,3 +1130,43 @@ addJobForm.addEventListener("submit", async (e) => {
     showToast(err.message, "error");
   }
 });
+
+// ── MCP tab ───────────────────────────────────────────────────────────────────
+
+const mcpList = document.getElementById("mcp-list");
+
+function renderMcpList(servers) {
+  if (!servers.length) {
+    mcpList.innerHTML = `<div class="jobs-empty">${t("mcp_empty")}<br><span class="jobs-empty-hint">${t("mcp_empty_hint")}</span></div>`;
+    return;
+  }
+  mcpList.innerHTML = servers.map((server) => {
+    const toolsHtml = server.tools.map((tool) => `
+      <div class="mcp-tool-row">
+        <span class="mcp-tool-name">${escapeHtml(tool.name)}</span>
+        <span class="mcp-tool-desc">${escapeHtml(tool.description)}</span>
+      </div>`).join("");
+    return `
+<div class="job-card">
+  <div class="job-card-header">
+    <div class="job-info">
+      <strong class="job-name">${escapeHtml(server.name)}</strong>
+      <span class="job-meta">${server.tool_count} ${t("mcp_tools")}</span>
+    </div>
+    <span class="job-badge job-badge-active">${t("mcp_connected")}</span>
+  </div>
+  ${server.tools.length ? `<details class="mcp-tools-details"><summary>${t("mcp_show_tools")}</summary><div class="mcp-tools-list">${toolsHtml}</div></details>` : ""}
+</div>`;
+  }).join("");
+}
+
+async function refreshMcp() {
+  try {
+    const servers = await fetchMcpServers();
+    renderMcpList(servers);
+  } catch (_) {
+    mcpList.innerHTML = `<div class="jobs-empty">${t("mcp_empty")}</div>`;
+  }
+}
+
+document.getElementById("mcp-refresh-btn").addEventListener("click", refreshMcp);

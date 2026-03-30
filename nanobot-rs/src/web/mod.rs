@@ -25,6 +25,7 @@ use crate::agent::AgentLoop;
 use crate::channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinLoginManager};
 use crate::config::WeixinConfig;
 use crate::cron::CronService;
+use crate::mcp::McpServerInfo;
 use crate::presentation::render_web_html;
 use crate::session::{
     Session, SessionGroupSummary, SessionMessage, SessionSummary, split_session_key,
@@ -91,6 +92,10 @@ pub trait ChatService: Send + Sync {
 
     async fn delete_session(&self, _channel: &str, _session_id: &str) -> Result<bool> {
         bail!("session deletion is not implemented for this service")
+    }
+
+    async fn list_mcp_servers(&self) -> Result<Vec<McpServerInfo>> {
+        Ok(Vec::new())
     }
 }
 
@@ -330,6 +335,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/cron/jobs/{id}", axum::routing::delete(api::delete_cron_job))
         .route("/api/cron/jobs/{id}/toggle", post(api::toggle_cron_job))
         .route("/api/cron/jobs/{id}/run", post(api::run_cron_job))
+        .route("/api/mcp/servers", get(api::list_mcp_servers))
         .with_state(state)
 }
 
@@ -591,6 +597,10 @@ impl ChatService for AgentChatService {
 
     async fn delete_session(&self, channel: &str, session_id: &str) -> Result<bool> {
         self.agent.delete_session(&session_key(channel, session_id))
+    }
+
+    async fn list_mcp_servers(&self) -> Result<Vec<McpServerInfo>> {
+        Ok(self.agent.list_mcp_servers().await)
     }
 }
 

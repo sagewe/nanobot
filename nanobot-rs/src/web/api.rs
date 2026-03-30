@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::cron::{CronJob, CronSchedule};
+use crate::mcp::McpServerInfo;
 
 use super::{
     AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary, WebWeixinAccount,
@@ -351,6 +352,22 @@ pub async fn run_cron_job(
     } else {
         Err(ApiError::not_found(format!("job {id} not found")))
     }
+}
+
+// ---------------------------------------------------------------------------
+// MCP API
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct McpServerListResponse {
+    pub servers: Vec<McpServerInfo>,
+}
+
+pub async fn list_mcp_servers(
+    State(state): State<AppState>,
+) -> Result<Json<McpServerListResponse>, ApiError> {
+    let servers = state.chat.list_mcp_servers().await.map_err(ApiError::internal)?;
+    Ok(Json(McpServerListResponse { servers }))
 }
 
 pub struct ApiError {
