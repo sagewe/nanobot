@@ -53,8 +53,17 @@ impl Tool for McpToolWrapper {
     }
 
     async fn execute(&self, args: Value) -> String {
+        debug!(tool = %self.tool_name, args = %args, "MCP tool execute called");
         let arguments = match args {
-            Value::Object(map) => Some(map),
+            Value::Object(map) => {
+                // Strip out empty-string values — some MCP servers (e.g. Home Assistant)
+                // reject slots whose value is "" and return "invalid slot info".
+                let filtered: Map<String, Value> = map
+                    .into_iter()
+                    .filter(|(_, v)| v != &Value::String(String::new()))
+                    .collect();
+                Some(filtered)
+            }
             Value::Null => None,
             other => {
                 let mut m = Map::new();
