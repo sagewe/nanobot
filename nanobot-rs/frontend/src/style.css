@@ -510,31 +510,51 @@
       }
 
       .mcp-tool-card {
-        position: relative;
         border: 1px solid var(--line);
         border-radius: 0.5rem;
         padding: 0.5rem 0.65rem;
         background: var(--input-bg);
-        cursor: default;
+        cursor: pointer;
         min-width: 0;
+        user-select: none;
       }
 
-      /* Use an opacity-only overlay for hover — opacity is compositor-only,
-         no repaint, so first-hover is just as fast as subsequent ones. */
-      .mcp-tool-card::after {
-        content: "";
-        position: absolute;
-        inset: -1px;
-        border-radius: 0.5rem;
-        border: 1px solid var(--accent);
-        opacity: 0;
-        transition: opacity 0.06s;
-        pointer-events: none;
-        will-change: opacity;
+      .mcp-tool-card--active {
+        border-color: var(--accent);
+        background: rgba(193, 95, 60, 0.04);
       }
 
-      .mcp-tool-card:hover::after {
-        opacity: 1;
+      /* ── MCP tool popover ─────────────────────────────────────────────── */
+      .mcp-popover {
+        position: fixed;
+        z-index: 9999;
+        max-width: 280px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 0.65rem;
+        padding: 0.75rem 0.9rem;
+        box-shadow: 0 4px 16px rgba(44, 44, 44, 0.13);
+        animation: popover-in 0.1s ease;
+      }
+
+      @keyframes popover-in {
+        from { opacity: 0; transform: translateY(-4px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+
+      .mcp-popover-name {
+        display: block;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.8rem;
+        color: var(--accent);
+        margin-bottom: 0.4rem;
+      }
+
+      .mcp-popover-desc {
+        margin: 0;
+        font-size: 0.8rem;
+        color: var(--dim);
+        line-height: 1.5;
       }
 
       .mcp-tool-card-name {

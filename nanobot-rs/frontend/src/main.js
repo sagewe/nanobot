@@ -1135,6 +1135,40 @@ addJobForm.addEventListener("submit", async (e) => {
 
 const mcpList = document.getElementById("mcp-list");
 
+// ── MCP tool popover ──────────────────────────────────────────────────────────
+const mcpPopover = (() => {
+  const el = document.createElement("div");
+  el.className = "mcp-popover";
+  el.hidden = true;
+  document.body.appendChild(el);
+
+  function show(card, name, desc) {
+    el.innerHTML = `<strong class="mcp-popover-name">${escapeHtml(name)}</strong><p class="mcp-popover-desc">${escapeHtml(desc)}</p>`;
+    el.hidden = false;
+    const r = card.getBoundingClientRect();
+    const pw = el.offsetWidth, ph = el.offsetHeight;
+    let top = r.bottom + 6;
+    let left = r.left;
+    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+    if (top + ph > window.innerHeight - 8) top = r.top - ph - 6;
+    el.style.top = `${top}px`;
+    el.style.left = `${left}px`;
+    card.classList.add("mcp-tool-card--active");
+  }
+
+  function hide() {
+    el.hidden = true;
+    document.querySelectorAll(".mcp-tool-card--active").forEach(c => c.classList.remove("mcp-tool-card--active"));
+  }
+
+  document.addEventListener("click", (e) => {
+    if (!el.contains(e.target) && !e.target.closest(".mcp-tool-card")) hide();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+
+  return { show, hide };
+})();
+
 function renderMcpList(servers) {
   if (!servers.length) {
     mcpList.innerHTML = `<div class="jobs-empty">${t("mcp_empty")}<br><span class="jobs-empty-hint">${t("mcp_empty_hint")}</span></div>`;
@@ -1144,7 +1178,7 @@ function renderMcpList(servers) {
     const toolsHtml = server.tools.map((tool) => {
       const shortName = tool.original_name || tool.name;
       return `
-      <div class="mcp-tool-card" title="${escapeHtml(tool.description)}">
+      <div class="mcp-tool-card" data-name="${escapeHtml(shortName)}" data-desc="${escapeHtml(tool.description)}">
         <span class="mcp-tool-card-name">${escapeHtml(shortName)}</span>
         <span class="mcp-tool-card-desc">${escapeHtml(tool.description)}</span>
       </div>`;
@@ -1161,6 +1195,17 @@ function renderMcpList(servers) {
   ${server.tools.length ? `<div class="mcp-tool-grid">${toolsHtml}</div>` : ""}
 </div>`;
   }).join("");
+
+  mcpList.querySelectorAll(".mcp-tool-card").forEach(card => {
+    card.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (card.classList.contains("mcp-tool-card--active")) {
+        mcpPopover.hide();
+      } else {
+        mcpPopover.show(card, card.dataset.name, card.dataset.desc);
+      }
+    });
+  });
 }
 
 async function refreshMcp() {
