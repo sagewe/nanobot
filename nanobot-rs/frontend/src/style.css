@@ -510,18 +510,31 @@
       }
 
       .mcp-tool-card {
+        position: relative;
         border: 1px solid var(--line);
         border-radius: 0.5rem;
         padding: 0.5rem 0.65rem;
         background: var(--input-bg);
         cursor: default;
-        transition: border-color 0.06s;
-        will-change: border-color;
         min-width: 0;
       }
 
-      .mcp-tool-card:hover {
-        border-color: var(--accent);
+      /* Use an opacity-only overlay for hover — opacity is compositor-only,
+         no repaint, so first-hover is just as fast as subsequent ones. */
+      .mcp-tool-card::after {
+        content: "";
+        position: absolute;
+        inset: -1px;
+        border-radius: 0.5rem;
+        border: 1px solid var(--accent);
+        opacity: 0;
+        transition: opacity 0.06s;
+        pointer-events: none;
+        will-change: opacity;
+      }
+
+      .mcp-tool-card:hover::after {
+        opacity: 1;
       }
 
       .mcp-tool-card-name {
