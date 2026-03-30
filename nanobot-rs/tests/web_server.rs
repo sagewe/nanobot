@@ -14,7 +14,7 @@ use nanobot_rs::agent::AgentLoop;
 use nanobot_rs::bus::MessageBus;
 use nanobot_rs::channels::weixin::{WeixinAccountState, WeixinAccountStore};
 use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
-use nanobot_rs::mcp::{McpServerInfo, McpToolInfo};
+use nanobot_rs::mcp::{McpServerInfo, McpServerToolAction, McpToolInfo};
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use nanobot_rs::session::{Session, SessionMessage, SessionStore};
 use nanobot_rs::web::{
@@ -89,17 +89,23 @@ impl ChatService for ReplyChatService {
 }
 
 fn test_state_with_reply(reply: &str) -> AppState {
-    AppState::new(Arc::new(ReplyChatService {
-        reply: reply.to_string(),
-        persisted: true,
-    }), None)
+    AppState::new(
+        Arc::new(ReplyChatService {
+            reply: reply.to_string(),
+            persisted: true,
+        }),
+        None,
+    )
 }
 
 fn test_state_with_ephemeral_reply(reply: &str) -> AppState {
-    AppState::new(Arc::new(ReplyChatService {
-        reply: reply.to_string(),
-        persisted: false,
-    }), None)
+    AppState::new(
+        Arc::new(ReplyChatService {
+            reply: reply.to_string(),
+            persisted: false,
+        }),
+        None,
+    )
 }
 
 #[derive(Clone)]
@@ -196,6 +202,30 @@ impl ChatService for McpChatService {
             return Ok(false);
         };
         *state = enabled;
+        Ok(true)
+    }
+
+    async fn apply_mcp_server_action(
+        &self,
+        name: &str,
+        action: McpServerToolAction,
+    ) -> Result<bool> {
+        if name != self.server_name {
+            return Ok(false);
+        }
+        let mut states = self.enabled.lock().await;
+        match action {
+            McpServerToolAction::EnableAll | McpServerToolAction::Reset => {
+                for tool in self.tools.iter() {
+                    states.insert(tool.name.clone(), true);
+                }
+            }
+            McpServerToolAction::DisableAll => {
+                for tool in self.tools.iter() {
+                    states.insert(tool.name.clone(), false);
+                }
+            }
+        }
         Ok(true)
     }
 }
@@ -305,9 +335,10 @@ async fn build_test_router_with_weixin_account_state(account: WeixinAccountState
     let dir = tempdir().expect("tempdir");
     let store = WeixinAccountStore::new(dir.path()).expect("weixin store");
     store.save_account(&account).expect("save account");
-    web::build_router(AppState::new(Arc::new(WeixinAccountChatService::new(
-        true, dir, store,
-    )), None))
+    web::build_router(AppState::new(
+        Arc::new(WeixinAccountChatService::new(true, dir, store)),
+        None,
+    ))
 }
 
 fn sample_weixin_account() -> WeixinAccountState {
@@ -575,7 +606,10 @@ async fn mcp_servers_endpoint_returns_tool_enabled_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(response["servers"][0]["name"], "demo");
     assert_eq!(response["servers"][0]["tool_count"], 2);
-    assert_eq!(response["servers"][0]["tools"][0]["name"], "mcp_demo_search");
+    assert_eq!(
+        response["servers"][0]["tools"][0]["name"],
+        "mcp_demo_search"
+    );
     assert_eq!(response["servers"][0]["tools"][0]["enabled"], true);
     assert_eq!(response["servers"][0]["tools"][1]["name"], "mcp_demo_fetch");
     assert_eq!(response["servers"][0]["tools"][1]["enabled"], false);
@@ -618,6 +652,77 @@ async fn mcp_toggle_endpoint_updates_tool_state_and_rejects_unknown_tools() {
     )
     .await;
 
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not found")
+    );
+}
+
+#[tokio::test]
+async fn mcp_server_bulk_action_endpoint_updates_tool_state() {
+    let app = web::build_router(test_state_with_mcp_tools());
+
+    let (status, _) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/mcp/servers/demo/tools/bulk")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"action":"disableAll"}"#))
+            .expect("disable all request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, after_disable) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("GET")
+            .uri("/api/mcp/servers")
+            .body(Body::empty())
+            .expect("servers request"),
+    )
+    .await;
+    assert_eq!(after_disable["servers"][0]["tools"][0]["enabled"], false);
+    assert_eq!(after_disable["servers"][0]["tools"][1]["enabled"], false);
+
+    let (status, _) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/mcp/servers/demo/tools/bulk")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"action":"reset"}"#))
+            .expect("reset request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, after_reset) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("GET")
+            .uri("/api/mcp/servers")
+            .body(Body::empty())
+            .expect("servers request"),
+    )
+    .await;
+    assert_eq!(after_reset["servers"][0]["tools"][0]["enabled"], true);
+    assert_eq!(after_reset["servers"][0]["tools"][1]["enabled"], true);
+
+    let (status, payload) = json_response(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/mcp/servers/missing/tools/bulk")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"action":"enableAll"}"#))
+            .expect("missing server request"),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(
         payload["error"]
@@ -998,12 +1103,13 @@ async fn session_detail_endpoint_groups_btw_messages_into_a_thread_block() {
     let app = agent_app(&dir, Vec::new()).await;
     let addr = spawn_test_server(app).await;
 
-    let response: serde_json::Value = reqwest::get(format!("http://{addr}/api/sessions/web/btw-focus"))
-        .await
-        .expect("fetch session detail")
-        .json()
-        .await
-        .expect("detail payload");
+    let response: serde_json::Value =
+        reqwest::get(format!("http://{addr}/api/sessions/web/btw-focus"))
+            .await
+            .expect("fetch session detail")
+            .json()
+            .await
+            .expect("detail payload");
 
     let messages = response["messages"].as_array().expect("messages");
     assert_eq!(messages.len(), 2);

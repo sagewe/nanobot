@@ -29,6 +29,9 @@ const ASSISTANT_AVATAR_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fi
 const TOOL_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
 const COPY_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 const CHECK_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+const CHEVRON_RIGHT_SVG = `<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4,2.5 8,6 4,9.5"/></svg>`;
+const EXPAND_SVG = `<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4.25,1.75 1.75,1.75 1.75,4.25"/><line x1="1.75" y1="1.75" x2="4.75" y2="4.75"/><polyline points="7.75,10.25 10.25,10.25 10.25,7.75"/><line x1="7.25" y1="7.25" x2="10.25" y2="10.25"/></svg>`;
+const SHRINK_SVG = `<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1.75,4.25 4.25,4.25 4.25,1.75"/><line x1="1.75" y1="4.25" x2="4.75" y2="1.25"/><polyline points="10.25,7.75 7.75,7.75 7.75,10.25"/><line x1="10.25" y1="7.75" x2="7.25" y2="10.75"/></svg>`;
 
 export function formatTime(date) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -221,6 +224,343 @@ function buildBtwThreadElement(message) {
   return wrapper;
 }
 
+function applyToolOutputContent(contentEl, raw) {
+  try {
+    const formatted = JSON.stringify(JSON.parse(raw), null, 2);
+    contentEl.innerHTML = DOMPurify.sanitize(
+      hljs.highlight(formatted, { language: "json" }).value
+    );
+    contentEl.classList.add("hljs");
+  } catch {
+    const result = hljs.highlightAuto(raw, ["bash", "yaml", "xml"]);
+    if (result.relevance > 5) {
+      contentEl.innerHTML = DOMPurify.sanitize(result.value);
+      contentEl.classList.add("hljs");
+    } else {
+      contentEl.textContent = raw;
+    }
+  }
+}
+
+function buildToolOutputElement(message, { headerStyle = "generic", showToolName = true } = {}) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "msg-tool-output";
+
+  const header = document.createElement("div");
+  header.className = "msg-tool-output-header";
+  header.setAttribute("role", "button");
+  header.setAttribute("tabindex", "0");
+
+  if (headerStyle === "generic" || !message.toolName) {
+    const label = document.createElement("span");
+    label.className = "msg-tool-output-label";
+    label.textContent = t("tool_output");
+    header.appendChild(label);
+  }
+
+  if (showToolName && message.toolName) {
+    const badge = document.createElement("span");
+    badge.className = "msg-tool-badge";
+    badge.textContent = message.toolName;
+    header.appendChild(badge);
+  }
+
+  const contentEl = document.createElement("div");
+  contentEl.className = "msg-tool-output-content";
+  applyToolOutputContent(contentEl, message.content || "");
+
+  const toggle = () => {
+    header.classList.toggle("open");
+    contentEl.classList.toggle("open");
+  };
+  header.addEventListener("click", toggle);
+  header.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggle();
+    }
+  });
+
+  wrapper.appendChild(header);
+  wrapper.appendChild(contentEl);
+  return wrapper;
+}
+
+function buildTraceCode(raw, className, { expandable = false } = {}) {
+  const wrap = document.createElement("div");
+  wrap.className = expandable
+    ? "msg-trace-code-wrap msg-trace-code-wrap--output"
+    : "msg-trace-code-wrap";
+
+  const block = document.createElement("div");
+  block.className = className;
+  applyToolOutputContent(block, raw || "");
+
+  wrap.appendChild(block);
+
+  if (expandable) {
+    wrap.dataset.expanded = "false";
+
+    const expandBtn = document.createElement("button");
+    expandBtn.type = "button";
+    expandBtn.className = "msg-trace-code-expand";
+    expandBtn.innerHTML = EXPAND_SVG;
+    expandBtn.title = t("expand_output");
+    expandBtn.setAttribute("aria-label", t("expand_output"));
+    expandBtn.addEventListener("click", () => {
+      const expanded = wrap.dataset.expanded === "true";
+      wrap.dataset.expanded = String(!expanded);
+      expandBtn.innerHTML = expanded ? EXPAND_SVG : SHRINK_SVG;
+      const label = expanded ? t("expand_output") : t("collapse_output");
+      expandBtn.title = label;
+      expandBtn.setAttribute("aria-label", label);
+    });
+    wrap.appendChild(expandBtn);
+  }
+
+  return wrap;
+}
+
+function buildTraceSection(labelText, raw, variant, { collapsible = false, defaultOpen = true } = {}) {
+  const section = document.createElement("div");
+  section.className = "msg-trace-section";
+  if (collapsible) {
+    section.dataset.open = String(defaultOpen);
+  }
+
+  const label = document.createElement(collapsible ? "button" : "div");
+  label.className = collapsible
+    ? "msg-trace-section-label msg-trace-section-label--toggle"
+    : "msg-trace-section-label";
+  label.textContent = labelText;
+
+  if (collapsible) {
+    label.type = "button";
+    const icon = document.createElement("span");
+    icon.className = "msg-trace-section-icon";
+    icon.innerHTML = CHEVRON_RIGHT_SVG;
+    label.prepend(icon);
+    label.addEventListener("click", () => {
+      const open = section.dataset.open === "true";
+      section.dataset.open = String(!open);
+    });
+  }
+
+  const body = document.createElement("div");
+  body.className = "msg-trace-section-body";
+  body.appendChild(
+    buildTraceCode(raw, `msg-trace-code msg-trace-code--${variant}`, {
+      expandable: variant === "output",
+    })
+  );
+
+  section.appendChild(label);
+  section.appendChild(body);
+  return section;
+}
+
+function buildTraceItem(toolCall, outputs = [], { collapsible = true } = {}) {
+  const item = document.createElement("div");
+  item.className = "msg-trace-item";
+  const hasArguments = Boolean(toolCall?.arguments);
+  item.dataset.open = hasArguments && collapsible ? "false" : "true";
+  if (!collapsible || !hasArguments) {
+    item.dataset.static = "true";
+  }
+
+  const header = document.createElement("div");
+  header.className = "msg-trace-header";
+  if (collapsible && hasArguments) {
+    header.setAttribute("role", "button");
+    header.setAttribute("tabindex", "0");
+
+    const icon = document.createElement("span");
+    icon.className = "msg-trace-item-icon";
+    icon.innerHTML = CHEVRON_RIGHT_SVG;
+    header.appendChild(icon);
+  }
+
+  const title = document.createElement("span");
+  title.className = "msg-trace-title";
+  title.textContent = toolCall?.name || outputs[0]?.toolName || t("tool_output");
+  header.appendChild(title);
+
+  let argsBody = null;
+  if (toolCall?.arguments) {
+    argsBody = document.createElement("div");
+    argsBody.className = "msg-trace-item-body";
+    argsBody.appendChild(
+      buildTraceCode(toolCall.arguments, "msg-trace-code msg-trace-code--arguments")
+    );
+  }
+
+  const outputText = outputs
+    .map((output) => output.content || "")
+    .filter(Boolean)
+    .join("\n\n");
+  const sections = document.createElement("div");
+  sections.className = "msg-trace-sections";
+  if (outputText) {
+    sections.appendChild(
+      buildTraceSection(t("tool_output_label"), outputText, "output", {
+        collapsible: true,
+        defaultOpen: true,
+      })
+    );
+  }
+
+  if (!argsBody && !sections.childNodes.length) {
+    item.dataset.empty = "true";
+  }
+
+  if (collapsible) {
+    const toggle = () => {
+      if (item.dataset.empty === "true" || !hasArguments) return;
+      const open = item.dataset.open === "true";
+      item.dataset.open = String(!open);
+    };
+    header.addEventListener("click", toggle);
+    header.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        toggle();
+      }
+    });
+  }
+
+  item.appendChild(header);
+  if (argsBody) {
+    item.appendChild(argsBody);
+  }
+  if (sections.childNodes.length) {
+    item.appendChild(sections);
+  }
+  return item;
+}
+
+function pairToolCallsWithOutputs(toolCalls, toolOutputs) {
+  const usedOutputs = new Set();
+  const pairs = (toolCalls || []).map((toolCall, index) => {
+    const matchedOutputs = [];
+    for (const [outputIndex, toolOutput] of toolOutputs.entries()) {
+      if (usedOutputs.has(outputIndex)) continue;
+      const idsMatch =
+        toolCall.id &&
+        toolOutput.toolCallId &&
+        toolCall.id === toolOutput.toolCallId;
+      const fallbackMatch = !toolCall.id && outputIndex === index;
+      if (idsMatch || fallbackMatch) {
+        matchedOutputs.push(toolOutput);
+        usedOutputs.add(outputIndex);
+        if (!toolCall.id) break;
+      }
+    }
+    return { toolCall, outputs: matchedOutputs };
+  });
+
+  for (const [outputIndex, toolOutput] of toolOutputs.entries()) {
+    if (usedOutputs.has(outputIndex)) continue;
+    pairs.push({ toolCall: null, outputs: [toolOutput] });
+  }
+
+  return pairs;
+}
+
+function buildAssistantTrace(message, toolOutputs) {
+  const trace = document.createElement("div");
+  trace.className = "msg-trace";
+
+  const pairs = pairToolCallsWithOutputs(message.toolCalls || [], toolOutputs);
+  for (const pair of pairs) {
+    trace.appendChild(buildTraceItem(pair.toolCall, pair.outputs, { collapsible: true }));
+  }
+
+  return trace;
+}
+
+function buildAssistantIntent(message, trace) {
+  const intent = document.createElement("div");
+  intent.className = "msg-intent";
+  intent.dataset.open = "true";
+
+  const header = document.createElement("div");
+  header.className = "msg-intent-header";
+  header.setAttribute("role", "button");
+  header.setAttribute("tabindex", "0");
+
+  const icon = document.createElement("span");
+  icon.className = "msg-intent-icon";
+  icon.innerHTML = CHEVRON_RIGHT_SVG;
+
+  const text = document.createElement("div");
+  text.className = "msg-intent-text";
+  if (message.contentHtml) {
+    text.innerHTML = DOMPurify.sanitize(message.contentHtml);
+  } else {
+    text.textContent = message.content || "";
+  }
+  header.appendChild(icon);
+  header.appendChild(text);
+
+  const details = document.createElement("div");
+  details.className = "msg-intent-details";
+  details.appendChild(trace);
+
+  const toggle = () => {
+    const open = intent.dataset.open === "true";
+    intent.dataset.open = String(!open);
+  };
+  header.addEventListener("click", toggle);
+  header.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggle();
+    }
+  });
+
+  intent.appendChild(header);
+  intent.appendChild(details);
+  return intent;
+}
+
+function buildAssistantElement(message, activeProfile, toolOutputs = []) {
+  const ts = message.timestamp || null;
+  const { group, bubble } = makeMsgGroup("assistant", { profile: activeProfile || null, timestamp: ts });
+  const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
+  const hasContent = Boolean(message.contentHtml || message.content);
+  const hasTrace = hasToolCalls && (toolOutputs.length > 0 || message.toolCalls.length > 0);
+
+  if (hasTrace && hasContent) {
+    group.dataset.activity = "true";
+    bubble.appendChild(buildAssistantIntent(message, buildAssistantTrace(message, toolOutputs)));
+    return group;
+  }
+
+  if (message.contentHtml) {
+    const contentDiv = document.createElement("div");
+    contentDiv.className = "msg-content";
+    contentDiv.innerHTML = DOMPurify.sanitize(message.contentHtml);
+    bubble.appendChild(contentDiv);
+  } else if (message.content) {
+    const contentDiv = document.createElement("div");
+    contentDiv.className = "msg-content";
+    contentDiv.textContent = message.content;
+    bubble.appendChild(contentDiv);
+  } else if (hasToolCalls && message.toolCalls.length > 1) {
+    const summaryDiv = document.createElement("div");
+    summaryDiv.className = "msg-content msg-content--trace-summary";
+    summaryDiv.textContent = tToolCount(message.toolCalls.length);
+    bubble.appendChild(summaryDiv);
+  }
+
+  if (hasTrace) {
+    group.dataset.activity = "true";
+    bubble.appendChild(buildAssistantTrace(message, toolOutputs));
+  }
+
+  return group;
+}
+
 function buildMessageElement(message, activeProfile) {
   if (message.kind === "btw_thread") {
     return buildBtwThreadElement(message);
@@ -231,70 +571,12 @@ function buildMessageElement(message, activeProfile) {
     bubble.textContent = message.content || "";
     return group;
   } else if (message.role === "assistant") {
-    const { group, bubble } = makeMsgGroup("assistant", { profile: activeProfile || null, timestamp: ts });
-    if (message.toolCalls && message.toolCalls.length > 0) {
-      const toolsDiv = document.createElement("div");
-      toolsDiv.className = "msg-tool-calls";
-      const summary = document.createElement("div");
-      summary.className = "msg-tool-summary";
-      summary.appendChild(document.createTextNode(tToolCount(message.toolCalls.length)));
-      for (const tc of message.toolCalls) {
-        const badge = document.createElement("span");
-        badge.className = "msg-tool-badge";
-        badge.textContent = tc.name;
-        summary.appendChild(badge);
-      }
-      toolsDiv.appendChild(summary);
-      bubble.appendChild(toolsDiv);
-    }
-    if (message.contentHtml) {
-      const contentDiv = document.createElement("div");
-      if (message.toolCalls && message.toolCalls.length > 0) {
-        contentDiv.style.marginTop = "0.6rem";
-      }
-      contentDiv.innerHTML = DOMPurify.sanitize(message.contentHtml);
-      bubble.appendChild(contentDiv);
-    } else if (message.content) {
-      const contentDiv = document.createElement("div");
-      contentDiv.textContent = message.content;
-      bubble.appendChild(contentDiv);
-    }
-    return group;
+    return buildAssistantElement(message, activeProfile);
   } else if (message.role === "tool") {
     const { group, bubble } = makeMsgGroup("tool", { timestamp: ts });
-    const header = document.createElement("div");
-    header.className = "msg-tool-output-header";
-    header.appendChild(document.createTextNode(t("tool_output") + "\u00a0"));
-    if (message.toolName) {
-      const badge = document.createElement("span");
-      badge.className = "msg-tool-badge";
-      badge.textContent = message.toolName;
-      header.appendChild(badge);
-    }
-    const contentEl = document.createElement("div");
-    contentEl.className = "msg-tool-output-content";
-    const raw = message.content || "";
-    try {
-      const formatted = JSON.stringify(JSON.parse(raw), null, 2);
-      contentEl.innerHTML = DOMPurify.sanitize(
-        hljs.highlight(formatted, { language: "json" }).value
-      );
-      contentEl.classList.add("hljs");
-    } catch {
-      const result = hljs.highlightAuto(raw, ["bash", "yaml", "xml"]);
-      if (result.relevance > 5) {
-        contentEl.innerHTML = DOMPurify.sanitize(result.value);
-        contentEl.classList.add("hljs");
-      } else {
-        contentEl.textContent = raw;
-      }
-    }
-    header.addEventListener("click", () => {
-      header.classList.toggle("open");
-      contentEl.classList.toggle("open");
-    });
-    bubble.appendChild(header);
-    bubble.appendChild(contentEl);
+    group.dataset.trace = "true";
+    bubble.classList.add("msg-bubble--trace");
+    bubble.appendChild(buildToolOutputElement(message));
     return group;
   }
   return null;
@@ -325,7 +607,21 @@ export function appendAssistantMessage(content) {
 
 function batchRender(messages, activeProfile) {
   const frag = document.createDocumentFragment();
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
+      const toolOutputs = [];
+      let nextIndex = index + 1;
+      while (nextIndex < messages.length && messages[nextIndex].role === "tool") {
+        toolOutputs.push(messages[nextIndex]);
+        nextIndex += 1;
+      }
+      const el = buildAssistantElement(message, activeProfile || "", toolOutputs);
+      if (el) frag.appendChild(el);
+      index = nextIndex - 1;
+      continue;
+    }
+
     const el = buildMessageElement(message, activeProfile || "");
     if (el) frag.appendChild(el);
   }

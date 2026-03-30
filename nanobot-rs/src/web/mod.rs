@@ -25,7 +25,7 @@ use crate::agent::AgentLoop;
 use crate::channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinLoginManager};
 use crate::config::WeixinConfig;
 use crate::cron::CronService;
-use crate::mcp::McpServerInfo;
+use crate::mcp::{McpServerInfo, McpServerToolAction};
 use crate::presentation::render_web_html;
 use crate::session::{
     Session, SessionGroupSummary, SessionMessage, SessionSummary, split_session_key,
@@ -101,6 +101,14 @@ pub trait ChatService: Send + Sync {
     async fn toggle_mcp_tool(&self, _name: &str, _enabled: bool) -> Result<bool> {
         bail!("toggle mcp tool is not implemented for this service")
     }
+
+    async fn apply_mcp_server_action(
+        &self,
+        _name: &str,
+        _action: McpServerToolAction,
+    ) -> Result<bool> {
+        bail!("mcp server tool action is not implemented for this service")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -134,7 +142,11 @@ pub struct WebSessionGroup {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WebToolCall {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -155,6 +167,8 @@ pub struct WebTranscriptMessage {
     pub tool_calls: Option<Vec<WebToolCall>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -324,7 +338,10 @@ pub fn build_router(state: AppState) -> Router {
             get(api::list_sessions).post(api::create_session),
         )
         .route("/api/sessions/duplicate", post(api::duplicate_session))
-        .route("/api/sessions/{channel}/{id}", get(api::get_session).delete(api::delete_session))
+        .route(
+            "/api/sessions/{channel}/{id}",
+            get(api::get_session).delete(api::delete_session),
+        )
         .route(
             "/api/sessions/{channel}/{id}/profile",
             post(api::set_session_profile),
@@ -335,12 +352,22 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/weixin/login/status", get(api::poll_weixin_login))
         .route("/api/weixin/logout", post(api::logout_weixin))
         .route("/api/chat", post(api::chat))
-        .route("/api/cron/jobs", get(api::list_cron_jobs).post(api::add_cron_job))
-        .route("/api/cron/jobs/{id}", axum::routing::delete(api::delete_cron_job))
+        .route(
+            "/api/cron/jobs",
+            get(api::list_cron_jobs).post(api::add_cron_job),
+        )
+        .route(
+            "/api/cron/jobs/{id}",
+            axum::routing::delete(api::delete_cron_job),
+        )
         .route("/api/cron/jobs/{id}/toggle", post(api::toggle_cron_job))
         .route("/api/cron/jobs/{id}/run", post(api::run_cron_job))
         .route("/api/mcp/servers", get(api::list_mcp_servers))
         .route("/api/mcp/tools/{name}/toggle", post(api::toggle_mcp_tool))
+        .route(
+            "/api/mcp/servers/{name}/tools/bulk",
+            post(api::apply_mcp_server_action),
+        )
         .with_state(state)
 }
 
@@ -609,7 +636,15 @@ impl ChatService for AgentChatService {
     }
 
     async fn toggle_mcp_tool(&self, name: &str, enabled: bool) -> Result<bool> {
-        Ok(self.agent.toggle_mcp_tool(name, enabled).await)
+        self.agent.toggle_mcp_tool(name, enabled).await
+    }
+
+    async fn apply_mcp_server_action(
+        &self,
+        name: &str,
+        action: McpServerToolAction,
+    ) -> Result<bool> {
+        self.agent.apply_mcp_server_action(name, action).await
     }
 }
 
@@ -774,6 +809,7 @@ fn transcript_messages(messages: &[SessionMessage]) -> Vec<WebTranscriptMessage>
                     stale,
                     tool_calls: None,
                     tool_name: None,
+                    tool_call_id: None,
                 });
             }
             Some("btw_answer") => {}
@@ -803,6 +839,7 @@ fn transcript_message(message: &SessionMessage) -> Option<WebTranscriptMessage> 
                 stale: false,
                 tool_calls: None,
                 tool_name: None,
+                tool_call_id: None,
             })
         }
         "assistant" => {
@@ -811,8 +848,30 @@ fn transcript_message(message: &SessionMessage) -> Option<WebTranscriptMessage> 
                 let result: Vec<WebToolCall> = calls
                     .iter()
                     .filter_map(|call| {
-                        let name = call.get("function")?.get("name")?.as_str()?.to_string();
-                        Some(WebToolCall { name })
+                        let function = call
+                            .get("function")
+                            .and_then(serde_json::Value::as_object)
+                            .cloned()
+                            .unwrap_or_default();
+                        let id = call
+                            .get("id")
+                            .or_else(|| call.get("call_id"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToString::to_string);
+                        let name = function
+                            .get("name")
+                            .or_else(|| call.get("name"))
+                            .and_then(serde_json::Value::as_str)?
+                            .to_string();
+                        let arguments = function
+                            .get("arguments")
+                            .or_else(|| call.get("arguments"))
+                            .and_then(stringify_web_tool_payload);
+                        Some(WebToolCall {
+                            id,
+                            name,
+                            arguments,
+                        })
                     })
                     .collect();
                 if result.is_empty() {
@@ -840,6 +899,7 @@ fn transcript_message(message: &SessionMessage) -> Option<WebTranscriptMessage> 
                 stale: false,
                 tool_calls,
                 tool_name: None,
+                tool_call_id: None,
             })
         }
         "tool" => {
@@ -856,9 +916,18 @@ fn transcript_message(message: &SessionMessage) -> Option<WebTranscriptMessage> 
                 stale: false,
                 tool_calls: None,
                 tool_name: Some(tool_name),
+                tool_call_id: message.tool_call_id.clone(),
             })
         }
         _ => None,
+    }
+}
+
+fn stringify_web_tool_payload(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(text) => Some(text.clone()),
+        other => Some(other.to_string()),
     }
 }
 

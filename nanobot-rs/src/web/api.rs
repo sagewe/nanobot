@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::cron::{CronJob, CronSchedule};
-use crate::mcp::McpServerInfo;
+use crate::mcp::{McpServerInfo, McpServerToolAction};
 
 use super::{
     AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary, WebWeixinAccount,
@@ -272,7 +272,9 @@ pub struct AddCronJobRequest {
 pub async fn list_cron_jobs(
     State(state): State<AppState>,
 ) -> Result<Json<CronJobListResponse>, ApiError> {
-    let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let cron = state
+        .cron
+        .ok_or_else(|| ApiError::not_found("cron service not available"))?;
     let jobs = cron.list_jobs(true);
     Ok(Json(CronJobListResponse { jobs }))
 }
@@ -281,7 +283,9 @@ pub async fn add_cron_job(
     State(state): State<AppState>,
     Json(req): Json<AddCronJobRequest>,
 ) -> Result<Json<CronJob>, ApiError> {
-    let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let cron = state
+        .cron
+        .ok_or_else(|| ApiError::not_found("cron service not available"))?;
     if req.message.is_empty() {
         return Err(ApiError::bad_request("message is required"));
     }
@@ -298,7 +302,9 @@ pub async fn add_cron_job(
             .map_err(|_| ApiError::bad_request(format!("invalid datetime: {at_str}")))?;
         CronSchedule::at(dt.timestamp_millis())
     } else {
-        return Err(ApiError::bad_request("one of every_seconds, cron_expr, or at is required"));
+        return Err(ApiError::bad_request(
+            "one of every_seconds, cron_expr, or at is required",
+        ));
     };
     let delete_after = matches!(schedule.kind, crate::cron::ScheduleKind::At);
     let job_name = req.name.filter(|n| !n.is_empty()).unwrap_or_else(|| {
@@ -323,7 +329,9 @@ pub async fn delete_cron_job(
     Path(id): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let cron = state
+        .cron
+        .ok_or_else(|| ApiError::not_found("cron service not available"))?;
     if cron.remove_job(&id) {
         Ok(Json(json!({ "ok": true })))
     } else {
@@ -335,7 +343,9 @@ pub async fn toggle_cron_job(
     Path(id): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<CronJob>, ApiError> {
-    let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let cron = state
+        .cron
+        .ok_or_else(|| ApiError::not_found("cron service not available"))?;
     let job = cron
         .toggle_job(&id)
         .ok_or_else(|| ApiError::not_found(format!("job {id} not found")))?;
@@ -346,7 +356,9 @@ pub async fn run_cron_job(
     Path(id): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cron = state.cron.ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let cron = state
+        .cron
+        .ok_or_else(|| ApiError::not_found("cron service not available"))?;
     if cron.run_job(&id, true).await {
         Ok(Json(json!({ "ok": true })))
     } else {
@@ -366,7 +378,11 @@ pub struct McpServerListResponse {
 pub async fn list_mcp_servers(
     State(state): State<AppState>,
 ) -> Result<Json<McpServerListResponse>, ApiError> {
-    let servers = state.chat.list_mcp_servers().await.map_err(ApiError::internal)?;
+    let servers = state
+        .chat
+        .list_mcp_servers()
+        .await
+        .map_err(ApiError::internal)?;
     Ok(Json(McpServerListResponse { servers }))
 }
 
@@ -380,11 +396,38 @@ pub async fn toggle_mcp_tool(
     Path(name): Path<String>,
     Json(body): Json<ToggleMcpToolRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let found = state.chat.toggle_mcp_tool(&name, body.enabled).await.map_err(ApiError::internal)?;
+    let found = state
+        .chat
+        .toggle_mcp_tool(&name, body.enabled)
+        .await
+        .map_err(ApiError::internal)?;
     if found {
         Ok(Json(json!({ "ok": true })))
     } else {
         Err(ApiError::not_found(format!("tool '{name}' not found")))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerActionRequest {
+    pub action: McpServerToolAction,
+}
+
+pub async fn apply_mcp_server_action(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<McpServerActionRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let found = state
+        .chat
+        .apply_mcp_server_action(&name, body.action)
+        .await
+        .map_err(ApiError::internal)?;
+    if found {
+        Ok(Json(json!({ "ok": true })))
+    } else {
+        Err(ApiError::not_found(format!("server '{name}' not found")))
     }
 }
 

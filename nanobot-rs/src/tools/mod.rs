@@ -1114,7 +1114,9 @@ fn format_schedule_timing(schedule: &CronSchedule) -> String {
             let dt = schedule
                 .at_ms
                 .and_then(chrono::DateTime::from_timestamp_millis)
-                .map(|dt: chrono::DateTime<chrono::Utc>| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                .map(|dt: chrono::DateTime<chrono::Utc>| {
+                    dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+                })
                 .unwrap_or_default();
             format!("at {dt}")
         }

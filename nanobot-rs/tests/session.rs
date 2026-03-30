@@ -601,10 +601,7 @@ fn get_history_excludes_timeline_only_messages_from_model_context() {
         tool_calls: None,
         tool_call_id: None,
         name: None,
-        extra: serde_json::Map::from_iter([(
-            "_exclude_from_context".to_string(),
-            json!(true),
-        )]),
+        extra: serde_json::Map::from_iter([("_exclude_from_context".to_string(), json!(true))]),
     });
     session.messages.push(SessionMessage {
         role: "assistant".to_string(),
@@ -613,10 +610,7 @@ fn get_history_excludes_timeline_only_messages_from_model_context() {
         tool_calls: None,
         tool_call_id: None,
         name: None,
-        extra: serde_json::Map::from_iter([(
-            "_exclude_from_context".to_string(),
-            json!(true),
-        )]),
+        extra: serde_json::Map::from_iter([("_exclude_from_context".to_string(), json!(true))]),
     });
 
     let history = session.get_history(100);

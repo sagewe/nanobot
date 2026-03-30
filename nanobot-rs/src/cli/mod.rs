@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::agent::AgentLoop;
-use crate::bus::{MessageBus, OutboundMessage, InboundMessage};
+use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::channels::ChannelManager;
 use crate::config::{Config, default_workspace_path, load_config, save_config};
 use crate::cron::{CronJob, CronService};
@@ -145,7 +145,11 @@ async fn agent(
     let agent = AgentLoop::from_config(bus.clone(), provider, config.clone()).await?;
 
     if !config.tools.mcp.is_empty() {
-        let mcp_clients = connect_mcp_servers(&config.tools.mcp).await;
+        let mcp_clients = connect_mcp_servers(
+            &config.tools.mcp,
+            Some(config.workspace_path().join("mcp").join("tools.json")),
+        )
+        .await;
         agent.attach_mcp(mcp_clients).await;
     }
 
@@ -298,7 +302,11 @@ async fn gateway(args: GatewayArgs) -> Result<()> {
     let agent = AgentLoop::from_config(bus.clone(), provider.clone(), config.clone()).await?;
 
     if !config.tools.mcp.is_empty() {
-        let mcp_clients = connect_mcp_servers(&config.tools.mcp).await;
+        let mcp_clients = connect_mcp_servers(
+            &config.tools.mcp,
+            Some(config.workspace_path().join("mcp").join("tools.json")),
+        )
+        .await;
         agent.attach_mcp(mcp_clients).await;
     }
 

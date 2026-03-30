@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::cron::CronService;
-use crate::mcp::McpClients;
+use crate::mcp::{McpClients, McpServerToolAction};
 
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -144,7 +144,10 @@ impl ContextBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp::test_clients;
+    use crate::providers::LlmResponse;
     use chrono::{Duration, TimeZone};
+    use serde_json::Map;
 
     #[test]
     fn merge_timeline_only_messages_does_not_reorder_existing_session_turns() {
@@ -208,6 +211,71 @@ mod tests {
             contents,
             vec!["main reply", "main query", "side question", "side answer"]
         );
+    }
+
+    #[tokio::test]
+    async fn build_tools_omits_disabled_mcp_tools() {
+        struct NoopProvider;
+
+        #[async_trait]
+        impl LlmProvider for NoopProvider {
+            fn default_model(&self) -> &str {
+                "mock-model"
+            }
+
+            async fn chat(
+                &self,
+                _messages: Vec<serde_json::Value>,
+                _tools: Vec<serde_json::Value>,
+                _model: &str,
+            ) -> anyhow::Result<LlmResponse> {
+                Ok(LlmResponse {
+                    content: Some("ok".to_string()),
+                    tool_calls: Vec::new(),
+                    finish_reason: "stop".to_string(),
+                    extra: Map::new(),
+                })
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = AgentLoop::new(
+            MessageBus::new(16),
+            Arc::new(NoopProvider),
+            dir.path().to_path_buf(),
+            "mock-model".to_string(),
+            4,
+            0,
+            false,
+            WebToolsConfig::default(),
+        )
+        .await
+        .expect("agent");
+        agent
+            .attach_mcp(test_clients(
+                &[
+                    ("demo", "search", "Search docs"),
+                    ("demo", "fetch", "Fetch docs"),
+                ],
+                &["mcp_demo_fetch"],
+                None,
+            ))
+            .await;
+
+        let tools = agent.build_tools().await;
+        let names = tools
+            .definitions()
+            .await
+            .into_iter()
+            .filter_map(|tool| {
+                tool.pointer("/function/name")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"mcp_demo_search".to_string()));
+        assert!(!names.contains(&"mcp_demo_fetch".to_string()));
     }
 }
 
@@ -762,10 +830,21 @@ impl AgentLoop {
         }
     }
 
-    pub async fn toggle_mcp_tool(&self, name: &str, enabled: bool) -> bool {
+    pub async fn toggle_mcp_tool(&self, name: &str, enabled: bool) -> Result<bool> {
         match &*self.mcp.lock().await {
             Some(mcp) => mcp.toggle_tool(name, enabled),
-            None => false,
+            None => Ok(false),
+        }
+    }
+
+    pub async fn apply_mcp_server_action(
+        &self,
+        name: &str,
+        action: McpServerToolAction,
+    ) -> Result<bool> {
+        match &*self.mcp.lock().await {
+            Some(mcp) => mcp.apply_server_action(name, action),
+            None => Ok(false),
         }
     }
 
@@ -814,7 +893,8 @@ impl AgentLoop {
             None
         };
         if let Some(generation) = main_generation {
-            self.publish_pending_btw_stale(&session_key, generation).await;
+            self.publish_pending_btw_stale(&session_key, generation)
+                .await;
         }
         let tools = self.build_tools().await;
         let dispatch_result = self.process_message(msg, &tools).await;
@@ -918,8 +998,9 @@ impl AgentLoop {
         OutboundMessage {
             channel: msg.channel.clone(),
             chat_id: msg.chat_id.clone(),
-            content: "No active main task is running in this session. Send a normal message instead."
-                .to_string(),
+            content:
+                "No active main task is running in this session. Send a normal message instead."
+                    .to_string(),
             metadata: HashMap::new(),
         }
     }
@@ -1082,8 +1163,8 @@ impl AgentLoop {
     ) -> Result<String> {
         Ok(self
             .process_direct_result_internal(content, session_key, channel, chat_id, false)
-            .await
-            ?.reply)
+            .await?
+            .reply)
     }
 
     pub async fn process_direct_logged(
@@ -1095,8 +1176,8 @@ impl AgentLoop {
     ) -> Result<String> {
         Ok(self
             .process_direct_result_internal(content, session_key, channel, chat_id, true)
-            .await
-            ?.reply)
+            .await?
+            .reply)
     }
 
     pub async fn process_direct_result_logged(
@@ -1150,7 +1231,8 @@ impl AgentLoop {
             None
         };
         if let Some(generation) = main_generation {
-            self.publish_pending_btw_stale(session_key, generation).await;
+            self.publish_pending_btw_stale(session_key, generation)
+                .await;
         }
         let persisted_outbound = !self.is_ephemeral_direct_message(&msg.content);
         let tools = self.build_tools().await;
@@ -1402,8 +1484,9 @@ impl AgentLoop {
         let question = Self::btw_question(&msg.content)
             .flatten()
             .ok_or_else(|| anyhow!("missing BTW question"))?;
-        if let BtwCompletion::Stale(content) =
-            self.classify_btw_completion(session_key, bound_generation).await
+        if let BtwCompletion::Stale(content) = self
+            .classify_btw_completion(session_key, bound_generation)
+            .await
         {
             return Ok(BtwCompletion::Stale(content));
         }
@@ -1434,16 +1517,22 @@ impl AgentLoop {
             Some(&msg.channel),
             Some(&msg.chat_id),
         );
-        if let BtwCompletion::Stale(content) =
-            self.classify_btw_completion(session_key, bound_generation).await
+        if let BtwCompletion::Stale(content) = self
+            .classify_btw_completion(session_key, bound_generation)
+            .await
         {
             return Ok(BtwCompletion::Stale(content));
         }
-        let (final_content, _) = self.run_agent_loop(messages, None, &tools, &request).await?;
-        match self.classify_btw_completion(session_key, bound_generation).await {
-            BtwCompletion::Deliver(_) => {
-                Ok(BtwCompletion::Deliver(self.btw_result_text(final_content, &tools).await))
-            }
+        let (final_content, _) = self
+            .run_agent_loop(messages, None, &tools, &request)
+            .await?;
+        match self
+            .classify_btw_completion(session_key, bound_generation)
+            .await
+        {
+            BtwCompletion::Deliver(_) => Ok(BtwCompletion::Deliver(
+                self.btw_result_text(final_content, &tools).await,
+            )),
             other => Ok(other),
         }
     }
@@ -1456,10 +1545,11 @@ impl AgentLoop {
     ) -> (OutboundMessage, bool) {
         let completion = match self.run_btw_once(&msg, session_key, bound_generation).await {
             Ok(completion) => completion,
-            Err(error) => match self.classify_btw_completion(session_key, bound_generation).await {
-                BtwCompletion::Deliver(_) => {
-                    BtwCompletion::Deliver(format!("BTW failed: {error}"))
-                }
+            Err(error) => match self
+                .classify_btw_completion(session_key, bound_generation)
+                .await
+            {
+                BtwCompletion::Deliver(_) => BtwCompletion::Deliver(format!("BTW failed: {error}")),
                 other => other,
             },
         };
@@ -1786,11 +1876,7 @@ impl AgentLoop {
         true
     }
 
-    async fn classify_btw_state(
-        &self,
-        session_key: &str,
-        bound_generation: u64,
-    ) -> BtwCompletion {
+    async fn classify_btw_state(&self, session_key: &str, bound_generation: u64) -> BtwCompletion {
         let states = self.lane_states.lock().await;
         let Some(state) = states.get(session_key) else {
             return BtwCompletion::Deliver(String::new());
@@ -1822,7 +1908,11 @@ impl AgentLoop {
         let this = self.clone();
         let session_key_for_handle = session_key.clone();
         let handle = tokio::spawn(async move {
-            if this.current_session_generation(&session_key_for_handle).await != expected_generation {
+            if this
+                .current_session_generation(&session_key_for_handle)
+                .await
+                != expected_generation
+            {
                 return;
             }
             if let Err(error) = this.dispatch(msg).await {
@@ -1853,9 +1943,9 @@ impl AgentLoop {
                     let msg_for_task = msg.clone();
                     let stale_reply = self.stale_btw_reply(&msg);
                     let handle = tokio::spawn(async move {
-                        let (outbound, _) =
-                            this.process_btw(msg_for_task, &session_key_for_task, bound_generation)
-                                .await;
+                        let (outbound, _) = this
+                            .process_btw(msg_for_task, &session_key_for_task, bound_generation)
+                            .await;
                         this.release_btw_slot(&session_key_for_task).await;
                         this.btw_tasks.lock().await.remove(&session_key_for_task);
                         if !outbound.content.is_empty() {
@@ -1900,7 +1990,8 @@ impl AgentLoop {
         let session_key_clone = session_key.clone();
         let timer = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(delay)).await;
-            this.flush_pending_burst(&session_key_clone, generation).await;
+            this.flush_pending_burst(&session_key_clone, generation)
+                .await;
         });
         bursts.insert(
             session_key,
@@ -1962,17 +2053,17 @@ impl AgentLoop {
         anchor: Option<&MainLaneAnchor>,
     ) -> SessionMessage {
         let mut extra = serde_json::Map::new();
-        extra.insert(
-            EXCLUDE_FROM_CONTEXT_EXTRA_KEY.to_string(),
-            json!(true),
-        );
+        extra.insert(EXCLUDE_FROM_CONTEXT_EXTRA_KEY.to_string(), json!(true));
         extra.insert(TIMELINE_KIND_EXTRA_KEY.to_string(), json!(timeline_kind));
         extra.insert(BTW_ID_EXTRA_KEY.to_string(), json!(btw_id));
         if stale {
             extra.insert(BTW_STALE_EXTRA_KEY.to_string(), json!(true));
         }
         if let Some(anchor) = anchor {
-            extra.insert(TIMELINE_AFTER_ROLE_EXTRA_KEY.to_string(), json!(anchor.role));
+            extra.insert(
+                TIMELINE_AFTER_ROLE_EXTRA_KEY.to_string(),
+                json!(anchor.role),
+            );
             extra.insert(
                 TIMELINE_AFTER_CONTENT_EXTRA_KEY.to_string(),
                 json!(anchor.content),
@@ -2001,7 +2092,9 @@ impl AgentLoop {
 
         for (idx, message) in existing.messages.iter().enumerate() {
             if !message.excluded_from_context()
-                || current_messages.iter().any(|candidate| candidate == message)
+                || current_messages
+                    .iter()
+                    .any(|candidate| candidate == message)
             {
                 continue;
             }
@@ -2010,7 +2103,11 @@ impl AgentLoop {
                 .iter()
                 .rev()
                 .find(|candidate| !candidate.excluded_from_context())
-                .and_then(|anchor| current_messages.iter().position(|candidate| candidate == anchor));
+                .and_then(|anchor| {
+                    current_messages
+                        .iter()
+                        .position(|candidate| candidate == anchor)
+                });
 
             if let Some(anchor_idx) = previous_anchor {
                 insert_after
@@ -2033,7 +2130,11 @@ impl AgentLoop {
             let next_anchor = existing.messages[idx + 1..]
                 .iter()
                 .find(|candidate| !candidate.excluded_from_context())
-                .and_then(|anchor| current_messages.iter().position(|candidate| candidate == anchor));
+                .and_then(|anchor| {
+                    current_messages
+                        .iter()
+                        .position(|candidate| candidate == anchor)
+                });
 
             if let Some(anchor_idx) = next_anchor {
                 insert_before
@@ -2145,7 +2246,9 @@ impl AgentLoop {
             .and_then(|question| question)
             .unwrap_or_else(|| user_content.trim().to_string());
         let btw_id = Uuid::new_v4().to_string();
-        let anchor = self.main_anchor_for_generation(session_key, bound_generation).await;
+        let anchor = self
+            .main_anchor_for_generation(session_key, bound_generation)
+            .await;
         session.messages.push(Self::timeline_only_message(
             "user",
             question,

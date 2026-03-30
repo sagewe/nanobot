@@ -46,6 +46,10 @@ export const TRANSLATIONS = {
     sender_pikachu: "Pikachu",
     copy: "Copy",
     tool_output: "Tool output",
+    tool_arguments: "Arguments",
+    tool_output_label: "Output",
+    expand_output: "Expand output",
+    collapse_output: "Collapse output",
     starting_session: "Starting a new session...",
     session_started: "New session started.",
     failed_create_session: "Failed to create session",
@@ -133,6 +137,10 @@ export const TRANSLATIONS = {
     mcp_enable_tool: "Enable tool",
     mcp_disable_tool: "Disable tool",
     mcp_toggle_failed: "Failed to update tool",
+    mcp_enable_all: "Enable all",
+    mcp_disable_all: "Disable all",
+    mcp_reset: "Restore defaults",
+    mcp_action_failed: "Failed to update server tools",
   },
   zh: {
     app_name: "Pikachu",
@@ -181,6 +189,10 @@ export const TRANSLATIONS = {
     sender_pikachu: "Pikachu",
     copy: "\u590d\u5236",
     tool_output: "\u5de5\u5177\u8f93\u51fa",
+    tool_arguments: "\u53c2\u6570",
+    tool_output_label: "\u8f93\u51fa",
+    expand_output: "\u653e\u5927\u8f93\u51fa",
+    collapse_output: "\u6536\u8d77\u8f93\u51fa",
     starting_session: "\u6b63\u5728\u521b\u5efa\u4f1a\u8bdd\u2026",
     session_started: "\u4f1a\u8bdd\u5df2\u521b\u5efa\u3002",
     failed_create_session: "\u521b\u5efa\u4f1a\u8bdd\u5931\u8d25",
@@ -268,6 +280,10 @@ export const TRANSLATIONS = {
     mcp_enable_tool: "\u542f\u7528\u5de5\u5177",
     mcp_disable_tool: "\u7981\u7528\u5de5\u5177",
     mcp_toggle_failed: "\u66f4\u65b0\u5de5\u5177\u72b6\u6001\u5931\u8d25",
+    mcp_enable_all: "\u5168\u90e8\u542f\u7528",
+    mcp_disable_all: "\u5168\u90e8\u7981\u7528",
+    mcp_reset: "\u6062\u590d\u9ed8\u8ba4",
+    mcp_action_failed: "\u66f4\u65b0\u670d\u52a1\u5668\u5de5\u5177\u5931\u8d25",
   },
 };
 
@@ -296,8 +312,10 @@ export function tChannel(name) {
 }
 
 export function tToolCount(count) {
-  if (_lang === "zh") return `\u5de5\u5177 ${count} \u4e2a\u00a0`;
-  return `${count} tool${count > 1 ? "s" : ""}\u00a0`;
+  if (_lang === "zh") {
+    return `\u8c03\u7528\u4e86 ${count} \u4e2a\u5de5\u5177`;
+  }
+  return `Used ${count} tools`;
 }
 
 export function applyI18n() {

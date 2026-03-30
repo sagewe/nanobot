@@ -179,6 +179,19 @@ export async function toggleMcpTool(name, enabled) {
   return payload;
 }
 
+export async function applyMcpServerAction(name, action) {
+  const response = await fetch(`/api/mcp/servers/${encodeURIComponent(name)}/tools/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || t("mcp_action_failed"));
+  }
+  return payload;
+}
+
 export async function loadProfiles() {
   try {
     const response = await fetch("/api/profiles");

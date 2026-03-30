@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use axum::extract::State;
-use axum::http::{header, HeaderMap, Method, StatusCode, Uri};
+use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::{Json, Router};
@@ -18,7 +18,7 @@ use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig};
 use nanobot_rs::providers::{
     LlmProvider, LlmResponse, ProviderPool, ProviderRequestDescriptor, ToolCall,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify};
@@ -1024,12 +1024,14 @@ async fn agent_process_direct_returns_message_tool_reply() {
         .await
         .expect("process");
     assert_eq!(result, long_chinese);
-    assert!(tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        bus.consume_outbound()
-    )
-    .await
-    .is_err());
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            bus.consume_outbound()
+        )
+        .await
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -1097,12 +1099,14 @@ async fn agent_bus_mode_suppresses_duplicate_final_reply_after_message_tool() {
         }
     };
     assert_eq!(outbound.content, long_chinese);
-    assert!(tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        bus.consume_outbound()
-    )
-    .await
-    .is_err());
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            bus.consume_outbound()
+        )
+        .await
+        .is_err()
+    );
     agent.stop();
     runner.abort();
 }
@@ -1340,10 +1344,12 @@ async fn model_command_can_switch_a_session_to_a_codex_profile_and_use_the_codex
         Some("Bearer access-token")
     );
     assert_eq!(requests[0].account_id.as_deref(), Some("account-id"));
-    assert!(requests[0]
-        .accept
-        .as_deref()
-        .is_some_and(|value| value.contains("text/event-stream")));
+    assert!(
+        requests[0]
+            .accept
+            .as_deref()
+            .is_some_and(|value| value.contains("text/event-stream"))
+    );
     assert_eq!(
         requests[0].body.get("model").and_then(Value::as_str),
         Some("gpt-5.4")
@@ -1465,10 +1471,12 @@ async fn codex_profile_runs_a_tool_call_second_round_and_sends_tool_results_back
         requests[1].body.get("model").and_then(Value::as_str),
         Some("gpt-5.4")
     );
-    assert!(requests[1]
-        .accept
-        .as_deref()
-        .is_some_and(|value| value.contains("text/event-stream")));
+    assert!(
+        requests[1]
+            .accept
+            .as_deref()
+            .is_some_and(|value| value.contains("text/event-stream"))
+    );
 
     let second_input = requests[1]
         .body
@@ -1695,10 +1703,12 @@ async fn session_burst_messages_are_merged_into_one_turn() {
         .filter(|message| message.role == "user")
         .collect::<Vec<_>>();
     assert_eq!(user_turns.len(), 1);
-    assert!(user_turns[0]
-        .content
-        .as_str()
-        .is_some_and(|value| value.contains("[Compressed user burst]")));
+    assert!(
+        user_turns[0]
+            .content
+            .as_str()
+            .is_some_and(|value| value.contains("[Compressed user burst]"))
+    );
 
     agent.stop();
     runner.abort();
@@ -2703,14 +2713,9 @@ async fn btw_timeline_merge_keeps_the_query_before_the_main_reply() {
         .expect("agent");
     let runner = spawn_runner(agent.clone());
 
-    bus.publish_inbound(inbound_message(
-        "cli",
-        "order",
-        "cli:order",
-        "main-hold",
-    ))
-    .await
-    .expect("publish main");
+    bus.publish_inbound(inbound_message("cli", "order", "cli:order", "main-hold"))
+        .await
+        .expect("publish main");
     wait_for_flag(&state.main_started, &state.main_started_notify).await;
 
     bus.publish_inbound(inbound_message(
@@ -2905,8 +2910,8 @@ async fn btw_rejects_when_the_bound_main_generation_changes_before_start() {
         .await
         .expect("stop should cancel the first generation")
         .expect("stop outbound");
-    let mut saw_stale = first_outbound.content.contains("stale")
-        || first_outbound.content.contains("generation");
+    let mut saw_stale =
+        first_outbound.content.contains("stale") || first_outbound.content.contains("generation");
 
     state.main_released.store(true, Ordering::SeqCst);
     state.main_release_notify.notify_waiters();
@@ -3054,9 +3059,14 @@ async fn stop_releases_the_btw_slot_for_the_next_generation() {
         .expect("publish first main");
     wait_for_flag(&state.main_started, &state.main_started_notify).await;
 
-    bus.publish_inbound(inbound_message("cli", "slot2", "cli:slot2", "/btw hold-btw"))
-        .await
-        .expect("publish first btw");
+    bus.publish_inbound(inbound_message(
+        "cli",
+        "slot2",
+        "cli:slot2",
+        "/btw hold-btw",
+    ))
+    .await
+    .expect("publish first btw");
     wait_for_flag(&state.btw_started, &state.btw_started_notify).await;
 
     bus.publish_inbound(inbound_message("cli", "slot2", "cli:slot2", "/stop"))
@@ -3066,7 +3076,11 @@ async fn stop_releases_the_btw_slot_for_the_next_generation() {
         .await
         .expect("stop outbound")
         .expect("stop outbound");
-    assert!(stop_outbound.content.starts_with("Stopped "), "{}", stop_outbound.content);
+    assert!(
+        stop_outbound.content.starts_with("Stopped "),
+        "{}",
+        stop_outbound.content
+    );
 
     state.main_released.store(false, Ordering::SeqCst);
     bus.publish_inbound(inbound_message("cli", "slot2", "cli:slot2", "main-hold"))

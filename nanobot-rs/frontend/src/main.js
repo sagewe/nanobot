@@ -19,6 +19,7 @@ import {
   runCronJob,
   fetchMcpServers,
   toggleMcpTool,
+  applyMcpServerAction,
 } from "./api.js";
 import {
   setStatus,
@@ -1157,6 +1158,16 @@ function updateMcpServerCount(serverCard) {
   }
 }
 
+async function runMcpServerAction(serverName, action) {
+  mcpPopover.hide();
+  try {
+    await applyMcpServerAction(serverName, action);
+    await refreshMcp();
+  } catch (error) {
+    setStatus(error?.message || t("mcp_action_failed"), "error");
+  }
+}
+
 // ── MCP tool popover ──────────────────────────────────────────────────────────
 const mcpPopover = (() => {
   const el = document.createElement("div");
@@ -1250,10 +1261,29 @@ function renderMcpList(servers) {
       <strong class="mcp-server-name">${escapeHtml(server.name)}</strong>
       <span class="mcp-server-count">${formatMcpToolCount(enabledCount, server.tool_count)}</span>
     </div>
+    <div class="mcp-server-actions">
+      <button type="button" class="mcp-server-action" data-server-action="enableAll" data-server-name="${escapeHtml(server.name)}">${t("mcp_enable_all")}</button>
+      <button type="button" class="mcp-server-action" data-server-action="disableAll" data-server-name="${escapeHtml(server.name)}">${t("mcp_disable_all")}</button>
+      <button type="button" class="mcp-server-action" data-server-action="reset" data-server-name="${escapeHtml(server.name)}">${t("mcp_reset")}</button>
+    </div>
   </div>
   ${server.tools.length ? `<div class="mcp-tool-grid">${toolsHtml}</div>` : ""}
 </div>`;
   }).join("");
+
+  mcpList.querySelectorAll(".mcp-server-action").forEach(button => {
+    button.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const serverName = button.dataset.serverName;
+      const action = button.dataset.serverAction;
+      button.disabled = true;
+      try {
+        await runMcpServerAction(serverName, action);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
 
   mcpList.querySelectorAll(".mcp-tool-card").forEach(card => {
     card.addEventListener("click", (e) => {

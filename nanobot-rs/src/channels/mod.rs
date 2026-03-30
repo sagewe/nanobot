@@ -405,7 +405,8 @@ impl ChannelManager {
         let workers_for_task = delivery_workers.clone();
         let channel_for_task = channel.clone();
         let handle = tokio::spawn(async move {
-            Self::run_delivery_worker(worker_key, channel_for_task, receiver, workers_for_task).await;
+            Self::run_delivery_worker(worker_key, channel_for_task, receiver, workers_for_task)
+                .await;
         });
         workers.insert(
             delivery_key,

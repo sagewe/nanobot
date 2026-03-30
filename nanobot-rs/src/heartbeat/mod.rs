@@ -31,8 +31,7 @@ use crate::providers::LlmProvider;
 type ExecuteCallback =
     Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = String> + Send>> + Send + Sync>;
 
-type NotifyCallback =
-    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+type NotifyCallback = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 // ---------------------------------------------------------------------------
 // Tool definition sent to the LLM in Phase 1
@@ -177,7 +176,9 @@ impl HeartbeatService {
     /// Phase 1: ask the LLM whether there are active tasks.
     /// Returns `(action, tasks)` where `action` is `"skip"` or `"run"`.
     async fn decide(&self, content: &str) -> (String, String) {
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        let now = chrono::Utc::now()
+            .format("%Y-%m-%d %H:%M:%S UTC")
+            .to_string();
         let messages = vec![
             json!({
                 "role": "system",
@@ -196,7 +197,11 @@ impl HeartbeatService {
             _ => vec![],
         };
 
-        match self.provider.chat_with_retry(messages, tools, &self.model).await {
+        match self
+            .provider
+            .chat_with_retry(messages, tools, &self.model)
+            .await
+        {
             Ok(response) if response.has_tool_calls() => {
                 let args = &response.tool_calls[0].arguments;
                 let action = args

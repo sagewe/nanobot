@@ -5,6 +5,7 @@
 //! when the URL ends with `/sse`.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,11 +15,10 @@ use rmcp::model::{CallToolRequestParams, RawContent};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::{RoleClient, ServiceExt};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::process::Command;
 use tracing::{debug, error, info, warn};
-
-use serde::Serialize;
 
 use crate::config::McpServerConfig;
 use crate::tools::{Tool, ToolContext, ToolRegistry};
@@ -29,7 +29,7 @@ use crate::tools::{Tool, ToolContext, ToolRegistry};
 
 #[derive(Clone)]
 pub struct McpToolWrapper {
-    peer: Arc<rmcp::Peer<RoleClient>>,
+    peer: Option<Arc<rmcp::Peer<RoleClient>>>,
     /// Name exposed to the agent: `mcp_{server}_{original}`.
     tool_name: String,
     original_name: String,
@@ -53,6 +53,9 @@ impl Tool for McpToolWrapper {
     }
 
     async fn execute(&self, args: Value) -> String {
+        let Some(peer) = &self.peer else {
+            return "(MCP test tool cannot execute)".to_string();
+        };
         debug!(tool = %self.tool_name, args = %args, "MCP tool execute called");
         let arguments = match args {
             Value::Object(map) => {
@@ -79,7 +82,7 @@ impl Tool for McpToolWrapper {
 
         let result = tokio::time::timeout(
             Duration::from_secs(self.timeout_secs),
-            self.peer.call_tool(params),
+            peer.call_tool(params),
         )
         .await;
 
@@ -131,6 +134,7 @@ pub struct McpClients {
     wrappers: Vec<McpToolWrapper>,
     /// Tool names (full `mcp_{server}_{tool}` form) that are disabled by the user.
     disabled_tools: Arc<std::sync::Mutex<HashSet<String>>>,
+    state_path: Option<PathBuf>,
 }
 
 /// Info about a single MCP tool, exposed via the web API.
@@ -148,6 +152,27 @@ pub struct McpServerInfo {
     pub name: String,
     pub tool_count: usize,
     pub tools: Vec<McpToolInfo>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum McpServerToolAction {
+    EnableAll,
+    DisableAll,
+    Reset,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpToolStateStore {
+    #[serde(default = "default_mcp_state_version")]
+    version: u32,
+    #[serde(default)]
+    disabled_tools: Vec<String>,
+}
+
+fn default_mcp_state_version() -> u32 {
+    1
 }
 
 impl McpClients {
@@ -172,18 +197,49 @@ impl McpClients {
 
     /// Enable or disable a tool by its full name (`mcp_{server}_{tool}`).
     /// Returns `false` if the tool name is not found.
-    pub fn toggle_tool(&self, name: &str, enabled: bool) -> bool {
+    pub fn toggle_tool(&self, name: &str, enabled: bool) -> Result<bool> {
         let exists = self.wrappers.iter().any(|w| w.tool_name == name);
         if !exists {
-            return false;
+            return Ok(false);
         }
-        let mut disabled = self.disabled_tools.lock().unwrap();
-        if enabled {
-            disabled.remove(name);
-        } else {
-            disabled.insert(name.to_string());
+        self.update_disabled_tools(|disabled| {
+            if enabled {
+                disabled.remove(name);
+            } else {
+                disabled.insert(name.to_string());
+            }
+        })?;
+        Ok(true)
+    }
+
+    /// Apply a bulk action to all active tools for a server.
+    /// Returns `false` if the server name is not found.
+    pub fn apply_server_action(
+        &self,
+        server_name: &str,
+        action: McpServerToolAction,
+    ) -> Result<bool> {
+        let tool_names = self.server_tool_names(server_name);
+        if tool_names.is_empty() {
+            return Ok(false);
         }
-        true
+        let prefix = server_tool_prefix(server_name);
+        self.update_disabled_tools(|disabled| match action {
+            McpServerToolAction::EnableAll => {
+                for tool_name in &tool_names {
+                    disabled.remove(tool_name);
+                }
+            }
+            McpServerToolAction::DisableAll => {
+                for tool_name in &tool_names {
+                    disabled.insert(tool_name.clone());
+                }
+            }
+            McpServerToolAction::Reset => {
+                disabled.retain(|tool_name| !tool_name.starts_with(&prefix));
+            }
+        })?;
+        Ok(true)
     }
 
     /// Group wrappers by server name and return summary info.
@@ -192,8 +248,7 @@ impl McpClients {
         let mut order: Vec<String> = Vec::new();
         let mut map: HashMap<String, Vec<McpToolInfo>> = HashMap::new();
         for w in &self.wrappers {
-            // tool_name = "mcp_{server}_{original_name}"
-            let server_name = w.tool_name[4..w.tool_name.len() - w.original_name.len() - 1].to_string();
+            let server_name = wrapper_server_name(w).to_string();
             if !map.contains_key(&server_name) {
                 order.push(server_name.clone());
             }
@@ -204,12 +259,54 @@ impl McpClients {
                 enabled: !disabled.contains(&w.tool_name),
             });
         }
-        order.into_iter()
+        order
+            .into_iter()
             .map(|name| {
                 let tools = map.remove(&name).unwrap_or_default();
-                McpServerInfo { tool_count: tools.len(), name, tools }
+                McpServerInfo {
+                    tool_count: tools.len(),
+                    name,
+                    tools,
+                }
             })
             .collect()
+    }
+
+    fn server_tool_names(&self, server_name: &str) -> Vec<String> {
+        self.wrappers
+            .iter()
+            .filter(|wrapper| wrapper_server_name(wrapper) == server_name)
+            .map(|wrapper| wrapper.tool_name.clone())
+            .collect()
+    }
+
+    fn update_disabled_tools<F>(&self, mutate: F) -> Result<()>
+    where
+        F: FnOnce(&mut HashSet<String>),
+    {
+        let mut current = self.disabled_tools.lock().unwrap();
+        let mut next = current.clone();
+        mutate(&mut next);
+        self.save_disabled_tools(&next)?;
+        *current = next;
+        Ok(())
+    }
+
+    fn save_disabled_tools(&self, disabled: &HashSet<String>) -> Result<()> {
+        let Some(path) = &self.state_path else {
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut disabled_tools: Vec<String> = disabled.iter().cloned().collect();
+        disabled_tools.sort();
+        let payload = McpToolStateStore {
+            version: default_mcp_state_version(),
+            disabled_tools,
+        };
+        std::fs::write(path, serde_json::to_string_pretty(&payload)?)?;
+        Ok(())
     }
 }
 
@@ -221,6 +318,7 @@ impl McpClients {
 /// an `McpClients` handle that must be kept alive for the agent's lifetime.
 pub async fn connect_mcp_servers(
     servers: &HashMap<String, McpServerConfig>,
+    state_path: Option<PathBuf>,
 ) -> McpClients {
     let mut services: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
     let mut all_wrappers: Vec<McpToolWrapper> = Vec::new();
@@ -240,7 +338,10 @@ pub async fn connect_mcp_servers(
     McpClients {
         _services: Arc::new(std::sync::Mutex::new(services)),
         wrappers: all_wrappers,
-        disabled_tools: Arc::new(std::sync::Mutex::new(HashSet::new())),
+        disabled_tools: Arc::new(std::sync::Mutex::new(load_disabled_tools(
+            state_path.as_deref(),
+        ))),
+        state_path,
     }
 }
 
@@ -316,8 +417,7 @@ async fn connect_http(
         })
         .collect();
 
-    let config = StreamableHttpClientTransportConfig::with_uri(url)
-        .custom_headers(custom_headers);
+    let config = StreamableHttpClientTransportConfig::with_uri(url).custom_headers(custom_headers);
 
     let transport = StreamableHttpClientTransport::from_config(config);
 
@@ -365,7 +465,7 @@ async fn build_wrappers(
 
         let schema = Value::Object(tool_def.input_schema.as_ref().clone());
         wrappers.push(McpToolWrapper {
-            peer: Arc::clone(peer),
+            peer: Some(Arc::clone(peer)),
             tool_name: wrapped_name,
             original_name: tool_def.name.to_string(),
             description: tool_def
@@ -392,4 +492,131 @@ async fn build_wrappers(
         "MCP server connected"
     );
     wrappers
+}
+
+fn wrapper_server_name(wrapper: &McpToolWrapper) -> &str {
+    &wrapper.tool_name[4..wrapper.tool_name.len() - wrapper.original_name.len() - 1]
+}
+
+fn server_tool_prefix(server_name: &str) -> String {
+    format!("mcp_{server_name}_")
+}
+
+fn load_disabled_tools(path: Option<&Path>) -> HashSet<String> {
+    let Some(path) = path else {
+        return HashSet::new();
+    };
+    if !path.exists() {
+        return HashSet::new();
+    }
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => {
+            warn!(path = %path.display(), error = %error, "Failed to read MCP tool state");
+            return HashSet::new();
+        }
+    };
+    match serde_json::from_str::<McpToolStateStore>(&text) {
+        Ok(store) => store.disabled_tools.into_iter().collect(),
+        Err(error) => {
+            warn!(path = %path.display(), error = %error, "Failed to parse MCP tool state");
+            HashSet::new()
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_clients(
+    tools: &[(&str, &str, &str)],
+    disabled_tools: &[&str],
+    state_path: Option<PathBuf>,
+) -> McpClients {
+    let wrappers = tools
+        .iter()
+        .map(|(server_name, original_name, description)| McpToolWrapper {
+            peer: None,
+            tool_name: format!("mcp_{server_name}_{original_name}"),
+            original_name: (*original_name).to_string(),
+            description: (*description).to_string(),
+            schema: Value::Object(Map::new()),
+            timeout_secs: 30,
+        })
+        .collect();
+    McpClients {
+        _services: Arc::new(std::sync::Mutex::new(Vec::new())),
+        wrappers,
+        disabled_tools: Arc::new(std::sync::Mutex::new(
+            disabled_tools
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        )),
+        state_path,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn reset_server_clears_hidden_overrides_while_enable_all_only_clears_visible_tools() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("mcp").join("tools.json");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&McpToolStateStore {
+                version: default_mcp_state_version(),
+                disabled_tools: vec![
+                    "mcp_demo_fetch".to_string(),
+                    "mcp_demo_hidden".to_string(),
+                    "mcp_other_search".to_string(),
+                ],
+            })
+            .expect("serialize store"),
+        )
+        .expect("write store");
+
+        let clients = McpClients {
+            _services: Arc::new(std::sync::Mutex::new(Vec::new())),
+            wrappers: vec![
+                McpToolWrapper {
+                    peer: None,
+                    tool_name: "mcp_demo_search".to_string(),
+                    original_name: "search".to_string(),
+                    description: "Search".to_string(),
+                    schema: Value::Object(Map::new()),
+                    timeout_secs: 30,
+                },
+                McpToolWrapper {
+                    peer: None,
+                    tool_name: "mcp_demo_fetch".to_string(),
+                    original_name: "fetch".to_string(),
+                    description: "Fetch".to_string(),
+                    schema: Value::Object(Map::new()),
+                    timeout_secs: 30,
+                },
+            ],
+            disabled_tools: Arc::new(std::sync::Mutex::new(load_disabled_tools(Some(&path)))),
+            state_path: Some(path.clone()),
+        };
+
+        clients
+            .apply_server_action("demo", McpServerToolAction::EnableAll)
+            .expect("enable all");
+        let after_enable_all = load_disabled_tools(Some(&path));
+        assert!(after_enable_all.contains("mcp_demo_hidden"));
+        assert!(!after_enable_all.contains("mcp_demo_fetch"));
+        assert!(after_enable_all.contains("mcp_other_search"));
+
+        clients
+            .apply_server_action("demo", McpServerToolAction::Reset)
+            .expect("reset");
+        let after_reset = load_disabled_tools(Some(&path));
+        assert!(!after_reset.contains("mcp_demo_hidden"));
+        assert!(!after_reset.contains("mcp_demo_fetch"));
+        assert!(after_reset.contains("mcp_other_search"));
+    }
 }

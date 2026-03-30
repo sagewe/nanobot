@@ -48,15 +48,33 @@ pub struct CronSchedule {
 
 impl CronSchedule {
     pub fn at(at_ms: i64) -> Self {
-        Self { kind: ScheduleKind::At, at_ms: Some(at_ms), every_ms: None, expr: None, tz: None }
+        Self {
+            kind: ScheduleKind::At,
+            at_ms: Some(at_ms),
+            every_ms: None,
+            expr: None,
+            tz: None,
+        }
     }
 
     pub fn every(every_ms: i64) -> Self {
-        Self { kind: ScheduleKind::Every, at_ms: None, every_ms: Some(every_ms), expr: None, tz: None }
+        Self {
+            kind: ScheduleKind::Every,
+            at_ms: None,
+            every_ms: Some(every_ms),
+            expr: None,
+            tz: None,
+        }
     }
 
     pub fn cron(expr: impl Into<String>, tz: Option<String>) -> Self {
-        Self { kind: ScheduleKind::Cron, at_ms: None, every_ms: None, expr: Some(expr.into()), tz }
+        Self {
+            kind: ScheduleKind::Cron,
+            at_ms: None,
+            every_ms: None,
+            expr: Some(expr.into()),
+            tz,
+        }
     }
 }
 
@@ -227,11 +245,8 @@ fn validate_schedule(schedule: &CronSchedule) -> Result<()> {
 // CronService
 // ---------------------------------------------------------------------------
 
-type JobCallback = Arc<
-    dyn Fn(CronJob) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>
-        + Send
-        + Sync,
->;
+type JobCallback =
+    Arc<dyn Fn(CronJob) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
 
 struct CronInner {
     store: CronStore,
@@ -673,7 +688,15 @@ mod tests {
         let svc = Arc::new(CronService::new(path.clone()));
 
         let job = svc
-            .add_job("test", CronSchedule::every(60_000), "hello", false, None, None, false)
+            .add_job(
+                "test",
+                CronSchedule::every(60_000),
+                "hello",
+                false,
+                None,
+                None,
+                false,
+            )
             .unwrap();
         assert_eq!(svc.list_jobs(false).len(), 1);
 
