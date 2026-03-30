@@ -55,9 +55,10 @@ pub async fn index_handler() -> Response {
 }
 
 pub async fn static_handler(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
-    match Asset::get(&path) {
+    let asset_path = format!("assets/{path}");
+    match Asset::get(&asset_path) {
         Some(content) => {
-            let mime = mime_for_path(&path);
+            let mime = mime_for_path(&asset_path);
             ([(header::CONTENT_TYPE, mime)], content.data.clone()).into_response()
         }
         None => (StatusCode::NOT_FOUND, "not found").into_response(),
