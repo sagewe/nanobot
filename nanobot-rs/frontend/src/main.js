@@ -1141,21 +1141,24 @@ function renderMcpList(servers) {
     return;
   }
   mcpList.innerHTML = servers.map((server) => {
-    const toolsHtml = server.tools.map((tool) => `
-      <div class="mcp-tool-row">
-        <span class="mcp-tool-name">${escapeHtml(tool.name)}</span>
-        <span class="mcp-tool-desc">${escapeHtml(tool.description)}</span>
-      </div>`).join("");
+    const toolsHtml = server.tools.map((tool) => {
+      const shortName = tool.original_name || tool.name;
+      return `
+      <div class="mcp-tool-card" title="${escapeHtml(tool.description)}">
+        <span class="mcp-tool-card-name">${escapeHtml(shortName)}</span>
+        <span class="mcp-tool-card-desc">${escapeHtml(tool.description)}</span>
+      </div>`;
+    }).join("");
     return `
-<div class="job-card">
-  <div class="job-card-header">
-    <div class="job-info">
-      <strong class="job-name">${escapeHtml(server.name)}</strong>
-      <span class="job-meta">${server.tool_count} ${t("mcp_tools")}</span>
+<div class="mcp-server-card">
+  <div class="mcp-server-header">
+    <div class="mcp-server-info">
+      <span class="mcp-status-dot"></span>
+      <strong class="mcp-server-name">${escapeHtml(server.name)}</strong>
+      <span class="mcp-server-count">${server.tool_count} ${t("mcp_tools")}</span>
     </div>
-    <span class="job-badge job-badge-active">${t("mcp_connected")}</span>
   </div>
-  ${server.tools.length ? `<details class="mcp-tools-details"><summary>${t("mcp_show_tools")}</summary><div class="mcp-tools-list">${toolsHtml}</div></details>` : ""}
+  ${server.tools.length ? `<div class="mcp-tool-grid">${toolsHtml}</div>` : ""}
 </div>`;
   }).join("");
 }
