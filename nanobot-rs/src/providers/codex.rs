@@ -43,8 +43,13 @@ pub struct CodexProvider {
 
 #[derive(Debug, Clone, Deserialize)]
 struct CodexAuthFile {
+    #[serde(default = "default_auth_mode")]
     auth_mode: String,
     tokens: CodexAuthTokens,
+}
+
+fn default_auth_mode() -> String {
+    "chatgpt".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
