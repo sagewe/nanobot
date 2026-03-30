@@ -515,7 +515,7 @@
         padding: 0.5rem 0.65rem;
         background: var(--input-bg);
         cursor: default;
-        transition: border-color 0.15s, box-shadow 0.15s;
+        transition: border-color 0.06s, box-shadow 0.06s;
         min-width: 0;
       }
 
