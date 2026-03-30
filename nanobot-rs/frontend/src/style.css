@@ -515,13 +515,13 @@
         padding: 0.5rem 0.65rem;
         background: var(--input-bg);
         cursor: default;
-        transition: border-color 0.06s, box-shadow 0.06s;
+        transition: border-color 0.06s;
+        will-change: border-color;
         min-width: 0;
       }
 
       .mcp-tool-card:hover {
         border-color: var(--accent);
-        box-shadow: 0 1px 6px rgba(193, 95, 60, 0.1);
       }
 
       .mcp-tool-card-name {
