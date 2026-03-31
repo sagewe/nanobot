@@ -1349,6 +1349,11 @@
         background: rgba(193, 95, 60, 0.25);
       }
 
+      :root[data-theme="dark"] .msg-group[data-role="user"] .msg-bubble {
+        background: #2e2318;
+        color: #e8ddd4;
+      }
+
       .msg-content {
         color: var(--ink);
         font-size: 0.98rem;
