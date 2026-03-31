@@ -36,13 +36,17 @@ fn onboard_bootstraps_control_plane_and_first_admin() {
     assert_eq!(users[0]["role"].as_str(), Some("admin"));
 
     let user_id = users[0]["user_id"].as_str().expect("user id");
-    let user_config = dir.path().join("users").join(user_id).join("config.json");
+    let user_config = dir.path().join("users").join(user_id).join("config.toml");
     let config_raw = std::fs::read_to_string(&user_config).expect("read config");
-    let config_value: Value = serde_json::from_str(&config_raw).expect("parse config");
+    let config_value: toml::Value = config_raw.parse().expect("parse config");
     assert_eq!(
         config_value
-            .pointer("/agents/defaults/workspace")
-            .and_then(Value::as_str),
+            .get("agents")
+            .and_then(toml::Value::as_table)
+            .and_then(|agents| agents.get("defaults"))
+            .and_then(toml::Value::as_table)
+            .and_then(|defaults| defaults.get("workspace"))
+            .and_then(toml::Value::as_str),
         Some(
             dir.path()
                 .join("users")
@@ -125,7 +129,14 @@ fn users_commands_manage_accounts_and_configs() {
     for args in [
         vec!["users", "disable", "--username", "bob"],
         vec!["users", "set-role", "--username", "bob", "--role", "admin"],
-        vec!["users", "set-password", "--username", "bob", "--password", "newsecret456"],
+        vec![
+            "users",
+            "set-password",
+            "--username",
+            "bob",
+            "--password",
+            "newsecret456",
+        ],
         vec!["users", "enable", "--username", "bob"],
         vec!["users", "validate-config", "--username", "bob"],
     ] {
@@ -153,12 +164,17 @@ fn users_commands_manage_accounts_and_configs() {
         .output()
         .expect("run users show-config");
     assert!(show_config.status.success());
-    let config_value: Value =
-        serde_json::from_slice(&show_config.stdout).expect("show-config json output");
+    let config_value: toml::Value = String::from_utf8_lossy(&show_config.stdout)
+        .parse()
+        .expect("show-config toml output");
     assert_eq!(
         config_value
-            .pointer("/agents/defaults/workspace")
-            .and_then(Value::as_str)
+            .get("agents")
+            .and_then(toml::Value::as_table)
+            .and_then(|agents| agents.get("defaults"))
+            .and_then(toml::Value::as_table)
+            .and_then(|defaults| defaults.get("workspace"))
+            .and_then(toml::Value::as_str)
             .map(|value| value.contains("/workspace")),
         Some(true)
     );
@@ -177,6 +193,85 @@ fn users_commands_manage_accounts_and_configs() {
 
 #[test]
 fn users_migrate_legacy_moves_config_and_workspace_into_first_admin() {
+    let dir = tempdir().expect("tempdir");
+    let legacy_workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(legacy_workspace.join("memory")).expect("legacy workspace");
+    std::fs::write(
+        legacy_workspace.join("memory").join("note.txt"),
+        "remember this",
+    )
+    .expect("legacy note");
+    let legacy_config = serde_json::json!({
+        "agents": {
+            "defaults": {
+                "workspace": legacy_workspace.to_string_lossy(),
+                "defaultProfile": "openai:gpt-4.1-mini"
+            },
+            "profiles": {
+                "openai:gpt-4.1-mini": {
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini",
+                    "request": {}
+                }
+            }
+        },
+        "providers": {
+            "openai": {}
+        },
+        "channels": {},
+        "tools": {}
+    });
+    std::fs::write(
+        dir.path().join("config.toml"),
+        toml::to_string_pretty(&legacy_config).expect("serialize legacy config"),
+    )
+    .expect("legacy config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("users")
+        .arg("migrate-legacy")
+        .arg("--admin-username")
+        .arg("alice")
+        .arg("--admin-password")
+        .arg("password123")
+        .arg("--admin-display-name")
+        .arg("Alice")
+        .output()
+        .expect("run users migrate-legacy");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let users_raw =
+        std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
+    let users_value: Value = serde_json::from_str(&users_raw).expect("parse users");
+    let users = users_value["users"].as_array().expect("users array");
+    assert_eq!(users.len(), 1);
+    let user_id = users[0]["user_id"].as_str().expect("user id");
+    let migrated_workspace = dir
+        .path()
+        .join("users")
+        .join(user_id)
+        .join("workspace")
+        .join("memory")
+        .join("note.txt");
+    assert_eq!(
+        std::fs::read_to_string(migrated_workspace).expect("migrated note"),
+        "remember this"
+    );
+    assert!(dir.path().join("control").join("migration.json").exists());
+    assert!(dir.path().join("users").join(user_id).join("config.toml").exists());
+    assert!(!dir.path().join("users").join(user_id).join("config.json").exists());
+}
+
+#[test]
+fn users_migrate_legacy_falls_back_to_config_json_when_toml_is_missing() {
     let dir = tempdir().expect("tempdir");
     let legacy_workspace = dir.path().join("workspace");
     std::fs::create_dir_all(legacy_workspace.join("memory")).expect("legacy workspace");
@@ -238,16 +333,5 @@ fn users_migrate_legacy_moves_config_and_workspace_into_first_admin() {
     let users = users_value["users"].as_array().expect("users array");
     assert_eq!(users.len(), 1);
     let user_id = users[0]["user_id"].as_str().expect("user id");
-    let migrated_workspace = dir
-        .path()
-        .join("users")
-        .join(user_id)
-        .join("workspace")
-        .join("memory")
-        .join("note.txt");
-    assert_eq!(
-        std::fs::read_to_string(migrated_workspace).expect("migrated note"),
-        "remember this"
-    );
-    assert!(dir.path().join("control").join("migration.json").exists());
+    assert!(dir.path().join("users").join(user_id).join("config.toml").exists());
 }

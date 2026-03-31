@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -135,7 +135,7 @@ impl ControlStore {
     }
 
     pub fn user_config_path(&self, user_id: &str) -> PathBuf {
-        self.user_dir(user_id).join("config.json")
+        self.user_dir(user_id).join("config.toml")
     }
 
     pub fn user_workspace_path(&self, user_id: &str) -> PathBuf {
@@ -154,7 +154,12 @@ impl ControlStore {
             Role::Admin,
             admin.password.as_str(),
         )?;
-        self.append_audit("bootstrap_first_admin", None, Some(&user.user_id), "created first admin")?;
+        self.append_audit(
+            "bootstrap_first_admin",
+            None,
+            Some(&user.user_id),
+            "created first admin",
+        )?;
         Ok(user)
     }
 
@@ -165,8 +170,12 @@ impl ControlStore {
         legacy_workspace_path: &Path,
     ) -> Result<UserRecord> {
         let user = self.bootstrap_first_admin(admin)?;
-        let mut config = load_config(Some(legacy_config_path))
-            .with_context(|| format!("failed to load legacy config {}", legacy_config_path.display()))?;
+        let mut config = load_config(Some(legacy_config_path)).with_context(|| {
+            format!(
+                "failed to load legacy config {}",
+                legacy_config_path.display()
+            )
+        })?;
         let new_workspace = self.user_workspace_path(&user.user_id);
         ensure_workspace_templates(&new_workspace)?;
         if legacy_workspace_path.exists() {
@@ -206,7 +215,12 @@ impl ControlStore {
     ) -> Result<UserRecord> {
         self.ensure_control_files()?;
         let user = self.create_user_internal(username, display_name, role, password)?;
-        self.append_audit("create_user", None, Some(&user.user_id), format!("created user {}", user.username))?;
+        self.append_audit(
+            "create_user",
+            None,
+            Some(&user.user_id),
+            format!("created user {}", user.username),
+        )?;
         Ok(user)
     }
 
@@ -239,11 +253,18 @@ impl ControlStore {
             created_at: now,
             updated_at: now,
         };
-        fs::create_dir_all(self.user_dir(&user.user_id))
-            .with_context(|| format!("failed to create {}", self.user_dir(&user.user_id).display()))?;
+        fs::create_dir_all(self.user_dir(&user.user_id)).with_context(|| {
+            format!(
+                "failed to create {}",
+                self.user_dir(&user.user_id).display()
+            )
+        })?;
         ensure_workspace_templates(&self.user_workspace_path(&user.user_id))?;
         let mut config = Config::default();
-        config.agents.defaults.workspace = self.user_workspace_path(&user.user_id).display().to_string();
+        config.agents.defaults.workspace = self
+            .user_workspace_path(&user.user_id)
+            .display()
+            .to_string();
         save_config(&config, Some(&self.user_config_path(&user.user_id)))?;
         store.users.push(user.clone());
         write_json(&self.control_dir().join("users.json"), &store)?;
@@ -332,7 +353,10 @@ impl ControlStore {
                 && !config.channels.telegram.token.trim().is_empty()
                 && config.channels.telegram.token == other.channels.telegram.token
             {
-                bail!("duplicate telegram token claimed by user '{}'", user.username);
+                bail!(
+                    "duplicate telegram token claimed by user '{}'",
+                    user.username
+                );
             }
             if config.channels.wecom.enabled
                 && other.channels.wecom.enabled
@@ -341,7 +365,10 @@ impl ControlStore {
                 && config.channels.wecom.bot_id == other.channels.wecom.bot_id
                 && config.channels.wecom.secret == other.channels.wecom.secret
             {
-                bail!("duplicate wecom credentials claimed by user '{}'", user.username);
+                bail!(
+                    "duplicate wecom credentials claimed by user '{}'",
+                    user.username
+                );
             }
         }
         Ok(())
@@ -353,7 +380,12 @@ impl ControlStore {
         updated.agents.defaults.workspace = self.user_workspace_path(user_id).display().to_string();
         ensure_workspace_templates(&self.user_workspace_path(user_id))?;
         save_config(&updated, Some(&self.user_config_path(user_id)))?;
-        self.append_audit("write_user_config", Some(user_id), Some(user_id), "updated user config")?;
+        self.append_audit(
+            "write_user_config",
+            Some(user_id),
+            Some(user_id),
+            "updated user config",
+        )?;
         Ok(())
     }
 
@@ -395,7 +427,8 @@ impl ControlStore {
         }
         let audit_path = self.control_dir().join("audit.jsonl");
         if !audit_path.exists() {
-            fs::write(&audit_path, "").with_context(|| format!("failed to create {}", audit_path.display()))?;
+            fs::write(&audit_path, "")
+                .with_context(|| format!("failed to create {}", audit_path.display()))?;
         }
         Ok(())
     }
@@ -660,7 +693,8 @@ impl RuntimeManager {
         if let Some(runtime) = self.runtimes.lock().await.get(user_id).cloned() {
             return Ok(runtime);
         }
-        let runtime = Arc::new(UserRuntime::start(&self.store, user_id, self.start_channels).await?);
+        let runtime =
+            Arc::new(UserRuntime::start(&self.store, user_id, self.start_channels).await?);
         self.runtimes
             .lock()
             .await
@@ -669,7 +703,8 @@ impl RuntimeManager {
     }
 
     pub async fn reload(&self, user_id: &str) -> Result<Arc<UserRuntime>> {
-        let replacement = Arc::new(UserRuntime::start(&self.store, user_id, self.start_channels).await?);
+        let replacement =
+            Arc::new(UserRuntime::start(&self.store, user_id, self.start_channels).await?);
         let previous = self
             .runtimes
             .lock()
@@ -736,7 +771,9 @@ impl AuthService {
             updated_at: now,
         };
         let mut store = self.store.load_web_session_store()?;
-        store.sessions.retain(|item| item.session_id != session.session_id);
+        store
+            .sessions
+            .retain(|item| item.session_id != session.session_id);
         store.sessions.push(session.clone());
         self.store.save_web_session_store(&store)?;
         Ok(session)
@@ -825,8 +862,8 @@ fn read_json<T>(path: &Path) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     serde_json::from_str(&raw).with_context(|| format!("failed to parse {}", path.display()))
 }
 

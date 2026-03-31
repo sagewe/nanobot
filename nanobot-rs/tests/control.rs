@@ -31,7 +31,17 @@ fn bootstrap_first_admin_creates_control_files_and_user_paths() {
     assert!(store.control_dir().join("web_sessions.json").exists());
     assert!(store.control_dir().join("audit.jsonl").exists());
     assert!(store.user_config_path(&admin.user_id).exists());
-    assert!(store.user_workspace_path(&admin.user_id).join("memory").exists());
+    assert_eq!(
+        store.user_config_path(&admin.user_id),
+        store.user_dir(&admin.user_id).join("config.toml")
+    );
+    assert!(!store.user_dir(&admin.user_id).join("config.json").exists());
+    assert!(
+        store
+            .user_workspace_path(&admin.user_id)
+            .join("memory")
+            .exists()
+    );
 }
 
 #[test]
@@ -67,6 +77,11 @@ fn bootstrap_migrates_legacy_config_and_workspace_into_first_admin() {
 
     assert!(store.control_dir().join("migration.json").exists());
     assert!(store.user_config_path(&admin.user_id).exists());
+    assert_eq!(
+        store.user_config_path(&admin.user_id),
+        store.user_dir(&admin.user_id).join("config.toml")
+    );
+    assert!(!store.user_dir(&admin.user_id).join("config.json").exists());
     assert_eq!(
         std::fs::read_to_string(
             store
@@ -145,10 +160,11 @@ fn auth_service_creates_and_resolves_sessions() {
     assert_eq!(resolved.role, Role::Admin);
 
     auth.logout(&session.session_id).expect("logout");
-    assert!(auth
-        .authenticate_session(&session.session_id)
-        .expect("authenticate after logout")
-        .is_none());
+    assert!(
+        auth.authenticate_session(&session.session_id)
+            .expect("authenticate after logout")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -167,8 +183,14 @@ async fn runtime_manager_starts_isolated_runtimes_per_user() {
         .expect("create user");
 
     let manager = RuntimeManager::new(store.clone(), false);
-    let alice_runtime = manager.get_or_start(&admin.user_id).await.expect("alice runtime");
-    let bob_runtime = manager.get_or_start(&user.user_id).await.expect("bob runtime");
+    let alice_runtime = manager
+        .get_or_start(&admin.user_id)
+        .await
+        .expect("alice runtime");
+    let bob_runtime = manager
+        .get_or_start(&user.user_id)
+        .await
+        .expect("bob runtime");
 
     assert_ne!(alice_runtime.user_id(), bob_runtime.user_id());
     assert_eq!(
@@ -197,8 +219,14 @@ async fn runtime_manager_reload_swaps_only_the_target_user_runtime() {
         .expect("create user");
 
     let manager = RuntimeManager::new(store.clone(), false);
-    let alice_before = manager.get_or_start(&admin.user_id).await.expect("alice runtime");
-    let bob_before = manager.get_or_start(&user.user_id).await.expect("bob runtime");
+    let alice_before = manager
+        .get_or_start(&admin.user_id)
+        .await
+        .expect("alice runtime");
+    let bob_before = manager
+        .get_or_start(&user.user_id)
+        .await
+        .expect("bob runtime");
 
     let mut updated = store
         .load_user_config(&user.user_id)
@@ -209,7 +237,10 @@ async fn runtime_manager_reload_swaps_only_the_target_user_runtime() {
         .expect("write updated config");
 
     let bob_after = manager.reload(&user.user_id).await.expect("reload bob");
-    let alice_after = manager.get_or_start(&admin.user_id).await.expect("alice runtime");
+    let alice_after = manager
+        .get_or_start(&admin.user_id)
+        .await
+        .expect("alice runtime");
 
     assert!(!std::sync::Arc::ptr_eq(&bob_before, &bob_after));
     assert!(std::sync::Arc::ptr_eq(&alice_before, &alice_after));

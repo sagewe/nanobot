@@ -154,7 +154,7 @@ async fn onboard(
     } else {
         admin_display_name
     };
-    let legacy_config = root.join("config.json");
+    let legacy_config = legacy_root_config_path(&root);
     let legacy_workspace = root.join("workspace");
     let admin = BootstrapAdmin {
         username: admin_username,
@@ -348,11 +348,7 @@ async fn gateway(root: PathBuf, args: GatewayArgs) -> Result<()> {
     run_gateway_command(runtime, args).await
 }
 
-async fn web_command(
-    root: PathBuf,
-    host: String,
-    port: u16,
-) -> Result<()> {
+async fn web_command(root: PathBuf, host: String, port: u16) -> Result<()> {
     println!("Web UI listening on http://{host}:{port}");
     let store = ControlStore::new(&root)?;
     ensure_bootstrapped(&store)?;
@@ -426,7 +422,7 @@ async fn users(root: PathBuf, action: UsersCommand) -> Result<()> {
         UsersCommand::ShowConfig { username } => {
             ensure_bootstrapped(&store)?;
             let config = load_user_runtime_config(&root, &username)?;
-            println!("{}", serde_json::to_string_pretty(&config)?);
+            println!("{}", toml::to_string_pretty(&config)?);
             Ok(())
         }
         UsersCommand::ValidateConfig { username } => {
@@ -449,13 +445,16 @@ async fn users(root: PathBuf, action: UsersCommand) -> Result<()> {
             } else {
                 admin_display_name
             };
-            let legacy_config = legacy_config.unwrap_or_else(|| root.join("config.json"));
+            let legacy_config = legacy_config.unwrap_or_else(|| legacy_root_config_path(&root));
             let legacy_workspace = legacy_workspace.unwrap_or_else(|| root.join("workspace"));
             if !legacy_config.exists() {
                 bail!("legacy config {} does not exist", legacy_config.display());
             }
             if !legacy_workspace.exists() {
-                bail!("legacy workspace {} does not exist", legacy_workspace.display());
+                bail!(
+                    "legacy workspace {} does not exist",
+                    legacy_workspace.display()
+                );
             }
             let user = store.bootstrap_from_legacy(
                 &BootstrapAdmin {
@@ -489,6 +488,14 @@ fn default_control_root() -> PathBuf {
         .parent()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn legacy_root_config_path(root: &PathBuf) -> PathBuf {
+    let toml_path = root.join("config.toml");
+    if toml_path.exists() {
+        return toml_path;
+    }
+    root.join("config.json")
 }
 
 fn parse_session(session: &str) -> (String, String) {
@@ -539,7 +546,10 @@ fn ensure_bootstrapped(store: &ControlStore) -> Result<()> {
     Ok(())
 }
 
-fn resolve_user_by_username(store: &ControlStore, username: &str) -> Result<crate::control::UserRecord> {
+fn resolve_user_by_username(
+    store: &ControlStore,
+    username: &str,
+) -> Result<crate::control::UserRecord> {
     store
         .get_user_by_username(username)?
         .ok_or_else(|| anyhow!("unknown user '{}'", username))
