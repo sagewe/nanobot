@@ -433,13 +433,15 @@ pub async fn set_admin_user_role(
 pub async fn put_my_config(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(config): Json<Config>,
+    body: String,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = authenticated_user(&state, &headers).await?;
     let user = require_authenticated_user(&user)?;
     let control = state
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let config = serde_json::from_str::<Config>(&body)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
     control
         .write_user_config(&user.user_id, &config)
         .map_err(ApiError::internal)?;

@@ -4,6 +4,46 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const apiMocks = vi.hoisted(() => {
+  const noop = vi.fn();
+  return {
+    fetchCurrentUser: vi.fn(),
+    loginUser: noop,
+    logoutUser: noop,
+    changePassword: noop,
+    fetchMyConfig: noop,
+    updateMyConfig: vi.fn(),
+    fetchAdminUsers: noop,
+    createAdminUser: noop,
+    enableAdminUser: noop,
+    disableAdminUser: noop,
+    setAdminUserPassword: noop,
+    setAdminUserRole: noop,
+    fetchSessions: noop,
+    fetchSessionDetail: noop,
+    createSession: noop,
+    duplicateSession: noop,
+    deleteSession: noop,
+    setSessionProfile: noop,
+    sendChat: noop,
+    fetchWeixinAccount: noop,
+    startWeixinLogin: noop,
+    fetchWeixinLoginStatus: noop,
+    logoutWeixin: noop,
+    loadProfiles: noop,
+    fetchCronJobs: noop,
+    addCronJob: noop,
+    deleteCronJob: noop,
+    toggleCronJob: noop,
+    runCronJob: noop,
+    fetchMcpServers: noop,
+    toggleMcpTool: noop,
+    applyMcpServerAction: noop,
+  };
+});
+
+vi.mock("../src/api.js", () => apiMocks);
+
 const BASE_MARKUP = `
   <div id="transcript"></div>
   <select id="session-select"></select>
@@ -60,6 +100,12 @@ function readHtml() {
   return readFileSync(htmlPath, "utf8");
 }
 
+function readHtmlBody() {
+  const html = readHtml();
+  const match = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  return match ? match[1] : html;
+}
+
 function readCss() {
   const cssPath = path.resolve(process.cwd(), "src/style.css");
   return readFileSync(cssPath, "utf8");
@@ -95,6 +141,20 @@ function readCssBlock(selectorPattern) {
 describe("tool trace output", () => {
   beforeEach(() => {
     document.body.innerHTML = BASE_MARKUP;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: vi.fn(() => ({
+        matches: false,
+        media: "",
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
   });
 
   it("renders short arguments inline in the trace header", async () => {
@@ -288,6 +348,49 @@ describe("tool trace output", () => {
     expect(apiJs).toContain("export async function updateMyConfig(nextConfig)");
     expect(apiJs).toContain("body: JSON.stringify(nextConfig)");
     expect(packageJson).toContain('"@iarna/toml"');
+  });
+
+  it("submits parsed TOML editor text as a structured config object", async () => {
+    document.body.innerHTML = readHtmlBody();
+    apiMocks.fetchCurrentUser.mockRejectedValueOnce(new Error("login required"));
+    apiMocks.updateMyConfig.mockResolvedValueOnce({ ok: true });
+
+    const { default: TOML } = await import("@iarna/toml");
+    await import("../src/main.js");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const configEditor = document.getElementById("config-editor");
+    const settingsForm = document.getElementById("settings-form");
+    const settingsDefaultProfile = document.getElementById("settings-default-profile");
+    const settingsTelegramEnabled = document.getElementById("settings-telegram-enabled");
+
+    settingsDefaultProfile.value = "openai:gpt-4.1-mini";
+    settingsTelegramEnabled.checked = true;
+    configEditor.value = TOML.stringify({
+      providers: {
+        codex: {
+          apiBase: "https://api.example.test/v1",
+        },
+      },
+      channels: {
+        telegram: {
+          enabled: false,
+          token: "",
+        },
+      },
+    });
+
+    settingsForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(apiMocks.updateMyConfig).toHaveBeenCalledTimes(1);
+    const [payload] = apiMocks.updateMyConfig.mock.calls[0];
+
+    expect(typeof payload).toBe("object");
+    expect(payload.providers.codex.apiBase).toBe("https://api.example.test/v1");
+    expect(payload.channels.telegram.enabled).toBe(true);
+    expect(payload.agents.defaults.defaultProfile).toBe("openai:gpt-4.1-mini");
+    expect(payload).not.toBe(configEditor.value);
   });
 
   it("separates the users page into a create card and a directory card", () => {

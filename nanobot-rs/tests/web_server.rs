@@ -7,9 +7,7 @@ use async_trait::async_trait;
 use axum::{
     Router,
     body::{Body, to_bytes},
-    extract::State,
-    http::{HeaderMap, Request, StatusCode},
-    Json,
+    http::{Request, StatusCode},
 };
 use chrono::{Duration, Utc};
 use nanobot_rs::agent::AgentLoop;
@@ -25,7 +23,6 @@ use nanobot_rs::web::{
 };
 use serde_json::{Map, json};
 use std::collections::{HashMap, VecDeque};
-use std::future::Future;
 use tempfile::{TempDir, tempdir};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -98,19 +95,6 @@ async fn login_cookie(app: &Router, username: &str, password: &str) -> String {
         .and_then(|value| value.to_str().ok())
         .expect("set-cookie")
         .to_string()
-}
-
-fn assert_put_my_config_signature<F, Fut>(handler: F)
-where
-    F: Fn(State<AppState>, HeaderMap, Json<Config>) -> Fut,
-    Fut: Future<
-        Output = std::result::Result<
-            Json<serde_json::Value>,
-            nanobot_rs::web::api::ApiError,
-        >,
-    >,
-{
-    let _ = handler;
 }
 
 #[derive(Clone)]
@@ -433,8 +417,6 @@ async fn me_config_returns_the_authenticated_users_private_config() {
 
 #[tokio::test]
 async fn put_my_config_accepts_structured_json_and_persists_the_toml_backing_file() {
-    assert_put_my_config_signature(web::api::put_my_config);
-
     let (state, dir) = multiuser_state();
     let app = web::build_router(state);
     let cookie = login_cookie(&app, "alice", "password123").await;
@@ -491,6 +473,84 @@ async fn put_my_config_accepts_structured_json_and_persists_the_toml_backing_fil
     let saved = std::fs::read_to_string(&config_path).expect("config toml");
     assert!(saved.contains("defaultProfile"));
     assert!(saved.contains("token-123"));
+}
+
+#[tokio::test]
+async fn put_my_config_rejects_an_invalid_default_profile_with_a_json_error_envelope() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    let current = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/me/config")
+                .header("cookie", cookie.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("get config");
+    assert_eq!(current.status(), StatusCode::OK);
+    let current_body = to_bytes(current.into_body(), usize::MAX)
+        .await
+        .expect("config body");
+    let mut config: serde_json::Value = serde_json::from_slice(&current_body).expect("config json");
+    config["agents"]["defaults"]["defaultProfile"] = json!("openai:not-a-real-profile");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/me/config")
+                .header("cookie", cookie)
+                .header("content-type", "application/json")
+                .body(Body::from(config.to_string()))
+                .unwrap(),
+        )
+        .await
+        .expect("config");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload["error"]
+            .as_str()
+            .expect("error message")
+            .contains("defaultProfile"),
+        true
+    );
+}
+
+#[tokio::test]
+async fn put_my_config_rejects_malformed_json_with_a_json_error_envelope() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/me/config")
+                .header("cookie", cookie)
+                .header("content-type", "application/json")
+                .body(Body::from("{not-json"))
+                .unwrap(),
+        )
+        .await
+        .expect("config");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert!(payload["error"].as_str().is_some());
 }
 
 #[tokio::test]
