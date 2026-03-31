@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -722,35 +723,7 @@ pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
         _ => serde_json::to_string_pretty(config)?,
     };
     if is_canonical_config_path(&config_path) {
-        let tmp_path = config_path.with_extension("toml.tmp");
-        std::fs::write(&tmp_path, content)
-            .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
-        if let Err(rename_err) = std::fs::rename(&tmp_path, &config_path) {
-            if config_path.exists() {
-                std::fs::remove_file(&config_path)
-                    .with_context(|| format!("failed to remove {}", config_path.display()))?;
-                std::fs::rename(&tmp_path, &config_path).with_context(|| {
-                    format!(
-                        "failed to rename config {} to {}",
-                        tmp_path.display(),
-                        config_path.display()
-                    )
-                })?;
-            } else {
-                return Err(rename_err).with_context(|| {
-                    format!(
-                        "failed to rename config {} to {}",
-                        tmp_path.display(),
-                        config_path.display()
-                    )
-                });
-            }
-        }
-        let legacy_path = config_path.with_file_name("config.json");
-        if legacy_path.exists() {
-            std::fs::remove_file(&legacy_path)
-                .with_context(|| format!("failed to remove {}", legacy_path.display()))?;
-        }
+        save_canonical_config_file(&config_path, &content)?;
     } else {
         std::fs::write(&config_path, content)
             .with_context(|| format!("failed to write config {}", config_path.display()))?;
@@ -760,6 +733,80 @@ pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
 
 fn is_canonical_config_path(path: &Path) -> bool {
     path.file_name().and_then(|name| name.to_str()) == Some("config.toml")
+}
+
+fn save_canonical_config_file(config_path: &Path, content: &str) -> Result<()> {
+    save_canonical_config_file_with_ops(
+        config_path,
+        content,
+        |path, content| std::fs::write(path, content),
+        |from, to| std::fs::rename(from, to),
+        |path| std::fs::remove_file(path),
+    )
+}
+
+fn save_canonical_config_file_with_ops(
+    config_path: &Path,
+    content: &str,
+    mut write_file: impl FnMut(&Path, &str) -> io::Result<()>,
+    mut rename_file: impl FnMut(&Path, &Path) -> io::Result<()>,
+    mut remove_file: impl FnMut(&Path) -> io::Result<()>,
+) -> Result<()> {
+    let tmp_path = config_path.with_extension("toml.tmp");
+    let backup_path = config_path.with_extension("toml.bak");
+
+    write_file(&tmp_path, content)
+        .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
+
+    let _ = remove_file(&backup_path);
+
+    let backed_up = if config_path.exists() {
+        rename_file(config_path, &backup_path).with_context(|| {
+            format!(
+                "failed to move config {} to backup {}",
+                config_path.display(),
+                backup_path.display()
+            )
+        })?;
+        true
+    } else {
+        false
+    };
+
+    if let Err(rename_err) = rename_file(&tmp_path, config_path) {
+        if backed_up {
+            if let Err(restore_err) = rename_file(&backup_path, config_path) {
+                let _ = remove_file(&tmp_path);
+                return Err(anyhow!(
+                    "failed to replace config {} with {} and restore backup {}: {}",
+                    config_path.display(),
+                    tmp_path.display(),
+                    backup_path.display(),
+                    restore_err
+                ))
+                .context(format!("original rename error: {rename_err}"));
+            }
+        }
+
+        let _ = remove_file(&tmp_path);
+        return Err(anyhow!(
+            "failed to rename config {} to {}",
+            tmp_path.display(),
+            config_path.display()
+        ))
+        .context(rename_err);
+    }
+
+    let _ = remove_file(&tmp_path);
+    let _ = remove_file(&backup_path);
+
+    let legacy_path = config_path.with_file_name("config.json");
+    if legacy_path.exists() {
+        remove_file(&legacy_path)
+            .with_context(|| format!("failed to remove {}", legacy_path.display()))?;
+    }
+
+    Ok(())
 }
 
 fn default_telegram_api_base() -> String {
@@ -802,5 +849,41 @@ where
         other => Err(serde::de::Error::custom(format!(
             "agents.profiles[*].request must be a JSON object, got {other}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io;
+    use tempfile::tempdir;
+
+    #[test]
+    fn canonical_config_save_restores_existing_file_if_replace_fails() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "old").expect("write old config");
+
+        let mut rename_calls = 0usize;
+        let result = save_canonical_config_file_with_ops(
+            &path,
+            "new",
+            |path, content| fs::write(path, content),
+            move |from, to| {
+                rename_calls += 1;
+                if rename_calls == 2 {
+                    Err(io::Error::new(io::ErrorKind::Other, "replace failed"))
+                } else {
+                    fs::rename(from, to)
+                }
+            },
+            |path| fs::remove_file(path),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&path).expect("restored config"), "old");
+        assert!(!path.with_extension("toml.tmp").exists());
+        assert!(!path.with_extension("toml.bak").exists());
     }
 }
