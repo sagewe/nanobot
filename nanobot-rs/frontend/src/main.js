@@ -920,6 +920,12 @@ document.addEventListener("keydown", (e) => {
 renderTranscript([]);
 setComposerAccess(false, false);
 
+// Pre-load MCP server icons so chat tool badges show the right icon
+// even before the user opens the MCP tab.
+fetchMcpServers()
+  .then((servers) => setMcpServerIcons(Object.fromEntries(servers.filter(s => s.icon).map(s => [s.name, s.icon]))))
+  .catch(() => {});
+
 Promise.all([
   bootstrapSessions(),
   fetchWeixinAccount().then(renderWeixinAccount),
