@@ -16,7 +16,7 @@
 - Modify: `/Users/sage/nanobot/nanobot-rs/tests/wecom.rs`
 - Modify: `/Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs`
 
-- [ ] **Step 1: Write the failing log-capture test**
+- [x] **Step 1: Write the failing log-capture test**
 
 Extend `tests/wecom.rs` with a focused tracing capture test that reuses the mock WeCom server flow and asserts these `info` logs appear during a healthy session:
 - `wecom connecting to`
@@ -27,12 +27,12 @@ Extend `tests/wecom.rs` with a focused tracing capture test that reuses the mock
 
 The test should capture logs with a local `tracing_subscriber` writer, similar to `tests/web_logging.rs`.
 
-- [ ] **Step 2: Run the targeted test to verify it fails**
+- [x] **Step 2: Run the targeted test to verify it fails**
 
 Run: `cargo test --target-dir /tmp/nanobot-rs-target --test wecom wecom_logs_connection_lifecycle`
 Expected: FAIL because the current WeCom channel does not emit the positive lifecycle logs.
 
-- [ ] **Step 3: Implement the minimal `info` logging**
+- [x] **Step 3: Implement the minimal `info` logging**
 
 Add `info!` logs in `src/channels/wecom.rs` for:
 
@@ -48,12 +48,12 @@ info!("wecom channel stopped");
 
 Do not log message bodies, secrets, or full payloads.
 
-- [ ] **Step 4: Re-run the targeted test**
+- [x] **Step 4: Re-run the targeted test**
 
 Run: `cargo test --target-dir /tmp/nanobot-rs-target --test wecom wecom_logs_connection_lifecycle`
 Expected: PASS with the new lifecycle logs present.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add /Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs /Users/sage/nanobot/nanobot-rs/tests/wecom.rs
@@ -66,7 +66,7 @@ git commit -m "feat: add wecom runtime logs"
 - Modify: `/Users/sage/nanobot/nanobot-rs/tests/wecom.rs`
 - Modify: `/Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs`
 
-- [ ] **Step 1: Write the failing diagnostic assertions**
+- [x] **Step 1: Write the failing diagnostic assertions**
 
 Extend the WeCom logging test coverage so debug-level capture verifies:
 - `wecom pong received`
@@ -75,12 +75,12 @@ Extend the WeCom logging test coverage so debug-level capture verifies:
 
 Keep these assertions in one focused test. Do not assert unstable UUIDs or full error strings.
 
-- [ ] **Step 2: Run the targeted tests to verify they fail**
+- [x] **Step 2: Run the targeted tests to verify they fail**
 
 Run: `cargo test --target-dir /tmp/nanobot-rs-target --test wecom`
 Expected: FAIL because the channel currently lacks the new debug diagnostics.
 
-- [ ] **Step 3: Implement the minimal `debug` logging**
+- [x] **Step 3: Implement the minimal `debug` logging**
 
 Add `debug!` logs in `src/channels/wecom.rs` for:
 
@@ -92,7 +92,7 @@ debug!("dropping wecom message from blocked sender {}", parsed.sender_id);
 
 Do not add `ping` logs or raw payload dumps.
 
-- [ ] **Step 4: Run full verification**
+- [x] **Step 4: Run full verification**
 
 Run:
 
@@ -104,7 +104,7 @@ cargo test --target-dir /tmp/nanobot-rs-target
 
 Expected: PASS for the WeCom logging tests and then PASS for the full Rust suite.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add /Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs /Users/sage/nanobot/nanobot-rs/tests/wecom.rs

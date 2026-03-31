@@ -54,7 +54,7 @@
 - Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/lib.rs`
 - Create: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs`
 
-- [ ] **Step 1: Write the failing filter tests**
+- [x] **Step 1: Write the failing filter tests**
 
 Add a focused test file with cases for:
 
@@ -77,13 +77,13 @@ fn normal_messages_remain_visible_everywhere() {
 }
 ```
 
-- [ ] **Step 2: Run the targeted tests to verify RED**
+- [x] **Step 2: Run the targeted tests to verify RED**
 
 Run: `cargo test --target-dir /tmp/nanobot-rs-target --test presentation`
 
 Expected: FAIL because `presentation` module and `should_deliver_to_channel` do not exist yet.
 
-- [ ] **Step 3: Implement the minimal filter layer**
+- [x] **Step 3: Implement the minimal filter layer**
 
 Add:
 
@@ -102,13 +102,13 @@ pub fn should_deliver_to_channel(channel: &str, metadata: &HashMap<String, Value
 
 Export the module from `lib.rs`.
 
-- [ ] **Step 4: Run the targeted tests to verify GREEN**
+- [x] **Step 4: Run the targeted tests to verify GREEN**
 
 Run: `cargo test --target-dir /tmp/nanobot-rs-target --test presentation`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/mod.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/filters.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/lib.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs
@@ -124,7 +124,7 @@ git commit -m "feat: add channel delivery filter"
 - Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/mod.rs`
 - Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs`
 
-- [ ] **Step 1: Write the failing renderer tests**
+- [x] **Step 1: Write the failing renderer tests**
 
 Extend `tests/presentation.rs` with targeted cases:
 
@@ -151,13 +151,13 @@ fn wecom_renderer_returns_markdown_and_enforces_limit() {
 }
 ```
 
-- [ ] **Step 2: Run the targeted tests to verify RED**
+- [x] **Step 2: Run the targeted tests to verify RED**
 
 Run: `cargo test --target-dir /tmp/nanobot-rs-target --test presentation`
 
 Expected: FAIL because renderer helpers and dependencies are missing.
 
-- [ ] **Step 3: Implement minimal renderers and dependencies**
+- [x] **Step 3: Implement minimal renderers and dependencies**
 
 Add dependencies in `Cargo.toml`:
 
@@ -175,13 +175,13 @@ Implement renderer helpers with:
 
 Keep unsupported constructs readable rather than perfect.
 
-- [ ] **Step 4: Run the targeted tests to verify GREEN**
+- [x] **Step 4: Run the targeted tests to verify GREEN**
 
 Run: `cargo test --target-dir /tmp/nanobot-rs-target --test presentation`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/Cargo.toml /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/Cargo.lock /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/mod.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/markdown.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs
@@ -196,7 +196,7 @@ git commit -m "feat: add shared markdown renderers"
 - Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/web_server.rs`
 - Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/web_page.rs`
 
-- [ ] **Step 1: Write the failing Web API and page tests**
+- [x] **Step 1: Write the failing Web API and page tests**
 
 Add/adjust tests to assert:
 
@@ -212,7 +212,7 @@ assert!(html.contains("node.innerHTML = content"));
 assert!(html.contains("payload.replyHtml"));
 ```
 
-- [ ] **Step 2: Run the targeted Web tests to verify RED**
+- [x] **Step 2: Run the targeted Web tests to verify RED**
 
 Run:
 
@@ -223,7 +223,7 @@ cargo test --target-dir /tmp/nanobot-rs-target --test web_page
 
 Expected: FAIL because the API does not yet return `replyHtml` and the page still uses plain-text assistant insertion.
 
-- [ ] **Step 3: Implement minimal Web rendering**
+- [x] **Step 3: Implement minimal Web rendering**
 
 In `web/api.rs`:
 
@@ -237,7 +237,7 @@ In `web/page.rs`:
 - Add an assistant-specific append path that uses safe HTML from `replyHtml`
 - Preserve current composer, reset, and shortcut behavior
 
-- [ ] **Step 4: Run the targeted Web tests to verify GREEN**
+- [x] **Step 4: Run the targeted Web tests to verify GREEN**
 
 Run:
 
@@ -248,7 +248,7 @@ cargo test --target-dir /tmp/nanobot-rs-target --test web_page
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/web/api.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/web/page.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/web_server.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/web_page.rs
@@ -262,7 +262,7 @@ git commit -m "feat: render markdown replies in web ui"
 - Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/channels.rs`
 - Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs`
 
-- [ ] **Step 1: Write the failing Telegram tests**
+- [x] **Step 1: Write the failing Telegram tests**
 
 Extend `tests/channels.rs` with cases for:
 
@@ -283,7 +283,7 @@ async fn telegram_channel_sends_rendered_html() {
 
 Also add a focused renderer/chunking test in `tests/presentation.rs` for long Telegram HTML content that must split on safe boundaries.
 
-- [ ] **Step 2: Run the targeted Telegram tests to verify RED**
+- [x] **Step 2: Run the targeted Telegram tests to verify RED**
 
 Run:
 
@@ -295,7 +295,7 @@ cargo test --target-dir /tmp/nanobot-rs-target --test presentation telegram_html
 
 Expected: FAIL because filtering, render conversion, and safe chunking are not wired yet.
 
-- [ ] **Step 3: Implement minimal Telegram filtering and rendering**
+- [x] **Step 3: Implement minimal Telegram filtering and rendering**
 
 In `src/channels/mod.rs`:
 
@@ -304,7 +304,7 @@ In `src/channels/mod.rs`:
 - Send `parse_mode: "HTML"`
 - Replace raw string chunking with a helper that splits rendered HTML on complete block/tag boundaries
 
-- [ ] **Step 4: Run the targeted Telegram tests to verify GREEN**
+- [x] **Step 4: Run the targeted Telegram tests to verify GREEN**
 
 Run:
 
@@ -316,7 +316,7 @@ cargo test --target-dir /tmp/nanobot-rs-target --test presentation telegram_html
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/channels/mod.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/channels.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs
@@ -330,7 +330,7 @@ git commit -m "feat: render telegram markdown replies"
 - Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/wecom.rs`
 - Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs`
 
-- [ ] **Step 1: Write the failing WeCom tests**
+- [x] **Step 1: Write the failing WeCom tests**
 
 Extend `tests/wecom.rs` with cases for:
 
@@ -352,7 +352,7 @@ async fn wecom_channel_sends_markdown_replies() {
 
 Add a renderer test that verifies 20480-byte truncation/fallback remains valid UTF-8.
 
-- [ ] **Step 2: Run the targeted WeCom tests to verify RED**
+- [x] **Step 2: Run the targeted WeCom tests to verify RED**
 
 Run:
 
@@ -364,7 +364,7 @@ cargo test --target-dir /tmp/nanobot-rs-target --test presentation wecom_markdow
 
 Expected: FAIL because WeCom still uses text stream replies and does not filter runtime messages.
 
-- [ ] **Step 3: Implement minimal WeCom markdown sending**
+- [x] **Step 3: Implement minimal WeCom markdown sending**
 
 In `src/channels/wecom.rs`:
 
@@ -387,7 +387,7 @@ pub fn build_wecom_markdown_reply_request(req_id: &str, content: &str) -> Value 
 - Render visible content with `render_wecom_markdown`
 - Keep reply context lookup unchanged
 
-- [ ] **Step 4: Run the targeted WeCom tests to verify GREEN**
+- [x] **Step 4: Run the targeted WeCom tests to verify GREEN**
 
 Run:
 
@@ -399,7 +399,7 @@ cargo test --target-dir /tmp/nanobot-rs-target --test presentation wecom_markdow
 
 Expected: PASS
 
-- [ ] **Step 5: Run full verification**
+- [x] **Step 5: Run full verification**
 
 Run:
 
@@ -410,7 +410,7 @@ cargo test --target-dir /tmp/nanobot-rs-target
 
 Expected: PASS for the full Rust suite
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/channels/wecom.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/wecom.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs

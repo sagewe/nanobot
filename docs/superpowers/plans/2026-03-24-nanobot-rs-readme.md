@@ -19,7 +19,7 @@
 - Read: `/Users/sage/nanobot/nanobot-rs/src/config/mod.rs`
 - Create: `/Users/sage/nanobot/nanobot-rs/README.md`
 
-- [ ] **Step 1: Write the failing verification checklist in the plan notes**
+- [x] **Step 1: Write the failing verification checklist in the plan notes**
 
 Record the facts the README must match exactly:
 
@@ -34,7 +34,7 @@ Record the facts the README must match exactly:
 - Weixin currently handles text messages only
 ```
 
-- [ ] **Step 2: Run quick fact checks before drafting**
+- [x] **Step 2: Run quick fact checks before drafting**
 
 Run:
 
@@ -50,7 +50,7 @@ Expected:
 - `DEFAULT_WEB_PORT` is `3456`
 - config code clearly uses `defaultProfile`, includes the current provider set, and includes the current channel set
 
-- [ ] **Step 3: Draft a short README outline before writing prose**
+- [x] **Step 3: Draft a short README outline before writing prose**
 
 Use this exact section order:
 
@@ -65,7 +65,7 @@ Use this exact section order:
 ## Development
 ```
 
-- [ ] **Step 4: Commit prep checkpoint**
+- [x] **Step 4: Commit prep checkpoint**
 
 No commit yet. This task is complete when the runtime facts are verified and the outline matches the approved spec.
 
@@ -76,7 +76,7 @@ No commit yet. This task is complete when the runtime facts are verified and the
 - Reference: `/Users/sage/nanobot/docs/runbooks/nanobot-rs-runtime-smoke-checklist.md`
 - Reference: `/Users/sage/nanobot/README.md`
 
-- [ ] **Step 1: Write the initial README draft**
+- [x] **Step 1: Write the initial README draft**
 
 Write the document with the following minimum content:
 
@@ -109,7 +109,7 @@ Open `http://127.0.0.1:3456`.
 
 Then expand the rest of the sections with concise, operational language.
 
-- [ ] **Step 2: Add one minimal configuration example**
+- [x] **Step 2: Add one minimal configuration example**
 
 Use one compact example only. It should show:
 - `agents.defaults.defaultProfile`
@@ -161,7 +161,7 @@ Use this shape:
 
 Do not paste the full default config.
 
-- [ ] **Step 3: Make cross-channel session behavior explicit**
+- [x] **Step 3: Make cross-channel session behavior explicit**
 
 Include a short paragraph stating:
 
@@ -169,7 +169,7 @@ Include a short paragraph stating:
 gateway starts the embedded web UI, the web UI can browse grouped sessions across channels, and non-web sessions are read-only until duplicated into a writable web session.
 ```
 
-- [ ] **Step 4: Make Codex behavior explicit**
+- [x] **Step 4: Make Codex behavior explicit**
 
 Include a short paragraph stating:
 
@@ -177,7 +177,7 @@ Include a short paragraph stating:
 Codex uses ~/.codex/auth.json and does not fall back to OPENAI_API_KEY.
 ```
 
-- [ ] **Step 5: Make current limitations explicit**
+- [x] **Step 5: Make current limitations explicit**
 
 Include at least these points:
 
@@ -187,7 +187,7 @@ Include at least these points:
 - Weixin currently handles text messages only
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add /Users/sage/nanobot/nanobot-rs/README.md
@@ -200,7 +200,7 @@ git commit -m "docs: add nanobot-rs readme"
 - Verify: `/Users/sage/nanobot/nanobot-rs/README.md`
 - Verify: `/Users/sage/nanobot/docs/runbooks/nanobot-rs-runtime-smoke-checklist.md`
 
-- [ ] **Step 1: Run content checks against the finished README**
+- [x] **Step 1: Run content checks against the finished README**
 
 Run:
 
@@ -212,7 +212,7 @@ rg -n "cargo run --release -- onboard|~/.nanobot-rs/config.json|cargo run --rele
 Expected:
 - every required phrase appears exactly once or in an equivalent visible form
 
-- [ ] **Step 2: Re-check command references against the binary**
+- [x] **Step 2: Re-check command references against the binary**
 
 Run:
 
@@ -224,7 +224,7 @@ cargo run --release -- help
 Expected:
 - the commands referenced in the README still exist
 
-- [ ] **Step 3: Verify the quick-start section is discoverable at the top of the file**
+- [x] **Step 3: Verify the quick-start section is discoverable at the top of the file**
 
 Run:
 
@@ -241,7 +241,7 @@ Expected:
 - `cargo run --release -- gateway`
 - `http://127.0.0.1:3456`
 
-- [ ] **Step 4: Reconcile README claims against current runtime facts**
+- [x] **Step 4: Reconcile README claims against current runtime facts**
 
 Manually compare the README against:
 
@@ -257,7 +257,7 @@ Expected:
 - the README explicitly links readers to /Users/sage/nanobot/docs/runbooks/nanobot-rs-runtime-smoke-checklist.md for smoke testing and triage
 - the `Current Status` section matches the runtime surfaces described by the smoke checklist instead of claiming broader support
 
-- [ ] **Step 5: Re-run the existing smoke-focused test baseline**
+- [x] **Step 5: Re-run the existing smoke-focused test baseline**
 
 Run:
 
@@ -269,7 +269,7 @@ cargo test --target-dir /tmp/nanobot-rs-target-readme
 Expected:
 - full test suite passes
 
-- [ ] **Step 6: Final commit if verification required README edits**
+- [x] **Step 6: Final commit if verification required README edits**
 
 If verification caused follow-up edits:
 
