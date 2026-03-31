@@ -454,7 +454,7 @@ function buildTraceItem(toolCall, outputs = [], { collapsible = true } = {}) {
     sections.appendChild(
       buildTraceSection(t("tool_output_label"), outputText, "output", {
         collapsible: true,
-        defaultOpen: true,
+        defaultOpen: false,
       })
     );
   }
