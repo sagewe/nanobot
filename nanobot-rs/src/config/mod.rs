@@ -721,7 +721,7 @@ pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
             .map_err(|err| anyhow!("failed to serialize config: {err}"))?,
         _ => serde_json::to_string_pretty(config)?,
     };
-    if config_path == default_config_path() {
+    if is_canonical_config_path(&config_path) {
         let tmp_path = config_path.with_extension("toml.tmp");
         std::fs::write(&tmp_path, content)
             .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
@@ -742,6 +742,10 @@ pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
             .with_context(|| format!("failed to write config {}", config_path.display()))?;
     }
     Ok(config_path)
+}
+
+fn is_canonical_config_path(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some("config.toml")
 }
 
 fn default_telegram_api_base() -> String {
