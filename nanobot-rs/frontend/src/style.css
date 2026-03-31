@@ -1350,8 +1350,8 @@
       }
 
       :root[data-theme="dark"] .msg-group[data-role="user"] .msg-bubble {
-        background: #2e2318;
-        color: #e8ddd4;
+        background: #2d2d2d;
+        color: #ffffff;
       }
 
       .msg-content {
