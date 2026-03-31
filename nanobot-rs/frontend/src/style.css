@@ -1205,6 +1205,7 @@
         background: linear-gradient(135deg, var(--accent), var(--accent-dark));
         white-space: pre-wrap;
         border-radius: 1rem 0.35rem 1rem 1rem;
+        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
       }
 
       .msg-group[data-role="assistant"] .msg-bubble {
