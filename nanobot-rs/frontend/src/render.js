@@ -24,6 +24,31 @@ const weixinQrImage = document.getElementById("weixin-qr-image");
 const weixinLoginButton = document.getElementById("weixin-login-button");
 const weixinLogoutButton = document.getElementById("weixin-logout-button");
 
+// ── MCP tool name helpers ──────────────────────────────────────────────────────
+// Parse "mcp_{server}_{ToolName}" → { server, shortName } or null
+function parseMcpTool(name) {
+  if (!name) return null;
+  const m = name.match(/^mcp_([^_]+)_(.+)$/);
+  return m ? { server: m[1], shortName: m[2] } : null;
+}
+
+// Build a label element for a tool name: [server-badge] ShortName
+function buildToolNameEl(name) {
+  const mcp = parseMcpTool(name);
+  const span = document.createElement("span");
+  span.className = "msg-tool-name";
+  if (mcp) {
+    const badge = document.createElement("span");
+    badge.className = "msg-mcp-server-badge";
+    badge.textContent = mcp.server;
+    span.appendChild(badge);
+    span.appendChild(document.createTextNode(mcp.shortName));
+  } else {
+    span.textContent = name;
+  }
+  return span;
+}
+
 const USER_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
 const ASSISTANT_AVATAR_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L13.5 10.5L22 12L13.5 13.5L12 22L10.5 13.5L2 12L10.5 10.5Z"/></svg>`;
 const TOOL_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
@@ -259,9 +284,8 @@ function buildToolOutputElement(message, { headerStyle = "generic", showToolName
   }
 
   if (showToolName && message.toolName) {
-    const badge = document.createElement("span");
-    badge.className = "msg-tool-badge";
-    badge.textContent = message.toolName;
+    const badge = buildToolNameEl(message.toolName);
+    badge.classList.add("msg-tool-badge");
     header.appendChild(badge);
   }
 
@@ -380,9 +404,11 @@ function buildTraceItem(toolCall, outputs = [], { collapsible = true } = {}) {
     header.appendChild(icon);
   }
 
-  const title = document.createElement("span");
-  title.className = "msg-trace-title";
-  title.textContent = toolCall?.name || outputs[0]?.toolName || t("tool_output");
+  const rawName = toolCall?.name || outputs[0]?.toolName || "";
+  const title = rawName
+    ? buildToolNameEl(rawName)
+    : (() => { const s = document.createElement("span"); s.textContent = t("tool_output"); return s; })();
+  title.classList.add("msg-trace-title");
   header.appendChild(title);
 
   let argsBody = null;
