@@ -7,6 +7,7 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::Result;
 use async_trait::async_trait;
 use nanobot_rs::config::Config;
+use nanobot_rs::config::default_config_path;
 use nanobot_rs::config::load_config;
 use nanobot_rs::config::save_config;
 use nanobot_rs::providers::{
@@ -176,14 +177,30 @@ request = {}
 #[test]
 fn save_config_to_toml_replaces_stale_json_copy() {
     let dir = tempdir().expect("tempdir");
-    let path = dir.path().join("config.toml");
-    fs::write(dir.path().join("config.json"), "{}").expect("write stale json");
+    with_home_dir(dir.path(), || {
+        let path = default_config_path();
+        fs::create_dir_all(path.parent().expect("config parent")).expect("create config dir");
+        fs::write(path.with_file_name("config.json"), "{}").expect("write stale json");
+
+        let written = save_config(&Config::default(), None).expect("save config");
+
+        assert_eq!(written, path);
+        assert!(path.exists());
+        assert!(!path.with_file_name("config.json").exists());
+    });
+}
+
+#[test]
+fn save_config_to_noncanonical_toml_preserves_config_json() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("custom.toml");
+    fs::write(dir.path().join("config.json"), "{}").expect("write json sibling");
 
     let written = save_config(&Config::default(), Some(&path)).expect("save config");
 
     assert_eq!(written, path);
     assert!(path.exists());
-    assert!(!dir.path().join("config.json").exists());
+    assert!(dir.path().join("config.json").exists());
 }
 
 #[test]
