@@ -138,6 +138,18 @@ impl ControlStore {
         self.user_dir(user_id).join("config.toml")
     }
 
+    pub fn user_config_read_path(&self, user_id: &str) -> PathBuf {
+        let toml_path = self.user_config_path(user_id);
+        if toml_path.exists() {
+            return toml_path;
+        }
+        let json_path = self.user_dir(user_id).join("config.json");
+        if json_path.exists() {
+            return json_path;
+        }
+        toml_path
+    }
+
     pub fn user_workspace_path(&self, user_id: &str) -> PathBuf {
         self.user_dir(user_id).join("workspace")
     }
@@ -343,7 +355,7 @@ impl ControlStore {
             if user.user_id == user_id || !user.enabled {
                 continue;
             }
-            let other_path = self.user_config_path(&user.user_id);
+            let other_path = self.user_config_read_path(&user.user_id);
             if !other_path.exists() {
                 continue;
             }
@@ -390,7 +402,7 @@ impl ControlStore {
     }
 
     pub fn load_user_config(&self, user_id: &str) -> Result<Config> {
-        load_config(Some(&self.user_config_path(user_id)))
+        load_config(Some(&self.user_config_read_path(user_id)))
     }
 
     fn ensure_control_files(&self) -> Result<()> {

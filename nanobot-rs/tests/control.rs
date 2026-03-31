@@ -95,6 +95,36 @@ fn bootstrap_migrates_legacy_config_and_workspace_into_first_admin() {
 }
 
 #[test]
+fn load_user_config_reads_legacy_json_when_toml_is_missing() {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let admin = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+
+    let legacy_workspace = dir.path().join("legacy-workspace");
+    let mut legacy = legacy_config_with_workspace(&legacy_workspace);
+    legacy.channels.send_tool_hints = true;
+    let legacy_json_path = store.user_dir(&admin.user_id).join("config.json");
+    nanobot_rs::config::save_config(&legacy, Some(&legacy_json_path)).expect("write legacy json");
+    std::fs::remove_file(store.user_config_path(&admin.user_id)).expect("remove canonical toml");
+
+    let loaded = store
+        .load_user_config(&admin.user_id)
+        .expect("load legacy user config");
+
+    assert_eq!(
+        loaded.agents.defaults.workspace,
+        legacy_workspace.display().to_string()
+    );
+    assert!(loaded.channels.send_tool_hints);
+}
+
+#[test]
 fn validation_rejects_duplicate_telegram_and_wecom_connectors() {
     let dir = tempdir().expect("tempdir");
     let store = ControlStore::new(dir.path()).expect("control store");
@@ -118,6 +148,49 @@ fn validation_rejects_duplicate_telegram_and_wecom_connectors() {
     store
         .write_user_config(&admin.user_id, &first)
         .expect("write first config");
+
+    let mut second = Config::default();
+    second.channels.telegram.enabled = true;
+    second.channels.telegram.token = "token-a".to_string();
+    let telegram_error = store
+        .validate_user_config(&user.user_id, &second)
+        .expect_err("duplicate telegram token");
+    assert!(telegram_error.to_string().contains("telegram"));
+
+    second.channels.telegram.token = "token-b".to_string();
+    second.channels.wecom.enabled = true;
+    second.channels.wecom.bot_id = "bot-a".to_string();
+    second.channels.wecom.secret = "secret-a".to_string();
+    let wecom_error = store
+        .validate_user_config(&user.user_id, &second)
+        .expect_err("duplicate wecom credentials");
+    assert!(wecom_error.to_string().contains("wecom"));
+}
+
+#[test]
+fn validation_rejects_duplicates_from_legacy_json_user_configs() {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let admin = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+    let user = store
+        .create_user("bob", "Bob", Role::User, "password456")
+        .expect("create user");
+
+    let mut legacy = Config::default();
+    legacy.channels.telegram.enabled = true;
+    legacy.channels.telegram.token = "token-a".to_string();
+    legacy.channels.wecom.enabled = true;
+    legacy.channels.wecom.bot_id = "bot-a".to_string();
+    legacy.channels.wecom.secret = "secret-a".to_string();
+    let legacy_json_path = store.user_dir(&admin.user_id).join("config.json");
+    nanobot_rs::config::save_config(&legacy, Some(&legacy_json_path)).expect("write legacy json");
+    std::fs::remove_file(store.user_config_path(&admin.user_id)).expect("remove canonical toml");
 
     let mut second = Config::default();
     second.channels.telegram.enabled = true;

@@ -7,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::agent::AgentLoop;
 use crate::bus::{InboundMessage, MessageBus};
-use crate::config::{Config, default_workspace_path, load_config};
+use crate::config::{Config, default_workspace_path};
 use crate::control::{BootstrapAdmin, ControlStore, Role};
 use crate::mcp::connect_mcp_servers;
 use crate::providers::build_provider_from_config;
@@ -476,7 +476,7 @@ fn load_user_runtime_config(root: &PathBuf, username: &str) -> Result<Config> {
     let user = store
         .get_user_by_username(username)?
         .ok_or_else(|| anyhow!("unknown user '{}'", username))?;
-    load_config(Some(&store.user_config_path(&user.user_id)))
+    store.load_user_config(&user.user_id)
 }
 
 fn control_root(root: Option<PathBuf>) -> PathBuf {

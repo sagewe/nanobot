@@ -1,5 +1,6 @@
 use std::process::Command;
 
+use nanobot_rs::config::{load_config, save_config};
 use serde_json::Value;
 use tempfile::tempdir;
 
@@ -154,6 +155,25 @@ fn users_commands_manage_accounts_and_configs() {
         );
     }
 
+    let users_raw =
+        std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
+    let users_value: Value = serde_json::from_str(&users_raw).expect("parse users");
+    let bob_user_id = users_value["users"]
+        .as_array()
+        .expect("users array")
+        .iter()
+        .find(|user| user["username"].as_str() == Some("bob"))
+        .and_then(|user| user["user_id"].as_str())
+        .expect("bob user id");
+    let bob_config_toml = dir.path().join("users").join(bob_user_id);
+    let bob_config_toml = bob_config_toml.join("config.toml");
+    let bob_config_json = bob_config_toml.with_file_name("config.json");
+    let mut bob_config = load_config(Some(&bob_config_toml)).expect("load bob config");
+    let legacy_workspace = dir.path().join("legacy-bob-workspace");
+    bob_config.agents.defaults.workspace = legacy_workspace.display().to_string();
+    save_config(&bob_config, Some(&bob_config_json)).expect("write legacy bob config");
+    std::fs::remove_file(&bob_config_toml).expect("remove bob toml");
+
     let show_config = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
         .arg("--root")
         .arg(dir.path())
@@ -175,7 +195,7 @@ fn users_commands_manage_accounts_and_configs() {
             .and_then(toml::Value::as_table)
             .and_then(|defaults| defaults.get("workspace"))
             .and_then(toml::Value::as_str)
-            .map(|value| value.contains("/workspace")),
+            .map(|value| value == legacy_workspace.display().to_string()),
         Some(true)
     );
 
