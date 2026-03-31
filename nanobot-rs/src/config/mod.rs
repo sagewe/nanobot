@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -666,7 +665,7 @@ pub fn expand_tilde(path: &Path) -> PathBuf {
 }
 
 pub fn load_config(path: Option<&Path>) -> Result<Config> {
-    let config_path = resolve_config_path(path)?;
+    let config_path = resolve_config_path(path);
     if !config_path.exists() {
         return Ok(Config::default());
     }
@@ -684,28 +683,22 @@ pub fn load_config_from_str(path: &Path, raw: &str) -> Result<Config> {
         .map_err(|err| anyhow!("failed to validate config {}: {err}", path.display()))
 }
 
-fn resolve_config_path(path: Option<&Path>) -> Result<PathBuf> {
+fn resolve_config_path(path: Option<&Path>) -> PathBuf {
     if path.is_some() {
-        let config_path = Config::config_path(path);
-        recover_canonical_config_backup_if_needed(&config_path)?;
-        return Ok(config_path);
+        return Config::config_path(path);
     }
     let base = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".nanobot-rs");
     let toml_path = base.join("config.toml");
     if toml_path.exists() {
-        return Ok(toml_path);
-    }
-    recover_canonical_config_backup_if_needed(&toml_path)?;
-    if toml_path.exists() {
-        return Ok(toml_path);
+        return toml_path;
     }
     let json_path = base.join("config.json");
     if json_path.exists() {
-        return Ok(json_path);
+        return json_path;
     }
-    Ok(toml_path)
+    toml_path
 }
 
 fn parse_config_str(path: &Path, raw: &str) -> Result<RawConfig> {
@@ -741,97 +734,75 @@ fn is_canonical_config_path(path: &Path) -> bool {
     path.file_name().and_then(|name| name.to_str()) == Some("config.toml")
 }
 
-fn recover_canonical_config_backup_if_needed(config_path: &Path) -> Result<()> {
-    if !is_canonical_config_path(config_path) || config_path.exists() {
-        return Ok(());
-    }
-
-    let backup_path = config_path.with_extension("toml.bak");
-    if backup_path.exists() {
-        std::fs::rename(&backup_path, config_path).with_context(|| {
-            format!(
-                "failed to restore config {} from {}",
-                config_path.display(),
-                backup_path.display()
-            )
-        })?;
-    }
-
-    Ok(())
-}
-
 fn save_canonical_config_file(config_path: &Path, content: &str) -> Result<()> {
-    save_canonical_config_file_with_ops(
-        config_path,
-        content,
-        |path, content| std::fs::write(path, content),
-        |from, to| std::fs::rename(from, to),
-        |path| std::fs::remove_file(path),
-    )
-}
-
-fn save_canonical_config_file_with_ops(
-    config_path: &Path,
-    content: &str,
-    mut write_file: impl FnMut(&Path, &str) -> io::Result<()>,
-    mut rename_file: impl FnMut(&Path, &Path) -> io::Result<()>,
-    mut remove_file: impl FnMut(&Path) -> io::Result<()>,
-) -> Result<()> {
     let tmp_path = config_path.with_extension("toml.tmp");
-    let backup_path = config_path.with_extension("toml.bak");
-
-    write_file(&tmp_path, content)
+    std::fs::write(&tmp_path, content)
         .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
-
-    let _ = remove_file(&backup_path);
-
-    let backed_up = if config_path.exists() {
-        rename_file(config_path, &backup_path).with_context(|| {
-            format!(
-                "failed to move config {} to backup {}",
-                config_path.display(),
-                backup_path.display()
-            )
-        })?;
-        true
-    } else {
-        false
-    };
-
-    if let Err(rename_err) = rename_file(&tmp_path, config_path) {
-        if backed_up {
-            if let Err(restore_err) = rename_file(&backup_path, config_path) {
-                let _ = remove_file(&tmp_path);
-                return Err(anyhow!(
-                    "failed to replace config {} with {} and restore backup {}: {}",
-                    config_path.display(),
-                    tmp_path.display(),
-                    backup_path.display(),
-                    restore_err
-                ))
-                .context(format!("original rename error: {rename_err}"));
-            }
-        }
-
-        let _ = remove_file(&tmp_path);
-        return Err(anyhow!(
-            "failed to rename config {} to {}",
-            tmp_path.display(),
-            config_path.display()
-        ))
-        .context(rename_err);
-    }
-
-    let _ = remove_file(&tmp_path);
-    let _ = remove_file(&backup_path);
+    replace_file(&tmp_path, config_path)?;
 
     let legacy_path = config_path.with_file_name("config.json");
     if legacy_path.exists() {
-        remove_file(&legacy_path)
+        std::fs::remove_file(&legacy_path)
             .with_context(|| format!("failed to remove {}", legacy_path.display()))?;
     }
 
     Ok(())
+}
+
+fn replace_file(from: &Path, to: &Path) -> Result<()> {
+    replace_file_impl(from, to)
+        .with_context(|| format!("failed to replace {} with {}", to.display(), from.display()))
+}
+
+#[cfg(not(windows))]
+fn replace_file_impl(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::rename(from, to)
+}
+
+#[cfg(windows)]
+fn replace_file_impl(from: &Path, to: &Path) -> std::io::Result<()> {
+    windows_fs::replace_file(from, to)
+}
+
+#[cfg(windows)]
+mod windows_fs {
+    use std::ffi::OsStr;
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn MoveFileExW(
+            lpExistingFileName: *const u16,
+            lpNewFileName: *const u16,
+            dwFlags: u32,
+        ) -> i32;
+    }
+
+    pub fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
+        let from = to_wide(from.as_os_str());
+        let to = to_wide(to.as_os_str());
+        let ok = unsafe {
+            MoveFileExW(
+                from.as_ptr(),
+                to.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if ok == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn to_wide(value: &OsStr) -> Vec<u16> {
+        value.encode_wide().chain(std::iter::once(0)).collect()
+    }
 }
 
 fn default_telegram_api_base() -> String {
@@ -874,41 +845,5 @@ where
         other => Err(serde::de::Error::custom(format!(
             "agents.profiles[*].request must be a JSON object, got {other}"
         ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::io;
-    use tempfile::tempdir;
-
-    #[test]
-    fn canonical_config_save_restores_existing_file_if_replace_fails() {
-        let dir = tempdir().expect("tempdir");
-        let path = dir.path().join("config.toml");
-        fs::write(&path, "old").expect("write old config");
-
-        let mut rename_calls = 0usize;
-        let result = save_canonical_config_file_with_ops(
-            &path,
-            "new",
-            |path, content| fs::write(path, content),
-            move |from, to| {
-                rename_calls += 1;
-                if rename_calls == 2 {
-                    Err(io::Error::new(io::ErrorKind::Other, "replace failed"))
-                } else {
-                    fs::rename(from, to)
-                }
-            },
-            |path| fs::remove_file(path),
-        );
-
-        assert!(result.is_err());
-        assert_eq!(fs::read_to_string(&path).expect("restored config"), "old");
-        assert!(!path.with_extension("toml.tmp").exists());
-        assert!(!path.with_extension("toml.bak").exists());
     }
 }
