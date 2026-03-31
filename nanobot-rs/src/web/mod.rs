@@ -406,11 +406,23 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/logout", post(api::logout))
         .route("/api/auth/me", get(api::me))
         .route("/api/auth/change-password", post(api::change_password))
-        .route("/api/me/config", get(api::get_my_config).put(api::put_my_config))
-        .route("/api/admin/users", get(api::list_admin_users).post(api::create_admin_user))
+        .route(
+            "/api/me/config",
+            get(api::get_my_config).put(api::put_my_config),
+        )
+        .route(
+            "/api/admin/users",
+            get(api::list_admin_users).post(api::create_admin_user),
+        )
         .route("/api/admin/users/{id}/enable", post(api::enable_admin_user))
-        .route("/api/admin/users/{id}/disable", post(api::disable_admin_user))
-        .route("/api/admin/users/{id}/password", post(api::set_admin_user_password))
+        .route(
+            "/api/admin/users/{id}/disable",
+            post(api::disable_admin_user),
+        )
+        .route(
+            "/api/admin/users/{id}/password",
+            post(api::set_admin_user_password),
+        )
         .route("/api/admin/users/{id}/role", post(api::set_admin_user_role))
         .route(
             "/api/sessions",

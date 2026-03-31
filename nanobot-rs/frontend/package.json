@@ -12,6 +12,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "dompurify": "^3.3.3",
     "highlight.js": "^11.11.1"
   }

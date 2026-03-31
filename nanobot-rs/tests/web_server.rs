@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use axum::{
     Router,
     body::{Body, to_bytes},
-    http::{Request, StatusCode},
+    extract::State,
+    http::{HeaderMap, Request, StatusCode},
+    Json,
 };
 use chrono::{Duration, Utc};
 use nanobot_rs::agent::AgentLoop;
@@ -23,6 +25,7 @@ use nanobot_rs::web::{
 };
 use serde_json::{Map, json};
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
 use tempfile::{TempDir, tempdir};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -95,6 +98,19 @@ async fn login_cookie(app: &Router, username: &str, password: &str) -> String {
         .and_then(|value| value.to_str().ok())
         .expect("set-cookie")
         .to_string()
+}
+
+fn assert_put_my_config_signature<F, Fut>(handler: F)
+where
+    F: Fn(State<AppState>, HeaderMap, Json<Config>) -> Fut,
+    Fut: Future<
+        Output = std::result::Result<
+            Json<serde_json::Value>,
+            nanobot_rs::web::api::ApiError,
+        >,
+    >,
+{
+    let _ = handler;
 }
 
 #[derive(Clone)]
@@ -296,7 +312,12 @@ async fn protected_multiuser_routes_require_authentication() {
     let app = web::build_router(state);
 
     let response = app
-        .oneshot(Request::builder().uri("/api/sessions").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/sessions")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .expect("response");
 
@@ -391,8 +412,8 @@ async fn me_config_returns_the_authenticated_users_private_config() {
         .await
         .expect("body");
     let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-    let users = std::fs::read_to_string(dir.path().join("control").join("users.json"))
-        .expect("users");
+    let users =
+        std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
     let users: serde_json::Value = serde_json::from_str(&users).expect("users json");
     let user_id = users["users"][0]["user_id"].as_str().expect("user id");
     assert_eq!(
@@ -408,6 +429,68 @@ async fn me_config_returns_the_authenticated_users_private_config() {
                 .as_ref()
         )
     );
+}
+
+#[tokio::test]
+async fn put_my_config_accepts_structured_json_and_persists_the_toml_backing_file() {
+    assert_put_my_config_signature(web::api::put_my_config);
+
+    let (state, dir) = multiuser_state();
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+    let current = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/me/config")
+                .header("cookie", cookie.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("get config");
+    assert_eq!(current.status(), StatusCode::OK);
+    let current_body = to_bytes(current.into_body(), usize::MAX)
+        .await
+        .expect("config body");
+    let mut config: serde_json::Value = serde_json::from_slice(&current_body).expect("config json");
+    config["channels"]["telegram"]["enabled"] = json!(true);
+    config["channels"]["telegram"]["token"] = json!("token-123");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/me/config")
+                .header("cookie", cookie)
+                .header("content-type", "application/json")
+                .body(Body::from(config.to_string()))
+                .unwrap(),
+        )
+        .await
+        .expect("config");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(payload["ok"], json!(true));
+
+    let users =
+        std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
+    let users: serde_json::Value = serde_json::from_str(&users).expect("users json");
+    let user_id = users["users"][0]["user_id"].as_str().expect("user id");
+    let config_path = dir
+        .path()
+        .join("users")
+        .join(user_id)
+        .join("config.toml");
+
+    assert!(config_path.exists());
+    let saved = std::fs::read_to_string(&config_path).expect("config toml");
+    assert!(saved.contains("defaultProfile"));
+    assert!(saved.contains("token-123"));
 }
 
 #[tokio::test]
@@ -543,9 +626,7 @@ async fn admin_endpoints_can_create_and_manage_users() {
                 .method("POST")
                 .uri("/api/auth/login")
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    r#"{"username":"bob","password":"password456"}"#,
-                ))
+                .body(Body::from(r#"{"username":"bob","password":"password456"}"#))
                 .unwrap(),
         )
         .await
@@ -676,7 +757,10 @@ async fn cron_jobs_are_scoped_to_the_authenticated_user_runtime() {
     let alice_jobs_payload: serde_json::Value =
         serde_json::from_slice(&alice_jobs_body).expect("alice jobs json");
     assert_eq!(alice_jobs_payload["jobs"].as_array().map(Vec::len), Some(1));
-    assert_eq!(alice_jobs_payload["jobs"][0]["payload"]["message"], json!("alice task"));
+    assert_eq!(
+        alice_jobs_payload["jobs"][0]["payload"]["message"],
+        json!("alice task")
+    );
 
     let bob_jobs = app
         .oneshot(
@@ -695,7 +779,10 @@ async fn cron_jobs_are_scoped_to_the_authenticated_user_runtime() {
     let bob_jobs_payload: serde_json::Value =
         serde_json::from_slice(&bob_jobs_body).expect("bob jobs json");
     assert_eq!(bob_jobs_payload["jobs"].as_array().map(Vec::len), Some(1));
-    assert_eq!(bob_jobs_payload["jobs"][0]["payload"]["message"], json!("bob task"));
+    assert_eq!(
+        bob_jobs_payload["jobs"][0]["payload"]["message"],
+        json!("bob task")
+    );
 }
 
 #[derive(Clone)]

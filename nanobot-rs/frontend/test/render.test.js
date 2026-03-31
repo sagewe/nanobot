@@ -70,6 +70,16 @@ function readJs() {
   return readFileSync(jsPath, "utf8");
 }
 
+function readApiJs() {
+  const jsPath = path.resolve(process.cwd(), "src/api.js");
+  return readFileSync(jsPath, "utf8");
+}
+
+function readPackageJson() {
+  const jsonPath = path.resolve(process.cwd(), "package.json");
+  return readFileSync(jsonPath, "utf8");
+}
+
 function readCollapsedOutputCssBlock() {
   const css = readCss();
   const match = css.match(/\.msg-trace-code-wrap--output\[data-expandable="true"\] \.msg-trace-code--output\s*\{([\s\S]*?)\n\s*\}/);
@@ -244,6 +254,8 @@ describe("tool trace output", () => {
   it("groups channels by provider and wires settings/users labels through i18n", async () => {
     const html = readHtml();
     const js = readJs();
+    const apiJs = readApiJs();
+    const packageJson = readPackageJson();
     const { TRANSLATIONS } = await import("../src/i18n.js");
 
     expect(html).toContain('class="settings-channel-groups"');
@@ -258,15 +270,24 @@ describe("tool trace output", () => {
     expect(html).toContain('data-i18n="users_create_submit"');
     expect(html).toContain('data-i18n="tab_settings"');
     expect(html).toContain('data-i18n="tab_users"');
+    expect(html).toContain("Advanced TOML");
 
     expect(TRANSLATIONS.en.settings_workspace_title).toBeTruthy();
     expect(TRANSLATIONS.zh.settings_workspace_title).toBeTruthy();
+    expect(TRANSLATIONS.en.settings_advanced_title).toBe("Advanced TOML");
+    expect(TRANSLATIONS.zh.settings_advanced_title).toContain("TOML");
     expect(TRANSLATIONS.en.users_action_reset_password).toBeTruthy();
     expect(TRANSLATIONS.zh.users_action_reset_password).toBeTruthy();
     expect(js).toContain('t("users_empty")');
     expect(js).toContain('t("users_action_reset_password")');
     expect(js).toContain('t("settings_saved")');
     expect(js).toContain('t("users_updated")');
+    expect(js).toContain('import TOML from "@iarna/toml"');
+    expect(js).toContain("TOML.stringify");
+    expect(js).toContain("TOML.parse");
+    expect(apiJs).toContain("export async function updateMyConfig(nextConfig)");
+    expect(apiJs).toContain("body: JSON.stringify(nextConfig)");
+    expect(packageJson).toContain('"@iarna/toml"');
   });
 
   it("separates the users page into a create card and a directory card", () => {

@@ -1,3 +1,4 @@
+import TOML from "@iarna/toml";
 import { t, getLang, setLang, applyI18n } from "./i18n.js";
 import {
   fetchCurrentUser,
@@ -242,8 +243,8 @@ function setAuthState(user) {
   }
 }
 
-function stableStringifyConfig(config) {
-  return JSON.stringify(config, null, 2);
+function stringifyConfigEditor(config) {
+  return TOML.stringify(config || {});
 }
 
 function syncStructuredSettings(config) {
@@ -338,7 +339,7 @@ function renderAdminUsers(users) {
 async function loadSettings() {
   currentConfig = await fetchMyConfig();
   syncStructuredSettings(currentConfig);
-  configEditor.value = stableStringifyConfig(currentConfig);
+  configEditor.value = stringifyConfigEditor(currentConfig);
 }
 
 async function refreshAdminUsers() {
@@ -804,12 +805,12 @@ settingsRefreshButton.addEventListener("click", async () => {
 settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
-    const parsed = JSON.parse(configEditor.value || "{}");
+    const parsed = configEditor.value.trim() ? TOML.parse(configEditor.value) : {};
     const nextConfig = applyStructuredSettings(parsed);
-    await updateMyConfig(stableStringifyConfig(nextConfig));
+    await updateMyConfig(nextConfig);
     currentConfig = nextConfig;
     syncStructuredSettings(nextConfig);
-    configEditor.value = stableStringifyConfig(nextConfig);
+    configEditor.value = stringifyConfigEditor(nextConfig);
     await loadProfiles().then(renderProfiles);
     await refreshSessions();
     setStatus(t("settings_saved"), "idle");

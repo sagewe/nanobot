@@ -5,10 +5,10 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::config::Config;
 use crate::control::AuthenticatedUser;
 use crate::cron::{CronJob, CronSchedule};
 use crate::mcp::{McpServerInfo, McpServerToolAction};
-use crate::config::{Config, load_config_from_str};
 
 use super::{
     AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary, WebWeixinAccount,
@@ -138,7 +138,8 @@ async fn authenticated_user(
     let Some(auth) = state.auth_service() else {
         return Ok(None);
     };
-    let session_id = session_cookie(headers).ok_or_else(|| ApiError::unauthorized("authentication required"))?;
+    let session_id =
+        session_cookie(headers).ok_or_else(|| ApiError::unauthorized("authentication required"))?;
     auth.authenticate_session(&session_id)
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::unauthorized("authentication required"))
@@ -185,7 +186,9 @@ fn parse_role(value: Option<&str>) -> Result<crate::control::Role, ApiError> {
     match value.unwrap_or("user").trim().to_ascii_lowercase().as_str() {
         "admin" => Ok(crate::control::Role::Admin),
         "user" => Ok(crate::control::Role::User),
-        _ => Err(ApiError::bad_request("role must be either 'admin' or 'user'")),
+        _ => Err(ApiError::bad_request(
+            "role must be either 'admin' or 'user'",
+        )),
     }
 }
 
@@ -231,7 +234,9 @@ pub async fn login(
     );
     let header_value = HeaderValue::from_str(&cookie)
         .map_err(|error| ApiError::internal(anyhow::anyhow!(error)))?;
-    response.headers_mut().insert(header::SET_COOKIE, header_value);
+    response
+        .headers_mut()
+        .insert(header::SET_COOKIE, header_value);
     Ok(response)
 }
 
@@ -269,7 +274,9 @@ pub async fn logout(
     let mut response = Json(json!({ "ok": true })).into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
-        HeaderValue::from_static("nanobot_session=deleted; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"),
+        HeaderValue::from_static(
+            "nanobot_session=deleted; Path=/; Max-Age=0; HttpOnly; SameSite=Strict",
+        ),
     );
     Ok(response)
 }
@@ -291,7 +298,9 @@ pub async fn get_my_config(
     let control = state
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
-    let config = control.load_user_config(&user.user_id).map_err(ApiError::internal)?;
+    let config = control
+        .load_user_config(&user.user_id)
+        .map_err(ApiError::internal)?;
     Ok(Json(config))
 }
 
@@ -362,7 +371,9 @@ pub async fn enable_admin_user(
     let control = state
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
-    let updated = control.set_user_enabled(&id, true).map_err(ApiError::internal)?;
+    let updated = control
+        .set_user_enabled(&id, true)
+        .map_err(ApiError::internal)?;
     Ok(Json(json!({ "user": user_record_json(&updated) })))
 }
 
@@ -422,20 +433,21 @@ pub async fn set_admin_user_role(
 pub async fn put_my_config(
     State(state): State<AppState>,
     headers: HeaderMap,
-    body: String,
+    Json(config): Json<Config>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = authenticated_user(&state, &headers).await?;
     let user = require_authenticated_user(&user)?;
     let control = state
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
-    let config = load_config_from_str(std::path::Path::new("config.json"), &body)
-        .map_err(ApiError::internal)?;
     control
         .write_user_config(&user.user_id, &config)
         .map_err(ApiError::internal)?;
     if let Some(runtimes) = &state.runtimes {
-        let _ = runtimes.reload(&user.user_id).await.map_err(ApiError::internal)?;
+        let _ = runtimes
+            .reload(&user.user_id)
+            .await
+            .map_err(ApiError::internal)?;
     }
     Ok(Json(json!({ "ok": true })))
 }
@@ -445,10 +457,7 @@ pub async fn list_sessions(
     headers: HeaderMap,
 ) -> Result<Json<SessionListResponse>, ApiError> {
     let chat = resolve_chat_service(&state, &headers).await?;
-    let sessions = chat
-        .list_sessions()
-        .await
-        .map_err(ApiError::internal)?;
+    let sessions = chat.list_sessions().await.map_err(ApiError::internal)?;
     Ok(Json(SessionListResponse { groups: sessions }))
 }
 
@@ -473,10 +482,7 @@ pub async fn create_session(
     headers: HeaderMap,
 ) -> Result<Json<WebSessionSummary>, ApiError> {
     let chat = resolve_chat_service(&state, &headers).await?;
-    let session = chat
-        .create_session()
-        .await
-        .map_err(ApiError::internal)?;
+    let session = chat.create_session().await.map_err(ApiError::internal)?;
     Ok(Json(session))
 }
 
@@ -532,10 +538,7 @@ pub async fn list_profiles(
     headers: HeaderMap,
 ) -> Result<Json<ProfileListResponse>, ApiError> {
     let chat = resolve_chat_service(&state, &headers).await?;
-    let profiles = chat
-        .list_profiles()
-        .await
-        .map_err(ApiError::internal)?;
+    let profiles = chat.list_profiles().await.map_err(ApiError::internal)?;
     Ok(Json(ProfileListResponse { profiles }))
 }
 
@@ -766,10 +769,7 @@ pub async fn list_mcp_servers(
     headers: HeaderMap,
 ) -> Result<Json<McpServerListResponse>, ApiError> {
     let chat = resolve_chat_service(&state, &headers).await?;
-    let servers = chat
-        .list_mcp_servers()
-        .await
-        .map_err(ApiError::internal)?;
+    let servers = chat.list_mcp_servers().await.map_err(ApiError::internal)?;
     Ok(Json(McpServerListResponse { servers }))
 }
 

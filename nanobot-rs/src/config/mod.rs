@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
+use serde::de::Error as _;
 use serde_json::{Map, Value};
 
 use crate::providers::ProviderRegistry;
@@ -299,6 +300,17 @@ impl Default for Config {
             channels: ChannelsConfig::default(),
             tools: ToolsConfig::default(),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        RawConfig::deserialize(deserializer)?
+            .into_config()
+            .map_err(D::Error::custom)
     }
 }
 

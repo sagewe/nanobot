@@ -57,11 +57,11 @@ export async function fetchMyConfig() {
   return payload;
 }
 
-export async function updateMyConfig(rawConfig) {
+export async function updateMyConfig(nextConfig) {
   const response = await fetch("/api/me/config", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: rawConfig,
+    body: JSON.stringify(nextConfig),
   });
   const payload = await parseJson(response);
   if (!response.ok) {
