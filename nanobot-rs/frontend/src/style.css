@@ -2106,8 +2106,9 @@
         overflow-y: auto;
         border: none;
         padding: 0.65rem 1.1rem 0.45rem;
-        font: inherit;
-        line-height: 1.5;
+        font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Segoe UI", sans-serif;
+        font-size: 1rem;
+        line-height: 1.55;
         color: var(--ink);
         background: transparent;
         outline: none;
