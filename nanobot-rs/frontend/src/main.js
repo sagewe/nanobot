@@ -1233,6 +1233,29 @@ const mcpPopover = (() => {
   return { show, hide };
 })();
 
+function mcpToolIcon(name) {
+  const n = name.toLowerCase();
+  const svg = (p) => `<svg class="mcp-tool-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+  if (/turnon|turn_on/.test(n))             return svg(`<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>`);
+  if (/turnoff|turn_off/.test(n))           return svg(`<path d="M18.36 6.64A9 9 0 0 1 20.77 15"/><path d="M6.16 6.16a9 9 0 1 0 12.68 12.68"/><line x1="12" y1="2" x2="12" y2="12"/><line x1="2" y1="2" x2="22" y2="22"/>`);
+  if (/light/.test(n))                      return svg(`<line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="22" x2="14" y2="22"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/>`);
+  if (/broadcast/.test(n))                  return svg(`<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/>`);
+  if (/fan/.test(n))                        return svg(`<path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2 2 0 1 1 19.41 10H2"/>`);
+  if (/unmute/.test(n))                     return svg(`<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>`);
+  if (/mute/.test(n))                       return svg(`<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>`);
+  if (/volumerelative|volume_relative/.test(n)) return svg(`<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>`);
+  if (/volume/.test(n))                     return svg(`<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>`);
+  if (/unpause|resume/.test(n))             return svg(`<polygon points="5 3 19 12 5 21 5 3"/>`);
+  if (/pause/.test(n))                      return svg(`<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`);
+  if (/next/.test(n))                       return svg(`<polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/>`);
+  if (/previous|prev/.test(n))              return svg(`<polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/>`);
+  if (/search/.test(n))                     return svg(`<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>`);
+  if (/timer|cancel/.test(n))               return svg(`<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>`);
+  if (/datetime|time|date/.test(n))         return svg(`<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>`);
+  if (/context|live|state/.test(n))         return svg(`<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>`);
+  return svg(`<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>`);
+}
+
 function renderMcpList(servers) {
   if (!servers.length) {
     mcpList.innerHTML = `<div class="jobs-empty">${t("mcp_empty")}<br><span class="jobs-empty-hint">${t("mcp_empty_hint")}</span></div>`;
@@ -1248,7 +1271,10 @@ function renderMcpList(servers) {
            data-short="${escapeHtml(shortName)}"
            data-desc="${escapeHtml(tool.description)}"
            data-enabled="${enabled}">
-        <span class="mcp-tool-card-name">${escapeHtml(shortName)}</span>
+        <div class="mcp-tool-card-header">
+          ${mcpToolIcon(shortName)}
+          <span class="mcp-tool-card-name">${escapeHtml(shortName)}</span>
+        </div>
         <span class="mcp-tool-card-desc">${escapeHtml(tool.description)}</span>
       </div>`;
     }).join("");

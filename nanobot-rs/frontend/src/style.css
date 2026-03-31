@@ -565,6 +565,20 @@
         color: var(--dim);
       }
 
+      .mcp-tool-card-header {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin-bottom: 0.2rem;
+        min-width: 0;
+      }
+
+      .mcp-tool-icon {
+        flex-shrink: 0;
+        color: var(--accent);
+        opacity: 0.85;
+      }
+
       /* ── MCP tool popover ─────────────────────────────────────────────── */
       .mcp-popover {
         position: fixed;
@@ -671,7 +685,6 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        margin-bottom: 0.2rem;
       }
 
       .mcp-tool-card-desc {
