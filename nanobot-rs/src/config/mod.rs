@@ -641,7 +641,7 @@ pub fn default_config_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".nanobot-rs")
-        .join("config.json")
+        .join("config.toml")
 }
 
 pub fn default_workspace_path() -> PathBuf {
@@ -694,7 +694,11 @@ fn resolve_config_path(path: Option<&Path>) -> PathBuf {
     if toml_path.exists() {
         return toml_path;
     }
-    base.join("config.json")
+    let json_path = base.join("config.json");
+    if json_path.exists() {
+        return json_path;
+    }
+    toml_path
 }
 
 fn parse_config_str(path: &Path, raw: &str) -> Result<RawConfig> {
@@ -717,8 +721,26 @@ pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
             .map_err(|err| anyhow!("failed to serialize config: {err}"))?,
         _ => serde_json::to_string_pretty(config)?,
     };
-    std::fs::write(&config_path, content)
-        .with_context(|| format!("failed to write config {}", config_path.display()))?;
+    if config_path.extension().and_then(|e| e.to_str()) == Some("toml") {
+        let tmp_path = config_path.with_extension("toml.tmp");
+        std::fs::write(&tmp_path, content)
+            .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
+        std::fs::rename(&tmp_path, &config_path).with_context(|| {
+            format!(
+                "failed to rename config {} to {}",
+                tmp_path.display(),
+                config_path.display()
+            )
+        })?;
+        let legacy_path = config_path.with_file_name("config.json");
+        if legacy_path.exists() {
+            std::fs::remove_file(&legacy_path)
+                .with_context(|| format!("failed to remove {}", legacy_path.display()))?;
+        }
+    } else {
+        std::fs::write(&config_path, content)
+            .with_context(|| format!("failed to write config {}", config_path.display()))?;
+    }
     Ok(config_path)
 }
 

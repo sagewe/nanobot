@@ -1,6 +1,8 @@
+use std::env;
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -13,6 +15,34 @@ use nanobot_rs::providers::{
 };
 use serde_json::{Map, Value};
 use tempfile::tempdir;
+
+fn env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn with_home_dir<F>(home_dir: &std::path::Path, f: F)
+where
+    F: FnOnce(),
+{
+    let _guard = env_lock().lock().expect("env lock");
+    let previous_home = env::var_os("HOME");
+
+    unsafe {
+        env::set_var("HOME", home_dir);
+    }
+
+    f();
+
+    match previous_home {
+        Some(previous) => unsafe {
+            env::set_var("HOME", previous);
+        },
+        None => unsafe {
+            env::remove_var("HOME");
+        },
+    }
+}
 
 #[test]
 fn config_defaults_expose_the_new_default_profile_shape() {
@@ -89,6 +119,71 @@ fn config_defaults_expose_the_new_default_profile_shape() {
     );
     assert!(value.pointer("/channels/weixin/api_base").is_none());
     assert!(value.pointer("/channels/weixin/cdn_base").is_none());
+}
+
+#[test]
+fn load_config_prefers_toml_when_both_files_exist() {
+    let home_dir = tempdir().expect("tempdir");
+    let config_dir = home_dir.path().join(".nanobot-rs");
+    fs::create_dir_all(&config_dir).expect("create config dir");
+    fs::write(
+        config_dir.join("config.toml"),
+        r#"[agents.defaults]
+workspace = "/tmp/nanobot"
+defaultProfile = "openai:gpt-4.1-mini"
+maxToolIterations = 20
+messageDebounceMs = 0
+
+[agents.profiles."openai:gpt-4.1-mini"]
+provider = "openai"
+model = "gpt-4.1-mini"
+request = {}
+"#,
+    )
+    .expect("write toml config");
+    fs::write(
+        config_dir.join("config.json"),
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "defaultProfile": "codex:gpt-5.4",
+      "maxToolIterations": 20
+    },
+    "profiles": {
+      "codex:gpt-5.4": {
+        "provider": "codex",
+        "model": "gpt-5.4",
+        "request": {}
+      }
+    }
+  }
+}"#,
+    )
+    .expect("write json config");
+
+    with_home_dir(home_dir.path(), || {
+        let config = load_config(None).expect("load config");
+        assert_eq!(
+            config.agents.defaults.default_profile,
+            "openai:gpt-4.1-mini"
+        );
+        assert_eq!(config.agents.defaults.provider, "openai");
+        assert_eq!(config.agents.defaults.model, "gpt-4.1-mini");
+    });
+}
+
+#[test]
+fn save_config_to_toml_replaces_stale_json_copy() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("config.toml");
+    fs::write(dir.path().join("config.json"), "{}").expect("write stale json");
+
+    let written = save_config(&Config::default(), Some(&path)).expect("save config");
+
+    assert_eq!(written, path);
+    assert!(path.exists());
+    assert!(!dir.path().join("config.json").exists());
 }
 
 #[test]
