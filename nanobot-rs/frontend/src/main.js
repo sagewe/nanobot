@@ -279,9 +279,28 @@ function applyStructuredSettings(config) {
   return next;
 }
 
+function tUserRole(role) {
+  return role === "admin" ? t("users_role_admin") : t("users_role_user");
+}
+
+function tUserState(enabled) {
+  return enabled ? t("users_state_enabled") : t("users_state_disabled");
+}
+
+function tUserRuntimeStatus(status) {
+  const normalized = (status || "unknown").toLowerCase();
+  const key = `users_runtime_${normalized}`;
+  const translated = t(key);
+  return translated === key ? (status || t("users_runtime_unknown")) : translated;
+}
+
+function tResetPasswordPrompt(username) {
+  return t("users_prompt_password").replace("{username}", username || "");
+}
+
 function renderAdminUsers(users) {
   if (!users.length) {
-    adminUsersList.innerHTML = `<div class="jobs-empty">No users yet.</div>`;
+    adminUsersList.innerHTML = `<div class="jobs-empty">${t("users_empty")}</div>`;
     return;
   }
   adminUsersList.innerHTML = users
@@ -294,20 +313,20 @@ function renderAdminUsers(users) {
               <span>${user.username}</span>
             </div>
             <div class="admin-user-badges">
-              <span class="admin-user-badge">${user.role}</span>
-              <span class="admin-user-badge" data-state="${user.enabled ? "enabled" : "disabled"}">${user.enabled ? "enabled" : "disabled"}</span>
-              <span class="admin-user-badge">${user.runtimeStatus || "unknown"}</span>
+              <span class="admin-user-badge">${tUserRole(user.role)}</span>
+              <span class="admin-user-badge" data-state="${user.enabled ? "enabled" : "disabled"}">${tUserState(user.enabled)}</span>
+              <span class="admin-user-badge">${tUserRuntimeStatus(user.runtimeStatus)}</span>
             </div>
           </div>
           <div class="admin-user-actions">
             <button type="button" data-action="${user.enabled ? "disable" : "enable"}" data-user-id="${user.userId}">
-              ${user.enabled ? "Disable" : "Enable"}
+              ${user.enabled ? t("users_action_disable") : t("users_action_enable")}
             </button>
             <button type="button" data-action="role" data-user-id="${user.userId}" data-role="${user.role}">
-              ${user.role === "admin" ? "Make user" : "Make admin"}
+              ${user.role === "admin" ? t("users_action_make_user") : t("users_action_make_admin")}
             </button>
             <button type="button" data-action="password" data-user-id="${user.userId}" data-username="${user.username}">
-              Reset password
+              ${t("users_action_reset_password")}
             </button>
           </div>
         </article>
@@ -690,9 +709,9 @@ function switchTab(tab) {
   usersPane.hidden = tab !== "users";
   if (tab === "jobs") refreshJobs();
   if (tab === "mcp") refreshMcp();
-  if (tab === "settings") loadSettings().catch((error) => setStatus(error?.message || "Failed to load settings", "error"));
+  if (tab === "settings") loadSettings().catch((error) => setStatus(error?.message || t("settings_load_failed"), "error"));
   if (tab === "users" && currentUser?.role === "admin") {
-    refreshAdminUsers().catch((error) => setStatus(error?.message || "Failed to load users", "error"));
+    refreshAdminUsers().catch((error) => setStatus(error?.message || t("users_load_failed"), "error"));
   }
 }
 
@@ -742,6 +761,9 @@ langToggleBtn.addEventListener("click", () => {
   applyWide(document.body.getAttribute("data-wide") !== "false");
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
   syncSessionsList();
+  if (currentUser?.role === "admin") {
+    refreshAdminUsers().catch(() => {});
+  }
 });
 
 loginForm.addEventListener("submit", async (event) => {
@@ -773,9 +795,9 @@ logoutButton.addEventListener("click", async () => {
 settingsRefreshButton.addEventListener("click", async () => {
   try {
     await loadSettings();
-    setStatus("Configuration reloaded.", "idle");
+    setStatus(t("settings_reloaded"), "idle");
   } catch (error) {
-    setStatus(error?.message || "Failed to reload settings", "error");
+    setStatus(error?.message || t("settings_reload_failed"), "error");
   }
 });
 
@@ -790,9 +812,9 @@ settingsForm.addEventListener("submit", async (event) => {
     configEditor.value = stableStringifyConfig(nextConfig);
     await loadProfiles().then(renderProfiles);
     await refreshSessions();
-    setStatus("Configuration saved.", "idle");
+    setStatus(t("settings_saved"), "idle");
   } catch (error) {
-    setStatus(error?.message || "Failed to save config", "error");
+    setStatus(error?.message || t("settings_save_failed"), "error");
   }
 });
 
@@ -802,18 +824,18 @@ changePasswordForm.addEventListener("submit", async (event) => {
     await changePassword(currentPasswordInput.value, newPasswordInput.value);
     currentPasswordInput.value = "";
     newPasswordInput.value = "";
-    setStatus("Password updated.", "idle");
+    setStatus(t("settings_password_updated"), "idle");
   } catch (error) {
-    setStatus(error?.message || "Failed to update password", "error");
+    setStatus(error?.message || t("settings_password_update_failed"), "error");
   }
 });
 
 usersRefreshButton.addEventListener("click", async () => {
   try {
     await refreshAdminUsers();
-    setStatus("User list refreshed.", "idle");
+    setStatus(t("users_refreshed"), "idle");
   } catch (error) {
-    setStatus(error?.message || "Failed to load users", "error");
+    setStatus(error?.message || t("users_load_failed"), "error");
   }
 });
 
@@ -828,9 +850,9 @@ createUserForm.addEventListener("submit", async (event) => {
     });
     createUserForm.reset();
     await refreshAdminUsers();
-    setStatus("User created.", "idle");
+    setStatus(t("users_created"), "idle");
   } catch (error) {
-    setStatus(error?.message || "Failed to create user", "error");
+    setStatus(error?.message || t("users_create_failed"), "error");
   }
 });
 
@@ -849,14 +871,14 @@ adminUsersList.addEventListener("click", async (event) => {
       const nextRole = button.dataset.role === "admin" ? "user" : "admin";
       await setAdminUserRole(userId, nextRole);
     } else if (button.dataset.action === "password") {
-      const nextPassword = window.prompt(`Set a new password for ${button.dataset.username}:`);
+      const nextPassword = window.prompt(tResetPasswordPrompt(button.dataset.username));
       if (!nextPassword) return;
       await setAdminUserPassword(userId, nextPassword);
     }
     await refreshAdminUsers();
-    setStatus("User updated.", "idle");
+    setStatus(t("users_updated"), "idle");
   } catch (error) {
-    setStatus(error?.message || "Failed to update user", "error");
+    setStatus(error?.message || t("users_update_failed"), "error");
   }
 });
 

@@ -55,16 +55,29 @@ function readFadeCssBlock() {
   return match ? match[1] : "";
 }
 
-function readCollapsedOutputCssBlock() {
+function readHtml() {
+  const htmlPath = path.resolve(process.cwd(), "index.html");
+  return readFileSync(htmlPath, "utf8");
+}
+
+function readCss() {
   const cssPath = path.resolve(process.cwd(), "src/style.css");
-  const css = readFileSync(cssPath, "utf8");
+  return readFileSync(cssPath, "utf8");
+}
+
+function readJs() {
+  const jsPath = path.resolve(process.cwd(), "src/main.js");
+  return readFileSync(jsPath, "utf8");
+}
+
+function readCollapsedOutputCssBlock() {
+  const css = readCss();
   const match = css.match(/\.msg-trace-code-wrap--output\[data-expandable="true"\] \.msg-trace-code--output\s*\{([\s\S]*?)\n\s*\}/);
   return match ? match[1] : "";
 }
 
 function readCssBlock(selectorPattern) {
-  const cssPath = path.resolve(process.cwd(), "src/style.css");
-  const css = readFileSync(cssPath, "utf8");
+  const css = readCss();
   const match = css.match(new RegExp(`${selectorPattern}\\s*\\{([\\s\\S]*?)\\n\\s*\\}`));
   return match ? match[1] : "";
 }
@@ -175,6 +188,101 @@ describe("tool trace output", () => {
     expect(autoDarkOutputCss).toContain("background: transparent;");
     expect(showMoreCss).toContain("left:");
     expect(showMoreCss).not.toContain("right:");
+  });
+
+  it("uses warm dark surfaces for the sidebar identity area in dark themes", () => {
+    const darkUserChipCss = readCssBlock(":root\\[data-theme=\"dark\"\\] \\.user-chip");
+    const autoDarkUserChipCss = readCssBlock(":root:not\\(\\[data-theme=\"light\"\\]\\):not\\(\\[data-theme=\"dark\"\\]\\) \\.user-chip");
+    const darkFooterButtonCss = readCssBlock(":root\\[data-theme=\"dark\"\\] \\.sidebar-footer button");
+    const autoDarkFooterButtonCss = readCssBlock(":root:not\\(\\[data-theme=\"light\"\\]\\):not\\(\\[data-theme=\"dark\"\\]\\) \\.sidebar-footer button");
+
+    expect(darkUserChipCss).toContain("background:");
+    expect(darkUserChipCss).not.toContain("background: rgba(255, 255, 255");
+    expect(autoDarkUserChipCss).toContain("background:");
+    expect(autoDarkUserChipCss).not.toContain("background: rgba(255, 255, 255");
+    expect(darkFooterButtonCss).toContain("background:");
+    expect(darkFooterButtonCss).not.toContain("transparent");
+    expect(autoDarkFooterButtonCss).toContain("background:");
+    expect(autoDarkFooterButtonCss).not.toContain("transparent");
+  });
+
+  it("reuses the jobs panel palette for settings and users surfaces", () => {
+    const controlPanelCss = readCssBlock("\\.control-panel");
+    const adminUserCardCss = readCssBlock("\\.admin-user-card");
+    const controlPanelButtonCss = readCssBlock("\\.control-panel-header button");
+    const adminUserActionCss = readCssBlock("\\.admin-user-actions button");
+
+    expect(controlPanelCss).toContain("background: var(--panel);");
+    expect(controlPanelCss).not.toContain("255, 255, 255");
+    expect(adminUserCardCss).toContain("background: var(--panel);");
+    expect(adminUserCardCss).not.toContain("253, 252, 251");
+    expect(controlPanelButtonCss).toContain("background: transparent;");
+    expect(controlPanelButtonCss).not.toContain("rgba(193, 95, 60, 0.08)");
+    expect(adminUserActionCss).toContain("background: transparent;");
+    expect(adminUserActionCss).not.toContain("rgba(193, 95, 60, 0.08)");
+  });
+
+  it("splits settings into primary controls and a dedicated advanced editor column", () => {
+    const html = readHtml();
+    const css = readCss();
+    const settingsLayoutCss = readCssBlock("\\.settings-layout");
+    const settingsMainCss = readCssBlock("\\.settings-main");
+    const settingsAdvancedCss = readCssBlock("\\.settings-advanced");
+
+    expect(html).toContain('id="settings-form" class="control-form settings-layout"');
+    expect(html).toContain('class="settings-main"');
+    expect(html).toContain('class="settings-advanced"');
+    expect(html).toContain('class="settings-advanced-header"');
+    expect(settingsLayoutCss).toContain("grid-template-columns:");
+    expect(settingsMainCss).toContain("display: grid;");
+    expect(settingsAdvancedCss).toContain("grid-template-rows:");
+    expect(css).toContain("@media (max-width: 1100px)");
+    expect(css).toContain(".settings-layout");
+    expect(css).toContain("grid-template-columns: 1fr;");
+  });
+
+  it("groups channels by provider and wires settings/users labels through i18n", async () => {
+    const html = readHtml();
+    const js = readJs();
+    const { TRANSLATIONS } = await import("../src/i18n.js");
+
+    expect(html).toContain('class="settings-channel-groups"');
+    expect(html).toContain('class="settings-channel-group"');
+    expect(html).toContain('data-i18n="settings_channels_telegram"');
+    expect(html).toContain('data-i18n="settings_channels_weixin"');
+    expect(html).toContain('data-i18n="settings_channels_wecom"');
+    expect(html).toContain('data-i18n="settings_workspace_title"');
+    expect(html).toContain('data-i18n="settings_advanced_title"');
+    expect(html).toContain('data-i18n="settings_password_title"');
+    expect(html).toContain('data-i18n="users_title"');
+    expect(html).toContain('data-i18n="users_create_submit"');
+    expect(html).toContain('data-i18n="tab_settings"');
+    expect(html).toContain('data-i18n="tab_users"');
+
+    expect(TRANSLATIONS.en.settings_workspace_title).toBeTruthy();
+    expect(TRANSLATIONS.zh.settings_workspace_title).toBeTruthy();
+    expect(TRANSLATIONS.en.users_action_reset_password).toBeTruthy();
+    expect(TRANSLATIONS.zh.users_action_reset_password).toBeTruthy();
+    expect(js).toContain('t("users_empty")');
+    expect(js).toContain('t("users_action_reset_password")');
+    expect(js).toContain('t("settings_saved")');
+    expect(js).toContain('t("users_updated")');
+  });
+
+  it("separates the users page into a create card and a directory card", () => {
+    const html = readHtml();
+    const css = readCss();
+    const usersLayoutCss = readCssBlock("\\.users-layout");
+    const usersCreateFormCss = readCssBlock("\\.users-create-form");
+
+    expect(html).toContain('class="users-pane-header"');
+    expect(html).toContain('class="users-layout"');
+    expect(html).toContain('class="control-panel users-create-card"');
+    expect(html).toContain('class="control-panel users-list-card"');
+    expect(html).toContain('id="create-user-form" class="control-form compact-form users-create-form"');
+    expect(usersLayoutCss).toContain("display: grid;");
+    expect(usersCreateFormCss).toContain("max-width:");
+    expect(css).toContain(".users-list-card");
   });
 
   it("aligns the intent text without reserving chevron width", () => {

@@ -60,11 +60,11 @@
             </button>
             <button class="tab-btn" data-tab="settings" role="tab">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-              <span class="tab-label">Settings</span>
+              <span class="tab-label" data-i18n="tab_settings">Settings</span>
             </button>
             <button class="tab-btn" data-tab="users" role="tab" id="admin-users-tab" hidden>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-              <span class="tab-label">Users</span>
+              <span class="tab-label" data-i18n="tab_users">Users</span>
             </button>
           </div>
           <div class="sidebar-footer">
@@ -161,115 +161,174 @@
           <div id="mcp-list" class="jobs-list"></div>
         </section>
         <section class="settings-pane" hidden>
-          <section class="control-panel">
+          <section class="control-panel control-panel--workspace">
             <div class="control-panel-header">
               <div>
-                <div class="session-kicker">Private Settings</div>
-                <h2 class="jobs-title">Workspace Configuration</h2>
+                <div class="session-kicker" data-i18n="settings_workspace_kicker">Private Settings</div>
+                <h2 class="jobs-title" data-i18n="settings_workspace_title">Workspace Configuration</h2>
               </div>
-              <button id="settings-refresh-button" type="button">Reload</button>
             </div>
-            <form id="settings-form" class="control-form">
-              <div class="control-grid">
-                <label>
-                  <span>Default profile</span>
-                  <input id="settings-default-profile" type="text" />
-                </label>
-                <label>
-                  <span>Telegram token</span>
-                  <input id="settings-telegram-token" type="password" />
-                </label>
-                <label class="checkbox-row">
-                  <input id="settings-telegram-enabled" type="checkbox" />
-                  <span>Telegram enabled</span>
-                </label>
-                <label class="checkbox-row">
-                  <input id="settings-weixin-enabled" type="checkbox" />
-                  <span>Weixin enabled</span>
-                </label>
-                <label>
-                  <span>Weixin API base</span>
-                  <input id="settings-weixin-api-base" type="text" />
-                </label>
-                <label class="checkbox-row">
-                  <input id="settings-wecom-enabled" type="checkbox" />
-                  <span>WeCom enabled</span>
-                </label>
-                <label>
-                  <span>WeCom bot ID</span>
-                  <input id="settings-wecom-bot-id" type="text" />
-                </label>
-                <label>
-                  <span>WeCom secret</span>
-                  <input id="settings-wecom-secret" type="password" />
-                </label>
+            <form id="settings-form" class="control-form settings-layout">
+              <div class="settings-main">
+                <section class="settings-section">
+                  <div class="settings-section-header">
+                    <div class="session-kicker" data-i18n="settings_profile_kicker">Profile</div>
+                    <h3 class="settings-section-title" data-i18n="settings_profile_title">Base Configuration</h3>
+                  </div>
+                  <div class="control-grid control-grid--single">
+                    <label>
+                      <span data-i18n="settings_default_profile">Default profile</span>
+                      <input id="settings-default-profile" type="text" />
+                    </label>
+                  </div>
+                </section>
+                <section class="settings-section">
+                  <div class="settings-section-header">
+                    <div class="session-kicker" data-i18n="settings_channels_kicker">Channels</div>
+                    <h3 class="settings-section-title" data-i18n="settings_channels_title">Provider Access</h3>
+                  </div>
+                  <div class="settings-channel-groups">
+                    <section class="settings-channel-group">
+                      <div class="settings-channel-group-header">
+                        <div class="session-kicker" data-i18n="settings_channels_telegram">Telegram</div>
+                      </div>
+                      <div class="control-grid control-grid--single">
+                        <label>
+                          <span data-i18n="settings_telegram_token">Telegram token</span>
+                          <input id="settings-telegram-token" type="password" />
+                        </label>
+                        <label class="checkbox-row">
+                          <input id="settings-telegram-enabled" type="checkbox" />
+                          <span data-i18n="settings_telegram_enabled">Telegram enabled</span>
+                        </label>
+                      </div>
+                    </section>
+                    <section class="settings-channel-group">
+                      <div class="settings-channel-group-header">
+                        <div class="session-kicker" data-i18n="settings_channels_weixin">Weixin</div>
+                      </div>
+                      <div class="control-grid control-grid--single">
+                        <label>
+                          <span data-i18n="settings_weixin_api_base">Weixin API base</span>
+                          <input id="settings-weixin-api-base" type="text" />
+                        </label>
+                        <label class="checkbox-row">
+                          <input id="settings-weixin-enabled" type="checkbox" />
+                          <span data-i18n="settings_weixin_enabled">Weixin enabled</span>
+                        </label>
+                      </div>
+                    </section>
+                    <section class="settings-channel-group">
+                      <div class="settings-channel-group-header">
+                        <div class="session-kicker" data-i18n="settings_channels_wecom">WeCom</div>
+                      </div>
+                      <div class="control-grid control-grid--single">
+                        <label class="checkbox-row">
+                          <input id="settings-wecom-enabled" type="checkbox" />
+                          <span data-i18n="settings_wecom_enabled">WeCom enabled</span>
+                        </label>
+                        <label>
+                          <span data-i18n="settings_wecom_bot_id">WeCom bot ID</span>
+                          <input id="settings-wecom-bot-id" type="text" />
+                        </label>
+                        <label>
+                          <span data-i18n="settings_wecom_secret">WeCom secret</span>
+                          <input id="settings-wecom-secret" type="password" />
+                        </label>
+                      </div>
+                    </section>
+                  </div>
+                </section>
               </div>
-              <label class="editor-label">
-                <span>Advanced JSON</span>
-                <textarea id="config-editor" rows="18" spellcheck="false"></textarea>
-              </label>
-              <div class="control-actions">
-                <button id="save-config-button" type="submit">Save Configuration</button>
-              </div>
+              <aside class="settings-advanced">
+                <div class="settings-advanced-header">
+                  <div>
+                    <div class="session-kicker" data-i18n="settings_advanced_kicker">Advanced</div>
+                    <h3 class="settings-section-title" data-i18n="settings_advanced_title">Advanced JSON</h3>
+                  </div>
+                  <button id="settings-refresh-button" type="button" data-i18n="settings_reload">Reload</button>
+                </div>
+                <label class="editor-label settings-editor">
+                  <span data-i18n="settings_raw_config">Raw configuration</span>
+                  <textarea id="config-editor" rows="18" spellcheck="false"></textarea>
+                </label>
+                <div class="control-actions">
+                  <button id="save-config-button" type="submit" data-i18n="settings_save">Save Configuration</button>
+                </div>
+              </aside>
             </form>
           </section>
           <section class="control-panel">
             <div class="control-panel-header">
               <div>
-                <div class="session-kicker">Security</div>
-                <h2 class="jobs-title">Change Password</h2>
+                <div class="session-kicker" data-i18n="settings_password_kicker">Security</div>
+                <h2 class="jobs-title" data-i18n="settings_password_title">Change Password</h2>
               </div>
             </div>
             <form id="change-password-form" class="control-form compact-form">
               <label>
-                <span>Current password</span>
+                <span data-i18n="settings_current_password">Current password</span>
                 <input id="current-password-input" type="password" autocomplete="current-password" />
               </label>
               <label>
-                <span>New password</span>
+                <span data-i18n="settings_new_password">New password</span>
                 <input id="new-password-input" type="password" autocomplete="new-password" />
               </label>
               <div class="control-actions">
-                <button type="submit">Update Password</button>
+                <button type="submit" data-i18n="settings_update_password">Update Password</button>
               </div>
             </form>
           </section>
         </section>
         <section class="users-pane" hidden>
-          <section class="control-panel">
-            <div class="control-panel-header">
-              <div>
-                <div class="session-kicker">Admin</div>
-                <h2 class="jobs-title">Users</h2>
+          <div class="users-pane-header">
+            <div class="session-kicker" data-i18n="users_kicker">Admin</div>
+            <h2 class="jobs-title" data-i18n="users_title">Users</h2>
+          </div>
+          <div class="users-layout">
+            <section class="control-panel users-create-card">
+              <div class="control-panel-header users-section-header">
+                <div>
+                  <div class="session-kicker" data-i18n="users_create_kicker">Create</div>
+                  <h3 class="settings-section-title" data-i18n="users_create_title">Create User</h3>
+                </div>
               </div>
-              <button id="users-refresh-button" type="button">Refresh</button>
-            </div>
-            <form id="create-user-form" class="control-form compact-form">
-              <label>
-                <span>Username</span>
-                <input id="create-username" type="text" autocomplete="off" />
-              </label>
-              <label>
-                <span>Display name</span>
-                <input id="create-display-name" type="text" autocomplete="off" />
-              </label>
-              <label>
-                <span>Password</span>
-                <input id="create-password" type="password" autocomplete="new-password" />
-              </label>
-              <label>
-                <span>Role</span>
-                <select id="create-role">
-                  <option value="user">user</option>
-                  <option value="admin">admin</option>
-                </select>
-              </label>
-              <div class="control-actions">
-                <button type="submit">Create User</button>
+              <form id="create-user-form" class="control-form compact-form users-create-form">
+                <label>
+                  <span data-i18n="users_username">Username</span>
+                  <input id="create-username" type="text" autocomplete="off" />
+                </label>
+                <label>
+                  <span data-i18n="users_display_name">Display name</span>
+                  <input id="create-display-name" type="text" autocomplete="off" />
+                </label>
+                <label>
+                  <span data-i18n="users_password">Password</span>
+                  <input id="create-password" type="password" autocomplete="new-password" />
+                </label>
+                <label>
+                  <span data-i18n="users_role">Role</span>
+                  <select id="create-role">
+                    <option value="user" data-i18n="users_role_user">user</option>
+                    <option value="admin" data-i18n="users_role_admin">admin</option>
+                  </select>
+                </label>
+                <div class="control-actions">
+                  <button type="submit" data-i18n="users_create_submit">Create User</button>
+                </div>
+              </form>
+            </section>
+            <section class="control-panel users-list-card">
+              <div class="control-panel-header users-list-header">
+                <div>
+                  <div class="session-kicker" data-i18n="users_list_kicker">Directory</div>
+                  <h3 class="settings-section-title" data-i18n="users_list_title">Current Users</h3>
+                </div>
+                <button id="users-refresh-button" type="button" data-i18n="users_refresh">Refresh</button>
               </div>
-            </form>
-            <div id="admin-users-list" class="admin-users-list"></div>
-          </section>
+              <div id="admin-users-list" class="admin-users-list"></div>
+            </section>
+          </div>
         </section>
         <section class="channels-pane" hidden>
           <section id="weixin-account-panel" class="account-panel">
