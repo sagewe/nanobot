@@ -750,7 +750,15 @@ fn save_canonical_config_file(config_path: &Path, content: &str) -> Result<()> {
 }
 
 fn replace_file(from: &Path, to: &Path) -> Result<()> {
-    replace_file_impl(from, to)
+    replace_file_with(from, to, replace_file_impl)
+}
+
+fn replace_file_with(
+    from: &Path,
+    to: &Path,
+    mut replace_impl: impl FnMut(&Path, &Path) -> std::io::Result<()>,
+) -> Result<()> {
+    replace_impl(from, to)
         .with_context(|| format!("failed to replace {} with {}", to.display(), from.display()))
 }
 
@@ -845,5 +853,32 @@ where
         other => Err(serde::de::Error::custom(format!(
             "agents.profiles[*].request must be a JSON object, got {other}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn replace_file_with_overwrites_existing_destination() {
+        let dir = tempdir().expect("tempdir");
+        let source = dir.path().join("config.toml.tmp");
+        let target = dir.path().join("config.toml");
+        fs::write(&source, "new").expect("write source");
+        fs::write(&target, "old").expect("write target");
+
+        let mut called = false;
+        replace_file_with(&source, &target, |from, to| {
+            called = true;
+            fs::rename(from, to)
+        })
+        .expect("replace file");
+
+        assert!(called);
+        assert_eq!(fs::read_to_string(&target).expect("read target"), "new");
+        assert!(!source.exists());
     }
 }
