@@ -79,8 +79,9 @@ const TOOL_AVATAR_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="n
 const COPY_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 const CHECK_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
 const CHEVRON_RIGHT_SVG = `<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4,2.5 8,6 4,9.5"/></svg>`;
-const EXPAND_SVG = `<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4.25,1.75 1.75,1.75 1.75,4.25"/><line x1="1.75" y1="1.75" x2="4.75" y2="4.75"/><polyline points="7.75,10.25 10.25,10.25 10.25,7.75"/><line x1="7.25" y1="7.25" x2="10.25" y2="10.25"/></svg>`;
-const SHRINK_SVG = `<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1.75,4.25 4.25,4.25 4.25,1.75"/><line x1="1.75" y1="4.25" x2="4.75" y2="1.25"/><polyline points="10.25,7.75 7.75,7.75 7.75,10.25"/><line x1="10.25" y1="7.75" x2="7.25" y2="10.75"/></svg>`;
+const TRACE_OUTPUT_COLLAPSED_LINES = 3;
+const TRACE_OUTPUT_COLLAPSED_CHARS = 320;
+const TRACE_ARGUMENT_PREVIEW_CHARS = 72;
 
 export function formatTime(date) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -144,7 +145,7 @@ export function renderProfiles(profiles) {
   }
 }
 
-function makeMsgGroup(role, { profile = null, timestamp = null } = {}) {
+function makeMsgGroup(role, { profile = null, timestamp = null, footer = true } = {}) {
   const group = document.createElement("div");
   group.className = "msg-group";
   group.dataset.role = role;
@@ -165,49 +166,51 @@ function makeMsgGroup(role, { profile = null, timestamp = null } = {}) {
   const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
 
-  const footer = document.createElement("div");
-  footer.className = "msg-footer";
-
-  const sender = document.createElement("span");
-  sender.className = "msg-sender";
-  if (role === "user") {
-    sender.textContent = t("sender_you");
-  } else if (role === "tool") {
-    sender.textContent = t("sender_tool");
-  } else {
-    sender.textContent = t("sender_pikachu");
-  }
-
-  const time = document.createElement("span");
-  time.className = "msg-time";
-  time.textContent = formatTime(timestamp ? new Date(timestamp) : new Date());
-
-  footer.appendChild(sender);
-  footer.appendChild(time);
-
-  if (profile) {
-    const badge = document.createElement("span");
-    badge.className = "msg-badge";
-    badge.textContent = profile;
-    footer.appendChild(badge);
-  }
-
-  if (role === "assistant") {
-    const copyBtn = document.createElement("button");
-    copyBtn.className = "msg-copy";
-    copyBtn.title = t("copy");
-    copyBtn.innerHTML = COPY_SVG;
-    copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(bubble.innerText || "").then(() => {
-        copyBtn.innerHTML = CHECK_SVG;
-        setTimeout(() => { copyBtn.innerHTML = COPY_SVG; }, 1500);
-      });
-    });
-    footer.appendChild(copyBtn);
-  }
-
   body.appendChild(bubble);
-  body.appendChild(footer);
+  if (footer) {
+    const footerEl = document.createElement("div");
+    footerEl.className = "msg-footer";
+
+    const sender = document.createElement("span");
+    sender.className = "msg-sender";
+    if (role === "user") {
+      sender.textContent = t("sender_you");
+    } else if (role === "tool") {
+      sender.textContent = t("sender_tool");
+    } else {
+      sender.textContent = t("sender_pikachu");
+    }
+
+    const time = document.createElement("span");
+    time.className = "msg-time";
+    time.textContent = formatTime(timestamp ? new Date(timestamp) : new Date());
+
+    footerEl.appendChild(sender);
+    footerEl.appendChild(time);
+
+    if (profile) {
+      const badge = document.createElement("span");
+      badge.className = "msg-badge";
+      badge.textContent = profile;
+      footerEl.appendChild(badge);
+    }
+
+    if (role === "assistant") {
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "msg-copy";
+      copyBtn.title = t("copy");
+      copyBtn.innerHTML = COPY_SVG;
+      copyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(bubble.innerText || "").then(() => {
+          copyBtn.innerHTML = CHECK_SVG;
+          setTimeout(() => { copyBtn.innerHTML = COPY_SVG; }, 1500);
+        });
+      });
+      footerEl.appendChild(copyBtn);
+    }
+
+    body.appendChild(footerEl);
+  }
   group.appendChild(avatar);
   group.appendChild(body);
 
@@ -334,98 +337,129 @@ function buildToolOutputElement(message, { headerStyle = "generic", showToolName
   return wrapper;
 }
 
+function shouldMakeTraceArgumentsExpandable(raw) {
+  const text = raw || "";
+  if (!text) return false;
+  const lineCount = text.split(/\r?\n/).length;
+  return lineCount > 1 || text.length > TRACE_ARGUMENT_PREVIEW_CHARS;
+}
+
+function getMeaningfulTraceArguments(raw) {
+  const text = (raw || "").trim();
+  if (!text) return "";
+
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed == null) return "";
+    if (Array.isArray(parsed) && parsed.length === 0) return "";
+    if (typeof parsed === "object" && Object.keys(parsed).length === 0) return "";
+  } catch {
+    // Non-JSON arguments still render as plain text.
+  }
+
+  return text;
+}
+
+function shouldMakeTraceOutputExpandable(raw) {
+  const text = raw || "";
+  if (!text) return false;
+  const lineCount = text.split(/\r?\n/).length;
+  return lineCount > TRACE_OUTPUT_COLLAPSED_LINES || text.length > TRACE_OUTPUT_COLLAPSED_CHARS;
+}
+
+function buildTraceArguments(raw) {
+  const text = raw || "";
+  const expandable = shouldMakeTraceArgumentsExpandable(text);
+  const args = document.createElement(expandable ? "button" : "span");
+  args.className = "msg-trace-args";
+  args.textContent = text;
+
+  if (!expandable) {
+    return args;
+  }
+
+  args.type = "button";
+  args.dataset.expanded = "false";
+  args.setAttribute("aria-expanded", "false");
+  args.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const expanded = args.dataset.expanded === "true";
+    args.dataset.expanded = String(!expanded);
+    args.setAttribute("aria-expanded", String(!expanded));
+  });
+  args.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.stopPropagation();
+    }
+  });
+
+  return args;
+}
+
 function buildTraceCode(raw, className, { expandable = false } = {}) {
+  const wantsOutputUi = className.includes("msg-trace-code--output");
+  const isExpandable = expandable && shouldMakeTraceOutputExpandable(raw);
   const wrap = document.createElement("div");
-  wrap.className = expandable
+  wrap.className = wantsOutputUi
     ? "msg-trace-code-wrap msg-trace-code-wrap--output"
     : "msg-trace-code-wrap";
+  if (wantsOutputUi) {
+    wrap.dataset.expandable = String(isExpandable);
+  }
 
   const block = document.createElement("div");
   block.className = className;
   applyToolOutputContent(block, raw || "");
 
-  wrap.appendChild(block);
+  if (isExpandable) {
+    const reveal = document.createElement("div");
+    reveal.className = "msg-trace-code-reveal";
 
-  if (expandable) {
-    wrap.dataset.expanded = "false";
-
-    const expandBtn = document.createElement("button");
-    expandBtn.type = "button";
-    expandBtn.className = "msg-trace-code-expand";
-    expandBtn.innerHTML = EXPAND_SVG;
-    expandBtn.title = t("expand_output");
-    expandBtn.setAttribute("aria-label", t("expand_output"));
-    expandBtn.addEventListener("click", () => {
+    const showMoreBtn = document.createElement("button");
+    showMoreBtn.type = "button";
+    showMoreBtn.className = "msg-trace-show-more";
+    showMoreBtn.textContent = t("show_more");
+    showMoreBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
       const expanded = wrap.dataset.expanded === "true";
       wrap.dataset.expanded = String(!expanded);
-      expandBtn.innerHTML = expanded ? EXPAND_SVG : SHRINK_SVG;
-      const label = expanded ? t("expand_output") : t("collapse_output");
-      expandBtn.title = label;
-      expandBtn.setAttribute("aria-label", label);
+      showMoreBtn.textContent = expanded ? t("show_more") : t("show_less");
     });
-    wrap.appendChild(expandBtn);
+    reveal.appendChild(showMoreBtn);
+
+    wrap.appendChild(block);
+    wrap.appendChild(reveal);
+    wrap.dataset.expanded = "false";
+    return wrap;
   }
 
+  wrap.appendChild(block);
   return wrap;
-}
-
-function buildTraceSection(labelText, raw, variant, { collapsible = false, defaultOpen = true } = {}) {
-  const section = document.createElement("div");
-  section.className = "msg-trace-section";
-  if (collapsible) {
-    section.dataset.open = String(defaultOpen);
-  }
-
-  const label = document.createElement(collapsible ? "button" : "div");
-  label.className = collapsible
-    ? "msg-trace-section-label msg-trace-section-label--toggle"
-    : "msg-trace-section-label";
-  label.textContent = labelText;
-
-  if (collapsible) {
-    label.type = "button";
-    const icon = document.createElement("span");
-    icon.className = "msg-trace-section-icon";
-    icon.innerHTML = CHEVRON_RIGHT_SVG;
-    label.prepend(icon);
-    label.addEventListener("click", () => {
-      const open = section.dataset.open === "true";
-      section.dataset.open = String(!open);
-    });
-  }
-
-  const body = document.createElement("div");
-  body.className = "msg-trace-section-body";
-  body.appendChild(
-    buildTraceCode(raw, `msg-trace-code msg-trace-code--${variant}`, {
-      expandable: variant === "output",
-    })
-  );
-
-  section.appendChild(label);
-  section.appendChild(body);
-  return section;
 }
 
 function buildTraceItem(toolCall, outputs = [], { collapsible = true } = {}) {
   const item = document.createElement("div");
   item.className = "msg-trace-item";
-  const hasArguments = Boolean(toolCall?.arguments);
-  item.dataset.open = hasArguments && collapsible ? "false" : "true";
-  if (!collapsible || !hasArguments) {
+
+  const argumentsText = getMeaningfulTraceArguments(toolCall?.arguments);
+  const hasArguments = Boolean(argumentsText);
+  const outputText = outputs
+    .map((output) => output.content || "")
+    .filter(Boolean)
+    .join("\n\n");
+  const hasOutput = Boolean(outputText);
+  const hasContent = hasArguments || hasOutput;
+
+  item.dataset.open = "false";
+  if (!collapsible || !hasOutput) {
     item.dataset.static = "true";
   }
 
   const header = document.createElement("div");
   header.className = "msg-trace-header";
-  if (collapsible && hasArguments) {
+  if (collapsible && hasOutput) {
     header.setAttribute("role", "button");
     header.setAttribute("tabindex", "0");
-
-    const icon = document.createElement("span");
-    icon.className = "msg-trace-item-icon";
-    icon.innerHTML = CHEVRON_RIGHT_SVG;
-    header.appendChild(icon);
   }
 
   const rawName = toolCall?.name || outputs[0]?.toolName || "";
@@ -435,37 +469,27 @@ function buildTraceItem(toolCall, outputs = [], { collapsible = true } = {}) {
   title.classList.add("msg-trace-title");
   header.appendChild(title);
 
-  let argsBody = null;
-  if (toolCall?.arguments) {
-    argsBody = document.createElement("div");
-    argsBody.className = "msg-trace-item-body";
-    argsBody.appendChild(
-      buildTraceCode(toolCall.arguments, "msg-trace-code msg-trace-code--arguments")
-    );
+  if (hasArguments) {
+    header.appendChild(buildTraceArguments(argumentsText));
   }
 
-  const outputText = outputs
-    .map((output) => output.content || "")
-    .filter(Boolean)
-    .join("\n\n");
-  const sections = document.createElement("div");
-  sections.className = "msg-trace-sections";
-  if (outputText) {
-    sections.appendChild(
-      buildTraceSection(t("tool_output_label"), outputText, "output", {
-        collapsible: true,
-        defaultOpen: false,
+  const body = document.createElement("div");
+  body.className = "msg-trace-item-body";
+
+  if (hasOutput) {
+    body.appendChild(
+      buildTraceCode(outputText, "msg-trace-code msg-trace-code--output", {
+        expandable: true,
       })
     );
   }
 
-  if (!argsBody && !sections.childNodes.length) {
+  if (!hasContent) {
     item.dataset.empty = "true";
   }
 
-  if (collapsible) {
+  if (collapsible && hasOutput) {
     const toggle = () => {
-      if (item.dataset.empty === "true" || !hasArguments) return;
       const open = item.dataset.open === "true";
       item.dataset.open = String(!open);
     };
@@ -479,11 +503,8 @@ function buildTraceItem(toolCall, outputs = [], { collapsible = true } = {}) {
   }
 
   item.appendChild(header);
-  if (argsBody) {
-    item.appendChild(argsBody);
-  }
-  if (sections.childNodes.length) {
-    item.appendChild(sections);
+  if (hasOutput) {
+    item.appendChild(body);
   }
   return item;
 }
@@ -575,10 +596,14 @@ function buildAssistantIntent(message, trace) {
 
 function buildAssistantElement(message, activeProfile, toolOutputs = []) {
   const ts = message.timestamp || null;
-  const { group, bubble } = makeMsgGroup("assistant", { profile: activeProfile || null, timestamp: ts });
   const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
   const hasContent = Boolean(message.contentHtml || message.content);
   const hasTrace = hasToolCalls && (toolOutputs.length > 0 || message.toolCalls.length > 0);
+  const { group, bubble } = makeMsgGroup("assistant", {
+    profile: activeProfile || null,
+    timestamp: ts,
+    footer: !hasTrace,
+  });
 
   if (hasTrace && hasContent) {
     group.dataset.activity = "true";
