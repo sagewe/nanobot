@@ -188,6 +188,31 @@ fn save_config_to_toml_replaces_stale_json_copy() {
 }
 
 #[test]
+fn save_config_to_existing_toml_path_updates_content_on_second_write() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("config.toml");
+    let mut config = Config::default();
+
+    config.agents.defaults.workspace = "/tmp/first".to_string();
+    save_config(&config, Some(&path)).expect("first save");
+
+    config.agents.defaults.workspace = "/tmp/second".to_string();
+    save_config(&config, Some(&path)).expect("second save");
+
+    let raw = fs::read_to_string(&path).expect("read config");
+    let value: toml::Value = raw.parse().expect("parse toml");
+    let workspace = value
+        .get("agents")
+        .and_then(toml::Value::as_table)
+        .and_then(|agents| agents.get("defaults"))
+        .and_then(toml::Value::as_table)
+        .and_then(|defaults| defaults.get("workspace"))
+        .and_then(toml::Value::as_str);
+
+    assert_eq!(workspace, Some("/tmp/second"));
+}
+
+#[test]
 fn save_config_to_noncanonical_toml_preserves_config_json() {
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("custom.toml");

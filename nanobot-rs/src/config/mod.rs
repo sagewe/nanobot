@@ -725,13 +725,27 @@ pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
         let tmp_path = config_path.with_extension("toml.tmp");
         std::fs::write(&tmp_path, content)
             .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
-        std::fs::rename(&tmp_path, &config_path).with_context(|| {
-            format!(
-                "failed to rename config {} to {}",
-                tmp_path.display(),
-                config_path.display()
-            )
-        })?;
+        if let Err(rename_err) = std::fs::rename(&tmp_path, &config_path) {
+            if config_path.exists() {
+                std::fs::remove_file(&config_path)
+                    .with_context(|| format!("failed to remove {}", config_path.display()))?;
+                std::fs::rename(&tmp_path, &config_path).with_context(|| {
+                    format!(
+                        "failed to rename config {} to {}",
+                        tmp_path.display(),
+                        config_path.display()
+                    )
+                })?;
+            } else {
+                return Err(rename_err).with_context(|| {
+                    format!(
+                        "failed to rename config {} to {}",
+                        tmp_path.display(),
+                        config_path.display()
+                    )
+                });
+            }
+        }
         let legacy_path = config_path.with_file_name("config.json");
         if legacy_path.exists() {
             std::fs::remove_file(&legacy_path)
