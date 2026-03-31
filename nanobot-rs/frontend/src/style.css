@@ -1085,7 +1085,7 @@
         scrollbar-color: var(--line) transparent;
         padding: 1.1rem 1rem 1.5rem;
         font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Segoe UI", sans-serif;
-        font-size: 1.0625rem;
+        font-size: 0.9375rem;
         display: grid;
         gap: 0.55rem;
         align-content: start;
@@ -1207,6 +1207,7 @@
         white-space: pre-wrap;
         border-radius: 1rem 0.35rem 1rem 1rem;
         font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+        padding: 0.45rem 0.75rem;
       }
 
       .msg-group[data-role="assistant"] .msg-bubble {
@@ -2114,7 +2115,7 @@
         border: none;
         padding: 0.65rem 1.1rem 0.45rem;
         font-family: inherit;
-        font-size: 1.0625rem;
+        font-size: 0.9375rem;
         line-height: 1.6;
         color: var(--ink);
         background: transparent;
