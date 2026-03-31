@@ -1,12 +1,14 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::control::AuthenticatedUser;
 use crate::cron::{CronJob, CronSchedule};
 use crate::mcp::{McpServerInfo, McpServerToolAction};
+use crate::config::{Config, load_config_from_str};
 
 use super::{
     AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary, WebWeixinAccount,
@@ -57,15 +59,393 @@ pub struct DuplicateSessionRequest {
     pub session_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminCreateUserRequest {
+    pub username: String,
+    pub display_name: Option<String>,
+    pub password: String,
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdminPasswordRequest {
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdminRoleRequest {
+    pub role: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthUserResponse {
+    pub user_id: String,
+    pub username: String,
+    pub display_name: String,
+    pub role: String,
+}
+
+const SESSION_COOKIE_NAME: &str = "nanobot_session";
+
+fn user_response(user: &AuthenticatedUser) -> AuthUserResponse {
+    AuthUserResponse {
+        user_id: user.user_id.clone(),
+        username: user.username.clone(),
+        display_name: user.display_name.clone(),
+        role: match user.role {
+            crate::control::Role::Admin => "admin".to_string(),
+            crate::control::Role::User => "user".to_string(),
+        },
+    }
+}
+
+fn session_cookie(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|raw| {
+            raw.split(';').find_map(|part| {
+                let part = part.trim();
+                let (name, value) = part.split_once('=')?;
+                if name == SESSION_COOKIE_NAME {
+                    Some(value.to_string())
+                } else {
+                    None
+                }
+            })
+        })
+}
+
+async fn authenticated_user(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Option<AuthenticatedUser>, ApiError> {
+    let Some(auth) = state.auth_service() else {
+        return Ok(None);
+    };
+    let session_id = session_cookie(headers).ok_or_else(|| ApiError::unauthorized("authentication required"))?;
+    auth.authenticate_session(&session_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::unauthorized("authentication required"))
+        .map(Some)
+}
+
+async fn resolve_chat_service(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<std::sync::Arc<dyn super::ChatService>, ApiError> {
+    let user = authenticated_user(state, headers).await?;
+    state
+        .chat_for_user(user.as_ref())
+        .await
+        .map_err(ApiError::internal)
+}
+
+async fn resolve_cron_service(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<std::sync::Arc<crate::cron::CronService>, ApiError> {
+    let user = authenticated_user(state, headers).await?;
+    state
+        .cron_for_user(user.as_ref())
+        .await
+        .map_err(ApiError::internal)
+}
+
+fn require_authenticated_user<'a>(
+    user: &'a Option<AuthenticatedUser>,
+) -> Result<&'a AuthenticatedUser, ApiError> {
+    user.as_ref()
+        .ok_or_else(|| ApiError::unauthorized("authentication required"))
+}
+
+fn require_admin_user<'a>(user: &'a AuthenticatedUser) -> Result<&'a AuthenticatedUser, ApiError> {
+    match user.role {
+        crate::control::Role::Admin => Ok(user),
+        crate::control::Role::User => Err(ApiError::forbidden("admin access required")),
+    }
+}
+
+fn parse_role(value: Option<&str>) -> Result<crate::control::Role, ApiError> {
+    match value.unwrap_or("user").trim().to_ascii_lowercase().as_str() {
+        "admin" => Ok(crate::control::Role::Admin),
+        "user" => Ok(crate::control::Role::User),
+        _ => Err(ApiError::bad_request("role must be either 'admin' or 'user'")),
+    }
+}
+
+fn user_record_json(user: &crate::control::UserRecord) -> serde_json::Value {
+    json!({
+        "userId": user.user_id,
+        "username": user.username,
+        "displayName": user.display_name,
+        "role": match user.role {
+            crate::control::Role::Admin => "admin",
+            crate::control::Role::User => "user",
+        },
+        "enabled": user.enabled,
+    })
+}
+
+fn auth_error(error: anyhow::Error) -> ApiError {
+    ApiError::unauthorized(error.to_string())
+}
+
 pub async fn healthz() -> &'static str {
     "ok"
 }
 
+pub async fn login(
+    State(state): State<AppState>,
+    Json(request): Json<LoginRequest>,
+) -> Result<Response, ApiError> {
+    let auth = state
+        .auth_service()
+        .ok_or_else(|| ApiError::not_found("auth service not configured"))?;
+    let session = auth
+        .login(request.username.trim(), request.password.trim())
+        .map_err(auth_error)?;
+    let user = auth
+        .authenticate_session(&session.session_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::unauthorized("authentication required"))?;
+    let mut response = Json(user_response(&user)).into_response();
+    let cookie = format!(
+        "{SESSION_COOKIE_NAME}={}; Path=/; HttpOnly; SameSite=Strict",
+        session.session_id
+    );
+    let header_value = HeaderValue::from_str(&cookie)
+        .map_err(|error| ApiError::internal(anyhow::anyhow!(error)))?;
+    response.headers_mut().insert(header::SET_COOKIE, header_value);
+    Ok(response)
+}
+
+pub async fn change_password(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ChangePasswordRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = authenticated_user(&state, &headers).await?;
+    let user = require_authenticated_user(&user)?;
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let valid = control
+        .verify_user_password(&user.user_id, request.current_password.trim())
+        .map_err(ApiError::internal)?;
+    if !valid {
+        return Err(ApiError::unauthorized("current password is incorrect"));
+    }
+    control
+        .set_user_password(&user.user_id, request.new_password.trim())
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if let Some(auth) = state.auth_service() {
+        if let Some(session_id) = session_cookie(&headers) {
+            auth.logout(&session_id).map_err(ApiError::internal)?;
+        }
+    }
+    let mut response = Json(json!({ "ok": true })).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_static("nanobot_session=deleted; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"),
+    );
+    Ok(response)
+}
+
+pub async fn me(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AuthUserResponse>, ApiError> {
+    let user = authenticated_user(&state, &headers).await?;
+    Ok(Json(user_response(require_authenticated_user(&user)?)))
+}
+
+pub async fn get_my_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Config>, ApiError> {
+    let user = authenticated_user(&state, &headers).await?;
+    let user = require_authenticated_user(&user)?;
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let config = control.load_user_config(&user.user_id).map_err(ApiError::internal)?;
+    Ok(Json(config))
+}
+
+pub async fn list_admin_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = authenticated_user(&state, &headers).await?;
+    let user = require_admin_user(require_authenticated_user(&user)?)?;
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let mut users = Vec::new();
+    for entry in control.list_users().map_err(ApiError::internal)? {
+        let runtime_status = if let Some(runtimes) = &state.runtimes {
+            if runtimes.is_running(&entry.user_id).await {
+                "running"
+            } else {
+                "stopped"
+            }
+        } else {
+            "unknown"
+        };
+        let mut value = user_record_json(&entry);
+        if let Some(object) = value.as_object_mut() {
+            object.insert("runtimeStatus".to_string(), json!(runtime_status));
+        }
+        users.push(value);
+    }
+    let _ = user;
+    Ok(Json(json!({ "users": users })))
+}
+
+pub async fn create_admin_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<AdminCreateUserRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = authenticated_user(&state, &headers).await?;
+    require_admin_user(require_authenticated_user(&user)?)?;
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let display_name = request
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(request.username.as_str());
+    let created = control
+        .create_user(
+            request.username.trim(),
+            display_name,
+            parse_role(request.role.as_deref())?,
+            request.password.trim(),
+        )
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({ "user": user_record_json(&created) })))
+}
+
+pub async fn enable_admin_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = authenticated_user(&state, &headers).await?;
+    require_admin_user(require_authenticated_user(&user)?)?;
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let updated = control.set_user_enabled(&id, true).map_err(ApiError::internal)?;
+    Ok(Json(json!({ "user": user_record_json(&updated) })))
+}
+
+pub async fn disable_admin_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = authenticated_user(&state, &headers).await?;
+    require_admin_user(require_authenticated_user(&user)?)?;
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let updated = control
+        .set_user_enabled(&id, false)
+        .map_err(ApiError::internal)?;
+    if let Some(runtimes) = &state.runtimes {
+        runtimes.stop_user(&id).await.map_err(ApiError::internal)?;
+    }
+    Ok(Json(json!({ "user": user_record_json(&updated) })))
+}
+
+pub async fn set_admin_user_password(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<AdminPasswordRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = authenticated_user(&state, &headers).await?;
+    require_admin_user(require_authenticated_user(&user)?)?;
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let updated = control
+        .set_user_password(&id, request.password.trim())
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({ "user": user_record_json(&updated) })))
+}
+
+pub async fn set_admin_user_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<AdminRoleRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = authenticated_user(&state, &headers).await?;
+    require_admin_user(require_authenticated_user(&user)?)?;
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let updated = control
+        .set_user_role(&id, parse_role(Some(request.role.as_str()))?)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({ "user": user_record_json(&updated) })))
+}
+
+pub async fn put_my_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: String,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = authenticated_user(&state, &headers).await?;
+    let user = require_authenticated_user(&user)?;
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let config = load_config_from_str(std::path::Path::new("config.json"), &body)
+        .map_err(ApiError::internal)?;
+    control
+        .write_user_config(&user.user_id, &config)
+        .map_err(ApiError::internal)?;
+    if let Some(runtimes) = &state.runtimes {
+        let _ = runtimes.reload(&user.user_id).await.map_err(ApiError::internal)?;
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
 pub async fn list_sessions(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<SessionListResponse>, ApiError> {
-    let sessions = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let sessions = chat
         .list_sessions()
         .await
         .map_err(ApiError::internal)?;
@@ -75,11 +455,12 @@ pub async fn list_sessions(
 pub async fn get_session(
     Path((channel, session_id)): Path<(String, String)>,
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<WebSessionDetail>, ApiError> {
     let channel = validate_channel(&channel)?.to_string();
     let session_id = validate_session_id(&session_id)?;
-    let session = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let session = chat
         .get_session(&channel, session_id)
         .await
         .map_err(ApiError::internal)?
@@ -89,9 +470,10 @@ pub async fn get_session(
 
 pub async fn create_session(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<WebSessionSummary>, ApiError> {
-    let session = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let session = chat
         .create_session()
         .await
         .map_err(ApiError::internal)?;
@@ -100,6 +482,7 @@ pub async fn create_session(
 
 pub async fn chat(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, ApiError> {
     let message = request.message.trim();
@@ -108,11 +491,11 @@ pub async fn chat(
     }
     let requested_channel = request.channel.as_deref().unwrap_or("web");
     let channel = validate_channel(requested_channel)?.to_string();
+    let chat_service = resolve_chat_service(&state, &headers).await?;
     let session_id = match request.session_id {
         Some(session_id) => validate_session_id(&session_id)?.to_string(),
         None if channel == "web" => {
-            state
-                .chat
+            chat_service
                 .create_session()
                 .await
                 .map_err(ApiError::internal)?
@@ -129,8 +512,7 @@ pub async fn chat(
             "session is read-only; duplicate it into web before sending",
         ));
     }
-    let chat = state
-        .chat
+    let chat = chat_service
         .chat(message, &channel, &session_id)
         .await
         .map_err(ApiError::internal)?;
@@ -147,9 +529,10 @@ pub async fn chat(
 
 pub async fn list_profiles(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<ProfileListResponse>, ApiError> {
-    let profiles = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let profiles = chat
         .list_profiles()
         .await
         .map_err(ApiError::internal)?;
@@ -159,12 +542,13 @@ pub async fn list_profiles(
 pub async fn set_session_profile(
     Path((channel, session_id)): Path<(String, String)>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<SetProfileRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let channel = validate_channel(&channel)?.to_string();
     let session_id = validate_session_id(&session_id)?.to_string();
-    state
-        .chat
+    resolve_chat_service(&state, &headers)
+        .await?
         .set_session_profile(&channel, &session_id, &request.profile)
         .await
         .map_err(ApiError::internal)?;
@@ -174,11 +558,12 @@ pub async fn set_session_profile(
 pub async fn delete_session(
     Path((channel, session_id)): Path<(String, String)>,
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     let channel = validate_channel(&channel)?.to_string();
     let session_id = validate_session_id(&session_id)?.to_string();
-    state
-        .chat
+    resolve_chat_service(&state, &headers)
+        .await?
         .delete_session(&channel, &session_id)
         .await
         .map_err(ApiError::internal)?;
@@ -187,6 +572,7 @@ pub async fn delete_session(
 
 pub async fn duplicate_session(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<DuplicateSessionRequest>,
 ) -> Result<Json<WebSessionDetail>, ApiError> {
     let channel = validate_channel(&request.channel)?.to_string();
@@ -196,8 +582,8 @@ pub async fn duplicate_session(
             "session is already writable; duplicate non-web sessions only",
         ));
     }
-    let session = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let session = chat
         .duplicate_session(&channel, &session_id)
         .await
         .map_err(|error| map_duplicate_error(error, &channel, &session_id))?;
@@ -206,9 +592,10 @@ pub async fn duplicate_session(
 
 pub async fn get_weixin_account(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<WebWeixinAccount>, ApiError> {
-    let account = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let account = chat
         .get_weixin_account()
         .await
         .map_err(ApiError::internal)?;
@@ -217,9 +604,10 @@ pub async fn get_weixin_account(
 
 pub async fn start_weixin_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<WeixinLoginStartResponse>, ApiError> {
-    let login = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let login = chat
         .start_weixin_login()
         .await
         .map_err(map_weixin_workflow_error)?;
@@ -228,9 +616,10 @@ pub async fn start_weixin_login(
 
 pub async fn poll_weixin_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<WebWeixinLoginStatus>, ApiError> {
-    let status = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let status = chat
         .poll_weixin_login()
         .await
         .map_err(map_weixin_workflow_error)?;
@@ -239,9 +628,10 @@ pub async fn poll_weixin_login(
 
 pub async fn logout_weixin(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<WebWeixinAccount>, ApiError> {
-    let account = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let account = chat
         .logout_weixin()
         .await
         .map_err(map_weixin_workflow_error)?;
@@ -258,6 +648,7 @@ pub struct CronJobListResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AddCronJobRequest {
     pub message: String,
     pub name: Option<String>,
@@ -271,21 +662,19 @@ pub struct AddCronJobRequest {
 
 pub async fn list_cron_jobs(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<CronJobListResponse>, ApiError> {
-    let cron = state
-        .cron
-        .ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let cron = resolve_cron_service(&state, &headers).await?;
     let jobs = cron.list_jobs(true);
     Ok(Json(CronJobListResponse { jobs }))
 }
 
 pub async fn add_cron_job(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<AddCronJobRequest>,
 ) -> Result<Json<CronJob>, ApiError> {
-    let cron = state
-        .cron
-        .ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let cron = resolve_cron_service(&state, &headers).await?;
     if req.message.is_empty() {
         return Err(ApiError::bad_request("message is required"));
     }
@@ -328,10 +717,9 @@ pub async fn add_cron_job(
 pub async fn delete_cron_job(
     Path(id): Path<String>,
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cron = state
-        .cron
-        .ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let cron = resolve_cron_service(&state, &headers).await?;
     if cron.remove_job(&id) {
         Ok(Json(json!({ "ok": true })))
     } else {
@@ -342,10 +730,9 @@ pub async fn delete_cron_job(
 pub async fn toggle_cron_job(
     Path(id): Path<String>,
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<CronJob>, ApiError> {
-    let cron = state
-        .cron
-        .ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let cron = resolve_cron_service(&state, &headers).await?;
     let job = cron
         .toggle_job(&id)
         .ok_or_else(|| ApiError::not_found(format!("job {id} not found")))?;
@@ -355,10 +742,9 @@ pub async fn toggle_cron_job(
 pub async fn run_cron_job(
     Path(id): Path<String>,
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cron = state
-        .cron
-        .ok_or_else(|| ApiError::not_found("cron service not available"))?;
+    let cron = resolve_cron_service(&state, &headers).await?;
     if cron.run_job(&id, true).await {
         Ok(Json(json!({ "ok": true })))
     } else {
@@ -377,9 +763,10 @@ pub struct McpServerListResponse {
 
 pub async fn list_mcp_servers(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<McpServerListResponse>, ApiError> {
-    let servers = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let servers = chat
         .list_mcp_servers()
         .await
         .map_err(ApiError::internal)?;
@@ -393,11 +780,12 @@ pub struct ToggleMcpToolRequest {
 
 pub async fn toggle_mcp_tool(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(name): Path<String>,
     Json(body): Json<ToggleMcpToolRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let found = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let found = chat
         .toggle_mcp_tool(&name, body.enabled)
         .await
         .map_err(ApiError::internal)?;
@@ -416,11 +804,12 @@ pub struct McpServerActionRequest {
 
 pub async fn apply_mcp_server_action(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(name): Path<String>,
     Json(body): Json<McpServerActionRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let found = state
-        .chat
+    let chat = resolve_chat_service(&state, &headers).await?;
+    let found = chat
         .apply_mcp_server_action(&name, body.action)
         .await
         .map_err(ApiError::internal)?;
@@ -447,6 +836,20 @@ impl ApiError {
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+
+    fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: message.into(),
+        }
+    }
+
+    fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
             message: message.into(),
         }
     }

@@ -24,6 +24,7 @@ use uuid::Uuid;
 use crate::agent::AgentLoop;
 use crate::channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinLoginManager};
 use crate::config::WeixinConfig;
+use crate::control::{AuthService, AuthenticatedUser, ControlStore, RuntimeManager};
 use crate::cron::CronService;
 use crate::mcp::{McpServerInfo, McpServerToolAction};
 use crate::presentation::render_web_html;
@@ -318,13 +319,81 @@ impl StdError for WeixinWorkflowError {}
 
 #[derive(Clone)]
 pub struct AppState {
-    pub(crate) chat: Arc<dyn ChatService>,
+    pub(crate) chat: Option<Arc<dyn ChatService>>,
     pub(crate) cron: Option<Arc<CronService>>,
+    pub(crate) auth: Option<AuthService>,
+    pub(crate) control: Option<ControlStore>,
+    pub(crate) runtimes: Option<RuntimeManager>,
 }
 
 impl AppState {
     pub fn new(chat: Arc<dyn ChatService>, cron: Option<Arc<CronService>>) -> Self {
-        Self { chat, cron }
+        Self {
+            chat: Some(chat),
+            cron,
+            auth: None,
+            control: None,
+            runtimes: None,
+        }
+    }
+
+    pub fn with_control(control: ControlStore, runtimes: RuntimeManager) -> Self {
+        Self {
+            chat: None,
+            cron: None,
+            auth: Some(AuthService::new(control.clone())),
+            control: Some(control),
+            runtimes: Some(runtimes),
+        }
+    }
+
+    pub fn auth_service(&self) -> Option<&AuthService> {
+        self.auth.as_ref()
+    }
+
+    pub fn control_store(&self) -> Option<&ControlStore> {
+        self.control.as_ref()
+    }
+
+    pub fn auth_enabled(&self) -> bool {
+        self.auth.is_some()
+    }
+
+    pub async fn runtime_for_user(
+        &self,
+        user: Option<&AuthenticatedUser>,
+    ) -> Result<Arc<crate::control::UserRuntime>> {
+        let user = user.ok_or_else(|| anyhow::anyhow!("authentication required"))?;
+        let runtimes = self
+            .runtimes
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("runtime manager is not configured"))?;
+        runtimes.get_or_start(&user.user_id).await
+    }
+
+    pub async fn cron_for_user(
+        &self,
+        user: Option<&AuthenticatedUser>,
+    ) -> Result<Arc<CronService>> {
+        if let Some(user) = user {
+            return Ok(self.runtime_for_user(Some(user)).await?.cron());
+        }
+        self.cron
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("cron service is not configured"))
+    }
+
+    pub async fn chat_for_user(
+        &self,
+        user: Option<&AuthenticatedUser>,
+    ) -> Result<Arc<dyn ChatService>> {
+        if let Some(user) = user {
+            let runtime = self.runtime_for_user(Some(user)).await?;
+            return Ok(Arc::new(AgentChatService::new(runtime.agent().clone())));
+        }
+        self.chat
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("chat service is not configured"))
     }
 }
 
@@ -333,6 +402,16 @@ pub fn build_router(state: AppState) -> Router {
         .route("/", get(page::index_handler))
         .route("/assets/{*path}", get(page::static_handler))
         .route("/healthz", get(api::healthz))
+        .route("/api/auth/login", post(api::login))
+        .route("/api/auth/logout", post(api::logout))
+        .route("/api/auth/me", get(api::me))
+        .route("/api/auth/change-password", post(api::change_password))
+        .route("/api/me/config", get(api::get_my_config).put(api::put_my_config))
+        .route("/api/admin/users", get(api::list_admin_users).post(api::create_admin_user))
+        .route("/api/admin/users/{id}/enable", post(api::enable_admin_user))
+        .route("/api/admin/users/{id}/disable", post(api::disable_admin_user))
+        .route("/api/admin/users/{id}/password", post(api::set_admin_user_password))
+        .route("/api/admin/users/{id}/role", post(api::set_admin_user_role))
         .route(
             "/api/sessions",
             get(api::list_sessions).post(api::create_session),
@@ -651,6 +730,18 @@ impl ChatService for AgentChatService {
 pub async fn serve(agent: AgentLoop, host: &str, port: u16) -> Result<()> {
     let cron = agent.cron_service().await;
     let state = AppState::new(Arc::new(AgentChatService::new(agent)), cron);
+    let listener = TcpListener::bind(format!("{host}:{port}")).await?;
+    axum::serve(listener, build_router(state)).await?;
+    Ok(())
+}
+
+pub async fn serve_control(
+    control: ControlStore,
+    runtimes: RuntimeManager,
+    host: &str,
+    port: u16,
+) -> Result<()> {
+    let state = AppState::with_control(control, runtimes);
     let listener = TcpListener::bind(format!("{host}:{port}")).await?;
     axum::serve(listener, build_router(state)).await?;
     Ok(())

@@ -563,6 +563,7 @@ pub(crate) fn test_clients(
         .iter()
         .map(|(server_name, original_name, description)| McpToolWrapper {
             peer: None,
+            server_name: (*server_name).to_string(),
             tool_name: format!("mcp_{server_name}_{original_name}"),
             original_name: (*original_name).to_string(),
             description: (*description).to_string(),
@@ -613,6 +614,7 @@ mod tests {
             wrappers: vec![
                 McpToolWrapper {
                     peer: None,
+                    server_name: "demo".to_string(),
                     tool_name: "mcp_demo_search".to_string(),
                     original_name: "search".to_string(),
                     description: "Search".to_string(),
@@ -621,6 +623,7 @@ mod tests {
                 },
                 McpToolWrapper {
                     peer: None,
+                    server_name: "demo".to_string(),
                     tool_name: "mcp_demo_fetch".to_string(),
                     original_name: "fetch".to_string(),
                     description: "Fetch".to_string(),

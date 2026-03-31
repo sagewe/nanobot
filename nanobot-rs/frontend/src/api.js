@@ -1,8 +1,144 @@
 import { t } from "./i18n.js";
 
+async function parseJson(response) {
+  return response.json().catch(() => ({}));
+}
+
+export async function fetchCurrentUser() {
+  const response = await fetch("/api/auth/me");
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Authentication required");
+  }
+  return payload;
+}
+
+export async function loginUser(username, password) {
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to sign in");
+  }
+  return payload;
+}
+
+export async function logoutUser() {
+  const response = await fetch("/api/auth/logout", { method: "POST" });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to sign out");
+  }
+  return payload;
+}
+
+export async function changePassword(currentPassword, newPassword) {
+  const response = await fetch("/api/auth/change-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to update password");
+  }
+  return payload;
+}
+
+export async function fetchMyConfig() {
+  const response = await fetch("/api/me/config");
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to load config");
+  }
+  return payload;
+}
+
+export async function updateMyConfig(rawConfig) {
+  const response = await fetch("/api/me/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: rawConfig,
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to save config");
+  }
+  return payload;
+}
+
+export async function fetchAdminUsers() {
+  const response = await fetch("/api/admin/users");
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to load users");
+  }
+  return payload.users || [];
+}
+
+export async function createAdminUser(input) {
+  const response = await fetch("/api/admin/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to create user");
+  }
+  return payload.user;
+}
+
+export async function enableAdminUser(userId) {
+  const response = await fetch(`/api/admin/users/${userId}/enable`, { method: "POST" });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to enable user");
+  }
+  return payload.user;
+}
+
+export async function disableAdminUser(userId) {
+  const response = await fetch(`/api/admin/users/${userId}/disable`, { method: "POST" });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to disable user");
+  }
+  return payload.user;
+}
+
+export async function setAdminUserPassword(userId, password) {
+  const response = await fetch(`/api/admin/users/${userId}/password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to reset password");
+  }
+  return payload.user;
+}
+
+export async function setAdminUserRole(userId, role) {
+  const response = await fetch(`/api/admin/users/${userId}/role`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to update role");
+  }
+  return payload.user;
+}
+
 export async function fetchSessions() {
   const response = await fetch("/api/sessions");
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("failed_load_sessions"));
   }
@@ -11,7 +147,7 @@ export async function fetchSessions() {
 
 export async function fetchSessionDetail(channel, sessionId) {
   const response = await fetch(`/api/sessions/${channel}/${sessionId}`);
-  const detail = await response.json();
+  const detail = await parseJson(response);
   if (!response.ok) {
     throw new Error(detail.error || t("failed_load_session"));
   }
@@ -22,7 +158,7 @@ export async function fetchSessionDetail(channel, sessionId) {
 
 export async function createSession() {
   const response = await fetch("/api/sessions", { method: "POST" });
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("failed_create_session"));
   }
@@ -35,7 +171,7 @@ export async function duplicateSession(channel, sessionId) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ channel, sessionId }),
   });
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("failed_duplicate_session"));
   }
@@ -66,7 +202,7 @@ export async function sendChat(message, channel, sessionId) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, channel, sessionId }),
   });
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("request_failed"));
   }
@@ -75,7 +211,7 @@ export async function sendChat(message, channel, sessionId) {
 
 export async function fetchWeixinAccount() {
   const response = await fetch("/api/weixin/account");
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("failed_load_weixin_account"));
   }
@@ -84,7 +220,7 @@ export async function fetchWeixinAccount() {
 
 export async function startWeixinLogin() {
   const response = await fetch("/api/weixin/login/start", { method: "POST" });
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("failed_start_weixin"));
   }
@@ -93,7 +229,7 @@ export async function startWeixinLogin() {
 
 export async function fetchWeixinLoginStatus() {
   const response = await fetch("/api/weixin/login/status");
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("failed_poll_weixin"));
   }
@@ -102,7 +238,7 @@ export async function fetchWeixinLoginStatus() {
 
 export async function logoutWeixin() {
   const response = await fetch("/api/weixin/logout", { method: "POST" });
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("failed_logout_weixin"));
   }
@@ -111,7 +247,7 @@ export async function logoutWeixin() {
 
 export async function fetchCronJobs() {
   const response = await fetch("/api/cron/jobs");
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("jobs_load_failed"));
   }
@@ -124,7 +260,7 @@ export async function addCronJob(params) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
   });
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("jobs_add_failed"));
   }
@@ -141,7 +277,7 @@ export async function deleteCronJob(id) {
 
 export async function toggleCronJob(id) {
   const response = await fetch(`/api/cron/jobs/${id}/toggle`, { method: "POST" });
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("jobs_toggle_failed"));
   }
@@ -150,7 +286,7 @@ export async function toggleCronJob(id) {
 
 export async function runCronJob(id) {
   const response = await fetch(`/api/cron/jobs/${id}/run`, { method: "POST" });
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("jobs_run_failed"));
   }
@@ -159,7 +295,7 @@ export async function runCronJob(id) {
 
 export async function fetchMcpServers() {
   const response = await fetch("/api/mcp/servers");
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || "Failed to load MCP servers");
   }
@@ -172,7 +308,7 @@ export async function toggleMcpTool(name, enabled) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled }),
   });
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || "Failed to toggle tool");
   }
@@ -185,7 +321,7 @@ export async function applyMcpServerAction(name, action) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action }),
   });
-  const payload = await response.json();
+  const payload = await parseJson(response);
   if (!response.ok) {
     throw new Error(payload.error || t("mcp_action_failed"));
   }
@@ -195,7 +331,7 @@ export async function applyMcpServerAction(name, action) {
 export async function loadProfiles() {
   try {
     const response = await fetch("/api/profiles");
-    const payload = await response.json();
+    const payload = await parseJson(response);
     if (!response.ok) return [];
     return payload.profiles || [];
   } catch (_) {

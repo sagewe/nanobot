@@ -14,6 +14,7 @@ use nanobot_rs::agent::AgentLoop;
 use nanobot_rs::bus::MessageBus;
 use nanobot_rs::channels::weixin::{WeixinAccountState, WeixinAccountStore};
 use nanobot_rs::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
+use nanobot_rs::control::{BootstrapAdmin, ControlStore, Role, RuntimeManager};
 use nanobot_rs::mcp::{McpServerInfo, McpServerToolAction, McpToolInfo};
 use nanobot_rs::providers::{LlmProvider, LlmResponse, ToolCall};
 use nanobot_rs::session::{Session, SessionMessage, SessionStore};
@@ -56,6 +57,44 @@ impl ChatService for StaticChatService {
 
 fn test_state() -> AppState {
     AppState::new(Arc::new(StaticChatService), None)
+}
+
+fn multiuser_state() -> (AppState, TempDir) {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let admin = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+    let manager = RuntimeManager::new(store.clone(), false);
+    let _ = admin;
+    (AppState::with_control(store, manager), dir)
+}
+
+async fn login_cookie(app: &Router, username: &str, password: &str) -> String {
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"username":"{username}","password":"{password}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .expect("login");
+    login
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .expect("set-cookie")
+        .to_string()
 }
 
 #[derive(Clone)]
@@ -182,6 +221,7 @@ impl ChatService for McpChatService {
         let enabled = self.enabled.lock().await;
         Ok(vec![McpServerInfo {
             name: self.server_name.clone(),
+            icon: None,
             tool_count: self.tools.len(),
             tools: self
                 .tools
@@ -248,6 +288,414 @@ fn test_state_with_mcp_tools() -> AppState {
         ("mcp_demo_fetch".to_string(), false),
     ]);
     AppState::new(Arc::new(McpChatService::new("demo", tools, enabled)), None)
+}
+
+#[tokio::test]
+async fn protected_multiuser_routes_require_authentication() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+
+    let response = app
+        .oneshot(Request::builder().uri("/api/sessions").body(Body::empty()).unwrap())
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn login_sets_cookie_and_me_returns_authenticated_user() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"username":"alice","password":"password123"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("login");
+
+    assert_eq!(login.status(), StatusCode::OK);
+    let cookie = login
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .expect("set-cookie")
+        .to_string();
+
+    let me = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/auth/me")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("me");
+
+    assert_eq!(me.status(), StatusCode::OK);
+    let body = to_bytes(me.into_body(), usize::MAX).await.expect("body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(payload["username"], json!("alice"));
+    assert_eq!(payload["role"], json!("admin"));
+}
+
+#[tokio::test]
+async fn me_config_returns_the_authenticated_users_private_config() {
+    let (state, dir) = multiuser_state();
+    let app = web::build_router(state);
+
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"username":"alice","password":"password123"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("login");
+    let cookie = login
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .expect("set-cookie")
+        .to_string();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/me/config")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("config");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    let users = std::fs::read_to_string(dir.path().join("control").join("users.json"))
+        .expect("users");
+    let users: serde_json::Value = serde_json::from_str(&users).expect("users json");
+    let user_id = users["users"][0]["user_id"].as_str().expect("user id");
+    assert_eq!(
+        payload
+            .pointer("/agents/defaults/workspace")
+            .and_then(serde_json::Value::as_str),
+        Some(
+            dir.path()
+                .join("users")
+                .join(user_id)
+                .join("workspace")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+}
+
+#[tokio::test]
+async fn admin_users_endpoint_lists_accounts_for_admins_only() {
+    let (state, dir) = multiuser_state();
+    let store = ControlStore::new(dir.path()).expect("control store");
+    store
+        .create_user("bob", "Bob", Role::User, "password456")
+        .expect("create user");
+    let app = web::build_router(state);
+
+    let admin_cookie = login_cookie(&app, "alice", "password123").await;
+    let admin_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/admin/users")
+                .header("cookie", admin_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("admin response");
+    assert_eq!(admin_response.status(), StatusCode::OK);
+
+    let user_cookie = login_cookie(&app, "bob", "password456").await;
+    let user_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/admin/users")
+                .header("cookie", user_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("user response");
+    assert_eq!(user_response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn admin_endpoints_can_create_and_manage_users() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+    let admin_cookie = login_cookie(&app, "alice", "password123").await;
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/admin/users")
+                .header("content-type", "application/json")
+                .header("cookie", admin_cookie.clone())
+                .body(Body::from(
+                    r#"{"username":"bob","displayName":"Bob","password":"password456","role":"user"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("create user");
+    assert_eq!(create.status(), StatusCode::OK);
+    let create_body = to_bytes(create.into_body(), usize::MAX)
+        .await
+        .expect("create body");
+    let create_payload: serde_json::Value =
+        serde_json::from_slice(&create_body).expect("create payload");
+    let bob_user_id = create_payload["user"]["userId"]
+        .as_str()
+        .expect("bob user id")
+        .to_string();
+
+    let bob_cookie = login_cookie(&app, "bob", "password456").await;
+
+    let disable = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/admin/users/{bob_user_id}/disable"))
+                .header("cookie", admin_cookie.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("disable");
+    assert_eq!(disable.status(), StatusCode::OK);
+
+    let disabled_me = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/auth/me")
+                .header("cookie", bob_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("disabled me");
+    assert_eq!(disabled_me.status(), StatusCode::UNAUTHORIZED);
+
+    for (uri, body) in [
+        (
+            format!("/api/admin/users/{bob_user_id}/password"),
+            Some(r#"{"password":"newsecret789"}"#),
+        ),
+        (
+            format!("/api/admin/users/{bob_user_id}/role"),
+            Some(r#"{"role":"admin"}"#),
+        ),
+        (format!("/api/admin/users/{bob_user_id}/enable"), None),
+    ] {
+        let mut request = Request::builder().method("POST").uri(uri);
+        request = request.header("cookie", admin_cookie.clone());
+        if body.is_some() {
+            request = request.header("content-type", "application/json");
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                request
+                    .body(Body::from(body.unwrap_or_default().to_string()))
+                    .unwrap(),
+            )
+            .await
+            .expect("manage user");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let old_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"username":"bob","password":"password456"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("old login");
+    assert_eq!(old_login.status(), StatusCode::UNAUTHORIZED);
+
+    let new_cookie = login_cookie(&app, "bob", "newsecret789").await;
+    let me = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/auth/me")
+                .header("cookie", new_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("me");
+    assert_eq!(me.status(), StatusCode::OK);
+    let me_body = to_bytes(me.into_body(), usize::MAX).await.expect("me body");
+    let me_payload: serde_json::Value = serde_json::from_slice(&me_body).expect("me payload");
+    assert_eq!(me_payload["role"], json!("admin"));
+}
+
+#[tokio::test]
+async fn change_password_endpoint_rotates_credentials_for_the_authenticated_user() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    let change = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/change-password")
+                .header("content-type", "application/json")
+                .header("cookie", cookie)
+                .body(Body::from(
+                    r#"{"currentPassword":"password123","newPassword":"newpassword456"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("change password");
+    assert_eq!(change.status(), StatusCode::OK);
+
+    let old_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"username":"alice","password":"password123"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("old login");
+    assert_eq!(old_login.status(), StatusCode::UNAUTHORIZED);
+
+    let new_login = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"username":"alice","password":"newpassword456"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("new login");
+    assert_eq!(new_login.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn cron_jobs_are_scoped_to_the_authenticated_user_runtime() {
+    let (state, dir) = multiuser_state();
+    let store = ControlStore::new(dir.path()).expect("control store");
+    store
+        .create_user("bob", "Bob", Role::User, "password456")
+        .expect("create bob");
+    let app = web::build_router(state);
+
+    let alice_cookie = login_cookie(&app, "alice", "password123").await;
+    let bob_cookie = login_cookie(&app, "bob", "password456").await;
+
+    for (cookie, message) in [
+        (alice_cookie.clone(), "alice task"),
+        (bob_cookie.clone(), "bob task"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/cron/jobs")
+                    .header("content-type", "application/json")
+                    .header("cookie", cookie)
+                    .body(Body::from(format!(
+                        r#"{{"message":"{message}","everySeconds":60}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .expect("add cron job");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let alice_jobs = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/cron/jobs")
+                .header("cookie", alice_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("alice jobs");
+    assert_eq!(alice_jobs.status(), StatusCode::OK);
+    let alice_jobs_body = to_bytes(alice_jobs.into_body(), usize::MAX)
+        .await
+        .expect("alice jobs body");
+    let alice_jobs_payload: serde_json::Value =
+        serde_json::from_slice(&alice_jobs_body).expect("alice jobs json");
+    assert_eq!(alice_jobs_payload["jobs"].as_array().map(Vec::len), Some(1));
+    assert_eq!(alice_jobs_payload["jobs"][0]["payload"]["message"], json!("alice task"));
+
+    let bob_jobs = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/cron/jobs")
+                .header("cookie", bob_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("bob jobs");
+    assert_eq!(bob_jobs.status(), StatusCode::OK);
+    let bob_jobs_body = to_bytes(bob_jobs.into_body(), usize::MAX)
+        .await
+        .expect("bob jobs body");
+    let bob_jobs_payload: serde_json::Value =
+        serde_json::from_slice(&bob_jobs_body).expect("bob jobs json");
+    assert_eq!(bob_jobs_payload["jobs"].as_array().map(Vec::len), Some(1));
+    assert_eq!(bob_jobs_payload["jobs"][0]["payload"]["message"], json!("bob task"));
 }
 
 #[derive(Clone)]

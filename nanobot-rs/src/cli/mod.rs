@@ -1,17 +1,14 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use clap::{Args, Parser, Subcommand};
-use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::agent::AgentLoop;
-use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
-use crate::channels::ChannelManager;
-use crate::config::{Config, default_workspace_path, load_config, save_config};
-use crate::cron::{CronJob, CronService};
-use crate::heartbeat::HeartbeatService;
+use crate::bus::{InboundMessage, MessageBus};
+use crate::config::{Config, default_workspace_path, load_config};
+use crate::control::{BootstrapAdmin, ControlStore, Role};
 use crate::mcp::connect_mcp_servers;
 use crate::providers::build_provider_from_config;
 use crate::web;
@@ -25,6 +22,8 @@ const ONBOARD_TEMPLATE_SUMMARY: &str =
 #[command(name = "nanobot-rs")]
 #[command(about = "A lightweight personal AI assistant in Rust")]
 pub struct App {
+    #[arg(long, global = true)]
+    pub root: Option<PathBuf>,
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -35,19 +34,17 @@ pub struct GatewayArgs {
     pub web_host: String,
     #[arg(long, default_value_t = DEFAULT_WEB_PORT)]
     pub web_port: u16,
-    #[arg(long)]
-    pub config: Option<PathBuf>,
-    #[arg(long)]
-    pub workspace: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     Onboard {
         #[arg(long)]
-        config: Option<PathBuf>,
+        admin_username: String,
         #[arg(long)]
-        workspace: Option<PathBuf>,
+        admin_password: String,
+        #[arg(long, default_value = "")]
+        admin_display_name: String,
     },
     Agent {
         #[arg(short, long)]
@@ -55,9 +52,7 @@ pub enum Commands {
         #[arg(short, long, default_value = "cli:direct")]
         session: String,
         #[arg(long)]
-        config: Option<PathBuf>,
-        #[arg(long)]
-        workspace: Option<PathBuf>,
+        user: String,
     },
     Gateway(GatewayArgs),
     Web {
@@ -65,80 +60,125 @@ pub enum Commands {
         host: String,
         #[arg(long, default_value_t = DEFAULT_WEB_PORT)]
         port: u16,
+    },
+    Users {
+        #[command(subcommand)]
+        action: UsersCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum UsersCommand {
+    List,
+    Create {
         #[arg(long)]
-        config: Option<PathBuf>,
+        username: String,
         #[arg(long)]
-        workspace: Option<PathBuf>,
+        password: String,
+        #[arg(long, default_value = "")]
+        display_name: String,
+        #[arg(long, default_value = "user")]
+        role: String,
+    },
+    Enable {
+        #[arg(long)]
+        username: String,
+    },
+    Disable {
+        #[arg(long)]
+        username: String,
+    },
+    SetPassword {
+        #[arg(long)]
+        username: String,
+        #[arg(long)]
+        password: String,
+    },
+    SetRole {
+        #[arg(long)]
+        username: String,
+        #[arg(long)]
+        role: String,
+    },
+    ShowConfig {
+        #[arg(long)]
+        username: String,
+    },
+    ValidateConfig {
+        #[arg(long)]
+        username: String,
+    },
+    MigrateLegacy {
+        #[arg(long)]
+        admin_username: String,
+        #[arg(long)]
+        admin_password: String,
+        #[arg(long, default_value = "")]
+        admin_display_name: String,
+        #[arg(long)]
+        legacy_config: Option<PathBuf>,
+        #[arg(long)]
+        legacy_workspace: Option<PathBuf>,
     },
 }
 
 pub async fn run() -> Result<()> {
     let app = App::parse();
+    let root = control_root(app.root);
     match app.command {
-        Commands::Onboard { config, workspace } => onboard(config, workspace).await,
+        Commands::Onboard {
+            admin_username,
+            admin_password,
+            admin_display_name,
+        } => onboard(root, admin_username, admin_password, admin_display_name).await,
         Commands::Agent {
             message,
             session,
-            config,
-            workspace,
-        } => agent(message, session, config, workspace).await,
-        Commands::Gateway(args) => gateway(args).await,
-        Commands::Web {
-            host,
-            port,
-            config,
-            workspace,
-        } => web_command(host, port, config, workspace).await,
+            user,
+        } => agent(root, user, message, session).await,
+        Commands::Gateway(args) => gateway(root, args).await,
+        Commands::Web { host, port } => web_command(root, host, port).await,
+        Commands::Users { action } => users(root, action).await,
     }
 }
 
-async fn onboard(config_path: Option<PathBuf>, workspace_override: Option<PathBuf>) -> Result<()> {
-    let path = Config::config_path(config_path.as_deref());
-    let mut overwrite = true;
-    let mut config = if path.exists() {
-        print!(
-            "Config already exists at {}. Overwrite? [y/N]: ",
-            path.display()
-        );
-        io::stdout().flush()?;
-        let mut answer = String::new();
-        io::stdin().read_line(&mut answer)?;
-        overwrite = matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
-        if overwrite {
-            Config::default()
-        } else {
-            load_config(Some(&path))?
-        }
+async fn onboard(
+    root: PathBuf,
+    admin_username: String,
+    admin_password: String,
+    admin_display_name: String,
+) -> Result<()> {
+    let store = ControlStore::new(&root)?;
+    let display_name = if admin_display_name.trim().is_empty() {
+        admin_username.clone()
     } else {
-        Config::default()
+        admin_display_name
     };
-    if let Some(workspace) = workspace_override {
-        config.agents.defaults.workspace = workspace.display().to_string();
-    }
-    let workspace = config.workspace_path();
-    ensure_workspace(&workspace)?;
-    save_config(&config, Some(&path))?;
-    if overwrite {
-        println!("Created config at {}", path.display());
+    let legacy_config = root.join("config.json");
+    let legacy_workspace = root.join("workspace");
+    let admin = BootstrapAdmin {
+        username: admin_username,
+        password: admin_password,
+        display_name,
+    };
+    let user = if legacy_config.exists() || legacy_workspace.exists() {
+        store.bootstrap_from_legacy(&admin, &legacy_config, &legacy_workspace)?
     } else {
-        println!(
-            "Refreshed config at {} (existing values preserved)",
-            path.display()
-        );
-    }
+        store.bootstrap_first_admin(&admin)?
+    };
+    println!("Initialized multi-user control plane at {}", root.display());
+    println!("Created first admin user {}", user.username);
     println!("{ONBOARD_TEMPLATE_SUMMARY}");
-    println!("Created workspace at {}", workspace.display());
-    println!("nanobot-rs is ready");
     Ok(())
 }
 
 async fn agent(
+    root: PathBuf,
+    user: String,
     message: Option<String>,
     session: String,
-    config_path: Option<PathBuf>,
-    workspace_override: Option<PathBuf>,
 ) -> Result<()> {
-    let config = load_runtime_config(config_path, workspace_override)?;
+    let config = load_user_runtime_config(&root, &user)?;
     ensure_workspace(&config.workspace_path())?;
     let bus = MessageBus::new(128);
     let provider = build_provider_from_config(&config)?;
@@ -226,33 +266,37 @@ pub trait GatewayRuntime: Send + Sync + 'static {
     }
 }
 
-struct LiveGatewayRuntime {
-    agent: AgentLoop,
-    manager: ChannelManager,
+struct MultiUserGatewayRuntime {
+    store: ControlStore,
+    manager: crate::control::RuntimeManager,
 }
 
 #[async_trait]
-impl GatewayRuntime for LiveGatewayRuntime {
+impl GatewayRuntime for MultiUserGatewayRuntime {
     async fn start_channels(&self) -> Result<()> {
-        self.manager.start_all().await;
+        for user in self
+            .store
+            .list_users()?
+            .into_iter()
+            .filter(|user| user.enabled)
+        {
+            let _ = self.manager.get_or_start(&user.user_id).await?;
+        }
         Ok(())
     }
 
     async fn run_agent(&self) {
-        self.agent.run().await;
+        std::future::pending::<()>().await;
     }
 
-    fn stop_agent(&self) {
-        self.agent.stop();
-    }
+    fn stop_agent(&self) {}
 
     async fn stop_channels(&self) -> Result<()> {
-        self.manager.stop_all().await;
-        Ok(())
+        self.manager.stop_all().await
     }
 
     async fn serve_web(&self, host: &str, port: u16) -> Result<()> {
-        web::serve(self.agent.clone(), host, port).await
+        web::serve_control(self.store.clone(), self.manager.clone(), host, port).await
     }
 }
 
@@ -294,157 +338,157 @@ where
     result
 }
 
-async fn gateway(args: GatewayArgs) -> Result<()> {
-    let config = load_runtime_config(args.config.clone(), args.workspace.clone())?;
-    ensure_workspace(&config.workspace_path())?;
-    let bus = MessageBus::new(256);
-    let provider = build_provider_from_config(&config)?;
-    let agent = AgentLoop::from_config(bus.clone(), provider.clone(), config.clone()).await?;
-
-    if !config.tools.mcp.is_empty() {
-        let mcp_clients = connect_mcp_servers(
-            &config.tools.mcp,
-            Some(config.workspace_path().join("mcp").join("tools.json")),
-        )
-        .await;
-        agent.attach_mcp(mcp_clients).await;
-    }
-
-    // -----------------------------------------------------------------------
-    // Cron service
-    // -----------------------------------------------------------------------
-    let cron_store_path = config.workspace_path().join("cron").join("jobs.json");
-    let cron = Arc::new(CronService::new(cron_store_path));
-    agent.attach_cron(cron.clone()).await;
-    {
-        let agent = agent.clone();
-        let bus = bus.clone();
-        cron.set_on_job(move |job: CronJob| {
-            let agent = agent.clone();
-            let bus = bus.clone();
-            async move {
-                let reminder = format!(
-                    "[Scheduled Task] Timer finished.\n\nTask '{}' has been triggered.\nScheduled instruction: {}",
-                    job.name, job.payload.message
-                );
-                let channel = job.payload.channel.clone().unwrap_or_else(|| "cli".to_string());
-                let chat_id = job.payload.to.clone().unwrap_or_else(|| "direct".to_string());
-                let session_key = format!("cron:{}", job.id);
-
-                match agent.process_direct(&reminder, &session_key, &channel, &chat_id).await {
-                    Ok(response) => {
-                        if job.payload.deliver && job.payload.to.is_some() && !response.is_empty() {
-                            let _ = bus.publish_outbound(OutboundMessage {
-                                channel,
-                                chat_id: job.payload.to.clone().unwrap_or_default(),
-                                content: response.clone(),
-                                metadata: Default::default(),
-                            }).await;
-                        }
-                        Some(response)
-                    }
-                    Err(e) => {
-                        tracing::error!("Cron job '{}' agent error: {}", job.name, e);
-                        None
-                    }
-                }
-            }
-        });
-    }
-
-    // -----------------------------------------------------------------------
-    // Heartbeat service
-    // -----------------------------------------------------------------------
-    let hb_cfg = config.tools.heartbeat.clone();
-    let heartbeat = Arc::new(HeartbeatService::new(
-        config.workspace_path(),
-        provider,
-        config.agents.defaults.model.clone(),
-        hb_cfg.interval_s,
-        hb_cfg.enabled,
-    ));
-    {
-        let agent = agent.clone();
-        heartbeat.set_on_execute(move |tasks: String| {
-            let agent = agent.clone();
-            async move {
-                agent
-                    .process_direct(&tasks, "heartbeat", "cli", "direct")
-                    .await
-                    .unwrap_or_default()
-            }
-        });
-    }
-    {
-        let bus = bus.clone();
-        heartbeat.set_on_notify(move |response: String| {
-            let bus = bus.clone();
-            async move {
-                // Only deliver if there is a non-CLI outbound channel available.
-                // For now we silently drop CLI-only responses; a future version
-                // can pick an active channel from the session store.
-                let _ = bus
-                    .publish_outbound(OutboundMessage {
-                        channel: "cli".to_string(),
-                        chat_id: "direct".to_string(),
-                        content: response,
-                        metadata: Default::default(),
-                    })
-                    .await;
-            }
-        });
-    }
-
-    // -----------------------------------------------------------------------
-    // Start cron + heartbeat, then run the gateway, then tear down
-    // -----------------------------------------------------------------------
-    cron.start().await;
-    heartbeat.start().await;
-
-    let status = cron.status();
-    if status.get("jobs").and_then(|v| v.as_u64()).unwrap_or(0) > 0 {
-        println!("Cron: {} scheduled job(s)", status["jobs"]);
-    }
-
-    let runtime = Arc::new(LiveGatewayRuntime {
-        agent,
-        manager: ChannelManager::new(&config, bus),
+async fn gateway(root: PathBuf, args: GatewayArgs) -> Result<()> {
+    let store = ControlStore::new(&root)?;
+    ensure_bootstrapped(&store)?;
+    let runtime = Arc::new(MultiUserGatewayRuntime {
+        store: store.clone(),
+        manager: crate::control::RuntimeManager::new(store, true),
     });
-    let result = run_gateway_command(runtime, args).await;
-
-    heartbeat.stop();
-    cron.stop();
-
-    result
+    run_gateway_command(runtime, args).await
 }
 
 async fn web_command(
+    root: PathBuf,
     host: String,
     port: u16,
-    config_path: Option<PathBuf>,
-    workspace_override: Option<PathBuf>,
 ) -> Result<()> {
-    let config = load_runtime_config(config_path, workspace_override)?;
-    ensure_workspace(&config.workspace_path())?;
-    let bus = MessageBus::new(128);
-    let provider = build_provider_from_config(&config)?;
-    let agent = AgentLoop::from_config(bus, provider, config.clone()).await?;
     println!("Web UI listening on http://{host}:{port}");
-    web::serve(agent, &host, port).await
+    let store = ControlStore::new(&root)?;
+    ensure_bootstrapped(&store)?;
+    let manager = crate::control::RuntimeManager::new(store.clone(), false);
+    web::serve_control(store, manager, &host, port).await
 }
 
-fn load_runtime_config(
-    config_path: Option<PathBuf>,
-    workspace_override: Option<PathBuf>,
-) -> Result<Config> {
-    let mut config = load_config(config_path.as_deref())?;
-    if let Some(workspace) = workspace_override {
-        config.agents.defaults.workspace = workspace.display().to_string();
+async fn users(root: PathBuf, action: UsersCommand) -> Result<()> {
+    let store = ControlStore::new(&root)?;
+    match action {
+        UsersCommand::List => {
+            for user in store.list_users()? {
+                println!(
+                    "{}\t{}\t{}",
+                    user.username,
+                    match user.role {
+                        Role::Admin => "admin",
+                        Role::User => "user",
+                    },
+                    if user.enabled { "enabled" } else { "disabled" }
+                );
+            }
+            Ok(())
+        }
+        UsersCommand::Create {
+            username,
+            password,
+            display_name,
+            role,
+        } => {
+            ensure_bootstrapped(&store)?;
+            let role = parse_role(&role)?;
+            let display_name = if display_name.trim().is_empty() {
+                username.clone()
+            } else {
+                display_name
+            };
+            let user = store.create_user(&username, &display_name, role, &password)?;
+            println!("created user {}", user.username);
+            Ok(())
+        }
+        UsersCommand::Enable { username } => {
+            ensure_bootstrapped(&store)?;
+            let user = resolve_user_by_username(&store, &username)?;
+            store.set_user_enabled(&user.user_id, true)?;
+            println!("enabled user {}", user.username);
+            Ok(())
+        }
+        UsersCommand::Disable { username } => {
+            ensure_bootstrapped(&store)?;
+            let user = resolve_user_by_username(&store, &username)?;
+            store.set_user_enabled(&user.user_id, false)?;
+            println!("disabled user {}", user.username);
+            Ok(())
+        }
+        UsersCommand::SetPassword { username, password } => {
+            ensure_bootstrapped(&store)?;
+            let user = resolve_user_by_username(&store, &username)?;
+            store.set_user_password(&user.user_id, &password)?;
+            println!("updated password for {}", user.username);
+            Ok(())
+        }
+        UsersCommand::SetRole { username, role } => {
+            ensure_bootstrapped(&store)?;
+            let user = resolve_user_by_username(&store, &username)?;
+            let role = parse_role(&role)?;
+            store.set_user_role(&user.user_id, role)?;
+            println!("updated role for {}", user.username);
+            Ok(())
+        }
+        UsersCommand::ShowConfig { username } => {
+            ensure_bootstrapped(&store)?;
+            let config = load_user_runtime_config(&root, &username)?;
+            println!("{}", serde_json::to_string_pretty(&config)?);
+            Ok(())
+        }
+        UsersCommand::ValidateConfig { username } => {
+            ensure_bootstrapped(&store)?;
+            let user = resolve_user_by_username(&store, &username)?;
+            let config = store.load_user_config(&user.user_id)?;
+            store.validate_user_config(&user.user_id, &config)?;
+            println!("config valid for {}", user.username);
+            Ok(())
+        }
+        UsersCommand::MigrateLegacy {
+            admin_username,
+            admin_password,
+            admin_display_name,
+            legacy_config,
+            legacy_workspace,
+        } => {
+            let display_name = if admin_display_name.trim().is_empty() {
+                admin_username.clone()
+            } else {
+                admin_display_name
+            };
+            let legacy_config = legacy_config.unwrap_or_else(|| root.join("config.json"));
+            let legacy_workspace = legacy_workspace.unwrap_or_else(|| root.join("workspace"));
+            if !legacy_config.exists() {
+                bail!("legacy config {} does not exist", legacy_config.display());
+            }
+            if !legacy_workspace.exists() {
+                bail!("legacy workspace {} does not exist", legacy_workspace.display());
+            }
+            let user = store.bootstrap_from_legacy(
+                &BootstrapAdmin {
+                    username: admin_username,
+                    password: admin_password,
+                    display_name,
+                },
+                &legacy_config,
+                &legacy_workspace,
+            )?;
+            println!("migrated legacy install into {}", user.username);
+            Ok(())
+        }
     }
-    if config.agents.defaults.workspace.is_empty() {
-        config.agents.defaults.workspace = default_workspace_path().display().to_string();
-    }
-    Ok(config)
+}
+
+fn load_user_runtime_config(root: &PathBuf, username: &str) -> Result<Config> {
+    let store = ControlStore::new(root)?;
+    let user = store
+        .get_user_by_username(username)?
+        .ok_or_else(|| anyhow!("unknown user '{}'", username))?;
+    load_config(Some(&store.user_config_path(&user.user_id)))
+}
+
+fn control_root(root: Option<PathBuf>) -> PathBuf {
+    root.unwrap_or_else(default_control_root)
+}
+
+fn default_control_root() -> PathBuf {
+    default_workspace_path()
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn parse_session(session: &str) -> (String, String) {
@@ -483,6 +527,30 @@ fn ensure_workspace(workspace: &PathBuf) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn ensure_bootstrapped(store: &ControlStore) -> Result<()> {
+    if store.list_users()?.is_empty() {
+        bail!(
+            "control plane is not bootstrapped under {}; run `nanobot-rs onboard --admin-username <name> --admin-password <password>` first",
+            store.root().display()
+        );
+    }
+    Ok(())
+}
+
+fn resolve_user_by_username(store: &ControlStore, username: &str) -> Result<crate::control::UserRecord> {
+    store
+        .get_user_by_username(username)?
+        .ok_or_else(|| anyhow!("unknown user '{}'", username))
+}
+
+fn parse_role(value: &str) -> Result<Role> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "admin" => Ok(Role::Admin),
+        "user" => Ok(Role::User),
+        other => bail!("invalid role '{}'; expected 'admin' or 'user'", other),
+    }
 }
 
 #[cfg(test)]

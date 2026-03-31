@@ -32,6 +32,118 @@
         font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
       }
 
+      .login-shell {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        padding: 2rem;
+        background:
+          radial-gradient(circle at top left, rgba(193, 95, 60, 0.16), transparent 32%),
+          radial-gradient(circle at bottom right, rgba(44, 44, 44, 0.08), transparent 30%),
+          linear-gradient(160deg, #fdfcfb 0%, #f5f4ed 100%);
+      }
+
+      .login-card {
+        width: min(28rem, 100%);
+        padding: 1.75rem;
+        border: 1px solid rgba(193, 95, 60, 0.18);
+        border-radius: 1.25rem;
+        background: rgba(255, 254, 249, 0.92);
+        box-shadow: 0 22px 60px rgba(44, 44, 44, 0.12);
+        backdrop-filter: blur(16px);
+      }
+
+      .login-kicker {
+        margin-bottom: 0.65rem;
+        color: var(--accent);
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.78rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .login-card h1 {
+        margin: 0;
+        font-size: clamp(1.9rem, 5vw, 2.5rem);
+        line-height: 1.05;
+      }
+
+      .login-copy {
+        margin: 0.85rem 0 1.25rem;
+        color: var(--dim);
+        line-height: 1.5;
+      }
+
+      .login-form {
+        display: grid;
+        gap: 0.95rem;
+      }
+
+      .login-form label,
+      .control-form label {
+        display: grid;
+        gap: 0.45rem;
+      }
+
+      .login-form span,
+      .control-form span {
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.76rem;
+        color: var(--dim);
+        letter-spacing: 0.03em;
+      }
+
+      .login-form input,
+      .control-form input,
+      .control-form select,
+      .control-form textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 0.75rem;
+        padding: 0.72rem 0.85rem;
+        background: var(--input-bg);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      .login-form input:focus,
+      .control-form input:focus,
+      .control-form select:focus,
+      .control-form textarea:focus {
+        outline: 2px solid rgba(193, 95, 60, 0.22);
+        border-color: var(--accent);
+      }
+
+      .login-form button,
+      .control-actions button,
+      .control-panel-header button,
+      #logout-button {
+        border: 1px solid transparent;
+        border-radius: 0.85rem;
+        padding: 0.72rem 1rem;
+        background: var(--accent);
+        color: #fffaf4;
+        cursor: pointer;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.78rem;
+        transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+      }
+
+      .login-form button:hover,
+      .control-actions button:hover,
+      .control-panel-header button:hover {
+        transform: translateY(-1px);
+        background: var(--accent-dark);
+      }
+
+      .login-error {
+        min-height: 1.2rem;
+        margin-top: 0.95rem;
+        color: var(--error);
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.78rem;
+      }
+
       #app {
         flex: 1;
         min-height: 0;
@@ -110,6 +222,15 @@
         gap: 0.75rem;
       }
 
+      .settings-pane,
+      .users-pane {
+        width: min(30rem, 100%);
+        max-width: 100%;
+        min-height: 0;
+        overflow: auto;
+        padding-right: 0.35rem;
+      }
+
       .session-rail {
         display: flex;
         flex-direction: column;
@@ -144,14 +265,40 @@
         margin-top: auto;
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 0.4rem;
         padding: 0.65rem 0.4rem;
         border-top: 1px solid var(--line);
         flex-shrink: 0;
       }
 
+      .user-chip {
+        display: grid;
+        min-width: 100%;
+        padding: 0.55rem 0.65rem;
+        border: 1px solid rgba(193, 95, 60, 0.12);
+        border-radius: 0.8rem;
+        background: rgba(255, 255, 255, 0.6);
+      }
+
+      .user-chip strong {
+        font-size: 0.86rem;
+      }
+
+      .user-chip span {
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.72rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
       .session-rail[data-collapsed="true"] .sidebar-footer {
         flex-direction: column;
+      }
+
+      .session-rail[data-collapsed="true"] .user-chip {
+        display: none;
       }
 
       .session-rail[data-collapsed="true"] .tab-bar {
@@ -2866,3 +3013,195 @@
   line-height: 1;
   flex-shrink: 0;
 }
+
+      .control-panel {
+        margin-bottom: 0.85rem;
+        padding: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 1rem;
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow: 0 10px 26px rgba(44, 44, 44, 0.06);
+      }
+
+      .control-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.9rem;
+      }
+
+      .control-panel-header button {
+        background: transparent;
+        border-color: var(--line);
+        color: var(--dim);
+      }
+
+      .control-panel-header button:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+        background: rgba(193, 95, 60, 0.08);
+      }
+
+      .control-form {
+        display: grid;
+        gap: 0.9rem;
+      }
+
+      .control-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.85rem;
+      }
+
+      .compact-form {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: end;
+      }
+
+      .compact-form .control-actions {
+        grid-column: 1 / -1;
+      }
+
+      .editor-label textarea {
+        min-height: 18rem;
+        resize: vertical;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.76rem;
+        line-height: 1.55;
+      }
+
+      .checkbox-row {
+        display: flex !important;
+        align-items: center;
+        gap: 0.65rem;
+        min-height: 100%;
+        padding: 0.75rem 0.85rem;
+        border: 1px solid var(--line);
+        border-radius: 0.75rem;
+        background: var(--input-bg);
+      }
+
+      .checkbox-row input {
+        width: auto;
+        margin: 0;
+      }
+
+      .checkbox-row span {
+        margin: 0;
+      }
+
+      .control-actions {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .admin-users-list {
+        display: grid;
+        gap: 0.8rem;
+      }
+
+      .admin-user-card {
+        padding: 0.95rem;
+        border: 1px solid var(--line);
+        border-radius: 0.95rem;
+        background: rgba(253, 252, 251, 0.92);
+      }
+
+      .admin-user-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.65rem;
+        margin-bottom: 0.45rem;
+      }
+
+      .admin-user-name {
+        display: grid;
+        gap: 0.2rem;
+      }
+
+      .admin-user-name strong {
+        font-size: 0.96rem;
+      }
+
+      .admin-user-name span {
+        color: var(--muted);
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.74rem;
+      }
+
+      .admin-user-badges {
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+      }
+
+      .admin-user-badge {
+        padding: 0.22rem 0.5rem;
+        border-radius: 999px;
+        background: rgba(193, 95, 60, 0.1);
+        color: var(--accent-dark);
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .admin-user-badge[data-state="disabled"] {
+        background: rgba(44, 44, 44, 0.08);
+        color: var(--dim);
+      }
+
+      .admin-user-actions {
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+      }
+
+      .admin-user-actions button {
+        border: 1px solid var(--line);
+        border-radius: 0.75rem;
+        padding: 0.52rem 0.72rem;
+        background: transparent;
+        color: var(--dim);
+        cursor: pointer;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.74rem;
+      }
+
+      .admin-user-actions button:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+        background: rgba(193, 95, 60, 0.08);
+      }
+
+      #logout-button {
+        width: 2rem;
+        height: 2rem;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        border-color: var(--line);
+        color: var(--dim);
+      }
+
+      #logout-button:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+        background: rgba(193, 95, 60, 0.08);
+      }
+
+      @media (max-width: 900px) {
+        .control-grid,
+        .compact-form {
+          grid-template-columns: 1fr;
+        }
+
+        .settings-pane,
+        .users-pane {
+          width: 100%;
+        }
+      }

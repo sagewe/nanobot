@@ -1,0 +1,216 @@
+use std::path::Path;
+
+use nanobot_rs::config::Config;
+use tempfile::tempdir;
+
+use nanobot_rs::control::{AuthService, BootstrapAdmin, ControlStore, Role, RuntimeManager};
+
+fn legacy_config_with_workspace(workspace: &Path) -> Config {
+    let mut config = Config::default();
+    config.agents.defaults.workspace = workspace.display().to_string();
+    config
+}
+
+#[test]
+fn bootstrap_first_admin_creates_control_files_and_user_paths() {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+
+    let admin = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+
+    assert_eq!(admin.username, "alice");
+    assert_eq!(admin.role, Role::Admin);
+    assert!(store.control_dir().join("system.json").exists());
+    assert!(store.control_dir().join("users.json").exists());
+    assert!(store.control_dir().join("web_sessions.json").exists());
+    assert!(store.control_dir().join("audit.jsonl").exists());
+    assert!(store.user_config_path(&admin.user_id).exists());
+    assert!(store.user_workspace_path(&admin.user_id).join("memory").exists());
+}
+
+#[test]
+fn bootstrap_migrates_legacy_config_and_workspace_into_first_admin() {
+    let dir = tempdir().expect("tempdir");
+    let legacy_root = dir.path().join("legacy");
+    let legacy_workspace = legacy_root.join("workspace");
+    std::fs::create_dir_all(legacy_workspace.join("memory")).expect("legacy workspace");
+    std::fs::write(
+        legacy_workspace.join("memory").join("MEMORY.md"),
+        "legacy memory",
+    )
+    .expect("legacy memory");
+    let legacy_config_path = legacy_root.join("config.json");
+    nanobot_rs::config::save_config(
+        &legacy_config_with_workspace(&legacy_workspace),
+        Some(&legacy_config_path),
+    )
+    .expect("save legacy config");
+
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let admin = store
+        .bootstrap_from_legacy(
+            &BootstrapAdmin {
+                username: "admin".to_string(),
+                password: "password123".to_string(),
+                display_name: "Admin".to_string(),
+            },
+            &legacy_config_path,
+            &legacy_workspace,
+        )
+        .expect("bootstrap from legacy");
+
+    assert!(store.control_dir().join("migration.json").exists());
+    assert!(store.user_config_path(&admin.user_id).exists());
+    assert_eq!(
+        std::fs::read_to_string(
+            store
+                .user_workspace_path(&admin.user_id)
+                .join("memory")
+                .join("MEMORY.md")
+        )
+        .expect("migrated memory"),
+        "legacy memory"
+    );
+}
+
+#[test]
+fn validation_rejects_duplicate_telegram_and_wecom_connectors() {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let admin = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+    let user = store
+        .create_user("bob", "Bob", Role::User, "password456")
+        .expect("create user");
+
+    let mut first = Config::default();
+    first.channels.telegram.enabled = true;
+    first.channels.telegram.token = "token-a".to_string();
+    first.channels.wecom.enabled = true;
+    first.channels.wecom.bot_id = "bot-a".to_string();
+    first.channels.wecom.secret = "secret-a".to_string();
+    store
+        .write_user_config(&admin.user_id, &first)
+        .expect("write first config");
+
+    let mut second = Config::default();
+    second.channels.telegram.enabled = true;
+    second.channels.telegram.token = "token-a".to_string();
+    let telegram_error = store
+        .validate_user_config(&user.user_id, &second)
+        .expect_err("duplicate telegram token");
+    assert!(telegram_error.to_string().contains("telegram"));
+
+    second.channels.telegram.token = "token-b".to_string();
+    second.channels.wecom.enabled = true;
+    second.channels.wecom.bot_id = "bot-a".to_string();
+    second.channels.wecom.secret = "secret-a".to_string();
+    let wecom_error = store
+        .validate_user_config(&user.user_id, &second)
+        .expect_err("duplicate wecom credentials");
+    assert!(wecom_error.to_string().contains("wecom"));
+}
+
+#[test]
+fn auth_service_creates_and_resolves_sessions() {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let user = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+
+    let auth = AuthService::new(store.clone());
+    let session = auth.login("alice", "password123").expect("login");
+    let resolved = auth
+        .authenticate_session(&session.session_id)
+        .expect("authenticate")
+        .expect("user");
+
+    assert_eq!(resolved.user_id, user.user_id);
+    assert_eq!(resolved.role, Role::Admin);
+
+    auth.logout(&session.session_id).expect("logout");
+    assert!(auth
+        .authenticate_session(&session.session_id)
+        .expect("authenticate after logout")
+        .is_none());
+}
+
+#[tokio::test]
+async fn runtime_manager_starts_isolated_runtimes_per_user() {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let admin = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+    let user = store
+        .create_user("bob", "Bob", Role::User, "password456")
+        .expect("create user");
+
+    let manager = RuntimeManager::new(store.clone(), false);
+    let alice_runtime = manager.get_or_start(&admin.user_id).await.expect("alice runtime");
+    let bob_runtime = manager.get_or_start(&user.user_id).await.expect("bob runtime");
+
+    assert_ne!(alice_runtime.user_id(), bob_runtime.user_id());
+    assert_eq!(
+        alice_runtime.workspace_path(),
+        store.user_workspace_path(&admin.user_id).as_path()
+    );
+    assert_eq!(
+        bob_runtime.workspace_path(),
+        store.user_workspace_path(&user.user_id).as_path()
+    );
+}
+
+#[tokio::test]
+async fn runtime_manager_reload_swaps_only_the_target_user_runtime() {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let admin = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+    let user = store
+        .create_user("bob", "Bob", Role::User, "password456")
+        .expect("create user");
+
+    let manager = RuntimeManager::new(store.clone(), false);
+    let alice_before = manager.get_or_start(&admin.user_id).await.expect("alice runtime");
+    let bob_before = manager.get_or_start(&user.user_id).await.expect("bob runtime");
+
+    let mut updated = store
+        .load_user_config(&user.user_id)
+        .expect("load user config");
+    updated.channels.send_tool_hints = true;
+    store
+        .write_user_config(&user.user_id, &updated)
+        .expect("write updated config");
+
+    let bob_after = manager.reload(&user.user_id).await.expect("reload bob");
+    let alice_after = manager.get_or_start(&admin.user_id).await.expect("alice runtime");
+
+    assert!(!std::sync::Arc::ptr_eq(&bob_before, &bob_after));
+    assert!(std::sync::Arc::ptr_eq(&alice_before, &alice_after));
+}

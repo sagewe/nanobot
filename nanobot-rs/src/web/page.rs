@@ -18,6 +18,7 @@ pub fn render_index_html() -> String {
     // the unbundled source so they stay stable across minification changes.
     let source_paths = [
         "frontend/src/main.js",
+        "frontend/src/api.js",
         "frontend/src/render.js",
         "frontend/src/style.css",
     ];

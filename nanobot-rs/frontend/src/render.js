@@ -13,6 +13,7 @@ hljs.registerLanguage("xml", xml);
 
 const transcript = document.getElementById("transcript");
 const sessionSelect = document.getElementById("session-select");
+const profileSelect = document.getElementById("profile-select");
 const profilePickerLabel = document.getElementById("profile-picker-label");
 const profilePickerMenu = document.getElementById("profile-picker-menu");
 let _currentProfileValue = "";
@@ -114,6 +115,7 @@ export function setCurrentProfile(profile) {
   if (!profile) return;
   _currentProfileValue = profile;
   profilePickerLabel.textContent = profile;
+  if (profileSelect) profileSelect.value = profile;
   profilePickerMenu.querySelectorAll(".profile-picker-check").forEach((el) => {
     el.hidden = el.dataset.profile !== profile;
   });
@@ -121,6 +123,9 @@ export function setCurrentProfile(profile) {
 
 export function renderProfiles(profiles) {
   profilePickerMenu.innerHTML = "";
+  if (profileSelect) {
+    profileSelect.innerHTML = "";
+  }
   const CHECK_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
   for (const p of profiles) {
     const item = document.createElement("div");
@@ -141,6 +146,14 @@ export function renderProfiles(profiles) {
     item.appendChild(name);
     item.appendChild(check);
     profilePickerMenu.appendChild(item);
+
+    if (profileSelect) {
+      const option = document.createElement("option");
+      option.value = p;
+      option.textContent = p;
+      option.selected = p === _currentProfileValue;
+      profileSelect.appendChild(option);
+    }
   }
 }
 
@@ -589,7 +602,8 @@ function buildAssistantElement(message, activeProfile, toolOutputs = []) {
   if (message.contentHtml) {
     const contentDiv = document.createElement("div");
     contentDiv.className = "msg-content";
-    contentDiv.innerHTML = DOMPurify.sanitize(message.contentHtml);
+    contentDiv.innerHTML = message.contentHtml;
+    contentDiv.innerHTML = DOMPurify.sanitize(contentDiv.innerHTML);
     bubble.appendChild(contentDiv);
   } else if (message.content) {
     const contentDiv = document.createElement("div");
@@ -650,7 +664,8 @@ export function appendMessage(role, content) {
 
 export function appendAssistantMessage(content) {
   const { group, bubble } = makeMsgGroup("assistant");
-  bubble.innerHTML = DOMPurify.sanitize(content);
+  bubble.innerHTML = content;
+  bubble.innerHTML = DOMPurify.sanitize(bubble.innerHTML);
   transcript.appendChild(group);
   transcript.scrollTop = transcript.scrollHeight;
 }
@@ -717,6 +732,7 @@ export function renderSessionDetail(detail) {
     appendAssistantMessage(t("initial_message"));
     return messages;
   }
+  // for (const message of messages) renderMessage(message, activeProfile);
   batchRender(messages, activeProfile);
   return messages;
 }

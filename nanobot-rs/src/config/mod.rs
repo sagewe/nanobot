@@ -677,6 +677,12 @@ pub fn load_config(path: Option<&Path>) -> Result<Config> {
         .map_err(|err| anyhow!("failed to validate config {}: {err}", config_path.display()))
 }
 
+pub fn load_config_from_str(path: &Path, raw: &str) -> Result<Config> {
+    parse_config_str(path, raw)?
+        .into_config()
+        .map_err(|err| anyhow!("failed to validate config {}: {err}", path.display()))
+}
+
 fn resolve_config_path(path: Option<&Path>) -> PathBuf {
     if path.is_some() {
         return Config::config_path(path);

@@ -4,17 +4,19 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 #[test]
-fn onboard_generates_config_with_provider_and_web_defaults() {
+fn onboard_bootstraps_control_plane_and_first_admin() {
     let dir = tempdir().expect("tempdir");
-    let config_path = dir.path().join("config.json");
-    let workspace_path = dir.path().join("workspace");
 
     let output = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
+        .arg("--root")
+        .arg(dir.path())
         .arg("onboard")
-        .arg("--config")
-        .arg(&config_path)
-        .arg("--workspace")
-        .arg(&workspace_path)
+        .arg("--admin-username")
+        .arg("alice")
+        .arg("--admin-password")
+        .arg("password123")
+        .arg("--admin-display-name")
+        .arg("Alice")
         .output()
         .expect("run onboard");
 
@@ -24,97 +26,228 @@ fn onboard_generates_config_with_provider_and_web_defaults() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+
+    let users_raw =
+        std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
+    let users_value: Value = serde_json::from_str(&users_raw).expect("parse users");
+    let users = users_value["users"].as_array().expect("users array");
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0]["username"].as_str(), Some("alice"));
+    assert_eq!(users[0]["role"].as_str(), Some("admin"));
+
+    let user_id = users[0]["user_id"].as_str().expect("user id");
+    let user_config = dir.path().join("users").join(user_id).join("config.json");
+    let config_raw = std::fs::read_to_string(&user_config).expect("read config");
+    let config_value: Value = serde_json::from_str(&config_raw).expect("parse config");
+    assert_eq!(
+        config_value
+            .pointer("/agents/defaults/workspace")
+            .and_then(Value::as_str),
+        Some(
+            dir.path()
+                .join("users")
+                .join(user_id)
+                .join("workspace")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+}
+
+#[test]
+fn users_list_shows_bootstrapped_accounts() {
+    let dir = tempdir().expect("tempdir");
+
+    let bootstrap = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("onboard")
+        .arg("--admin-username")
+        .arg("alice")
+        .arg("--admin-password")
+        .arg("password123")
+        .output()
+        .expect("run onboard");
+    assert!(bootstrap.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("users")
+        .arg("list")
+        .output()
+        .expect("run users list");
+
+    assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("alice"), "{stdout}");
+    assert!(stdout.contains("admin"), "{stdout}");
+}
+
+#[test]
+fn users_commands_manage_accounts_and_configs() {
+    let dir = tempdir().expect("tempdir");
+
+    let bootstrap = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("onboard")
+        .arg("--admin-username")
+        .arg("alice")
+        .arg("--admin-password")
+        .arg("password123")
+        .output()
+        .expect("run onboard");
+    assert!(bootstrap.status.success());
+
+    let create = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("users")
+        .arg("create")
+        .arg("--username")
+        .arg("bob")
+        .arg("--password")
+        .arg("secret123")
+        .arg("--display-name")
+        .arg("Bob")
+        .arg("--role")
+        .arg("user")
+        .output()
+        .expect("run users create");
     assert!(
-        stdout.contains(
-            "Template includes multi-profile support for codex, telegram, weixin, wecom, and embedded web."
-        ),
-        "stdout: {stdout}"
+        create.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&create.stdout),
+        String::from_utf8_lossy(&create.stderr)
     );
 
-    let raw = std::fs::read_to_string(&config_path).expect("read config");
-    let value: Value = serde_json::from_str(&raw).expect("parse config");
+    for args in [
+        vec!["users", "disable", "--username", "bob"],
+        vec!["users", "set-role", "--username", "bob", "--role", "admin"],
+        vec!["users", "set-password", "--username", "bob", "--password", "newsecret456"],
+        vec!["users", "enable", "--username", "bob"],
+        vec!["users", "validate-config", "--username", "bob"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
+            .arg("--root")
+            .arg(dir.path())
+            .args(args)
+            .output()
+            .expect("run users command");
+        assert!(
+            output.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
+    let show_config = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("users")
+        .arg("show-config")
+        .arg("--username")
+        .arg("bob")
+        .output()
+        .expect("run users show-config");
+    assert!(show_config.status.success());
+    let config_value: Value =
+        serde_json::from_slice(&show_config.stdout).expect("show-config json output");
     assert_eq!(
-        value
-            .pointer("/agents/defaults/defaultProfile")
-            .and_then(Value::as_str),
-        Some("openai:gpt-4.1-mini")
+        config_value
+            .pointer("/agents/defaults/workspace")
+            .and_then(Value::as_str)
+            .map(|value| value.contains("/workspace")),
+        Some(true)
     );
+
+    let users_raw =
+        std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
+    let users_value: Value = serde_json::from_str(&users_raw).expect("parse users");
+    let users = users_value["users"].as_array().expect("users array");
+    let bob = users
+        .iter()
+        .find(|user| user["username"].as_str() == Some("bob"))
+        .expect("bob");
+    assert_eq!(bob["role"].as_str(), Some("admin"));
+    assert_eq!(bob["enabled"].as_bool(), Some(true));
+}
+
+#[test]
+fn users_migrate_legacy_moves_config_and_workspace_into_first_admin() {
+    let dir = tempdir().expect("tempdir");
+    let legacy_workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(legacy_workspace.join("memory")).expect("legacy workspace");
+    std::fs::write(
+        legacy_workspace.join("memory").join("note.txt"),
+        "remember this",
+    )
+    .expect("legacy note");
+    std::fs::write(
+        dir.path().join("config.json"),
+        serde_json::json!({
+            "agents": {
+                "defaults": {
+                    "workspace": legacy_workspace.to_string_lossy(),
+                    "defaultProfile": "openai:gpt-4.1-mini"
+                },
+                "profiles": {
+                    "openai:gpt-4.1-mini": {
+                        "provider": "openai",
+                        "model": "gpt-4.1-mini",
+                        "request": {}
+                    }
+                }
+            },
+            "providers": {
+                "openai": {}
+            },
+            "channels": {},
+            "tools": {}
+        })
+        .to_string(),
+    )
+    .expect("legacy config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("users")
+        .arg("migrate-legacy")
+        .arg("--admin-username")
+        .arg("alice")
+        .arg("--admin-password")
+        .arg("password123")
+        .arg("--admin-display-name")
+        .arg("Alice")
+        .output()
+        .expect("run users migrate-legacy");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let users_raw =
+        std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
+    let users_value: Value = serde_json::from_str(&users_raw).expect("parse users");
+    let users = users_value["users"].as_array().expect("users array");
+    assert_eq!(users.len(), 1);
+    let user_id = users[0]["user_id"].as_str().expect("user id");
+    let migrated_workspace = dir
+        .path()
+        .join("users")
+        .join(user_id)
+        .join("workspace")
+        .join("memory")
+        .join("note.txt");
     assert_eq!(
-        value
-            .pointer("/agents/profiles/openai:gpt-4.1-mini/provider")
-            .and_then(Value::as_str),
-        Some("openai")
+        std::fs::read_to_string(migrated_workspace).expect("migrated note"),
+        "remember this"
     );
-    assert_eq!(
-        value
-            .pointer("/agents/profiles/openai:gpt-4.1-mini/model")
-            .and_then(Value::as_str),
-        Some("gpt-4.1-mini")
-    );
-    assert_eq!(
-        value
-            .pointer("/agents/profiles/openai:gpt-4.1-mini/request")
-            .and_then(Value::as_object)
-            .map(|request| request.len()),
-        Some(0)
-    );
-    assert!(value.pointer("/agents/defaults/provider").is_none());
-    assert!(value.pointer("/agents/defaults/model").is_none());
-    assert_eq!(
-        value
-            .pointer("/providers/custom/apiBase")
-            .and_then(Value::as_str),
-        Some("http://localhost:8000/v1")
-    );
-    assert_eq!(
-        value
-            .pointer("/providers/openrouter/apiBase")
-            .and_then(Value::as_str),
-        Some("https://openrouter.ai/api/v1")
-    );
-    assert_eq!(
-        value
-            .pointer("/providers/ollama/apiBase")
-            .and_then(Value::as_str),
-        Some("http://localhost:11434/v1")
-    );
-    assert_eq!(
-        value
-            .pointer("/providers/codex/authFile")
-            .and_then(Value::as_str),
-        Some("~/.codex/auth.json")
-    );
-    assert_eq!(
-        value
-            .pointer("/providers/codex/apiBase")
-            .and_then(Value::as_str),
-        Some("https://chatgpt.com/backend-api/codex")
-    );
-    assert!(value.pointer("/providers/codex/serviceTier").is_none());
-    assert_eq!(
-        value
-            .pointer("/tools/web/search/provider")
-            .and_then(Value::as_str),
-        Some("duckduckgo")
-    );
-    assert_eq!(
-        value
-            .pointer("/tools/web/fetch/maxChars")
-            .and_then(Value::as_u64),
-        Some(20_000)
-    );
-    assert_eq!(
-        value
-            .pointer("/channels/wecom/enabled")
-            .and_then(Value::as_bool),
-        Some(false)
-    );
-    assert_eq!(
-        value
-            .pointer("/channels/wecom/wsBase")
-            .and_then(Value::as_str),
-        Some("wss://openws.work.weixin.qq.com")
-    );
+    assert!(dir.path().join("control").join("migration.json").exists());
 }

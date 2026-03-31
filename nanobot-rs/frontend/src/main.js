@@ -1,5 +1,17 @@
 import { t, getLang, setLang, applyI18n } from "./i18n.js";
 import {
+  fetchCurrentUser,
+  loginUser,
+  logoutUser,
+  changePassword,
+  fetchMyConfig,
+  updateMyConfig,
+  fetchAdminUsers,
+  createAdminUser,
+  enableAdminUser,
+  disableAdminUser,
+  setAdminUserPassword,
+  setAdminUserRole,
   fetchSessions,
   fetchSessionDetail,
   createSession,
@@ -50,8 +62,14 @@ const WIDE_KEY = "pikachu.wideLayout";
 const DRAFT_KEY_PREFIX = "pikachu.draft";
 
 // ── DOM references ────────────────────────────────────────────────────────────
+const loginShell = document.getElementById("login-shell");
+const loginForm = document.getElementById("login-form");
+const loginUsernameInput = document.getElementById("login-username");
+const loginPasswordInput = document.getElementById("login-password");
+const loginError = document.getElementById("login-error");
 const composer = document.getElementById("composer");
 const sessionSelect = document.getElementById("session-select");
+const profileSelect = document.getElementById("profile-select");
 const profilePickerBtn = document.getElementById("profile-picker-btn");
 const profilePickerMenu = document.getElementById("profile-picker-menu");
 const messageInput = document.getElementById("message-input");
@@ -78,11 +96,38 @@ const channelsPane = document.querySelector(".channels-pane");
 const sessionsPane = document.querySelector(".sessions-pane");
 const jobsPane = document.querySelector(".jobs-pane");
 const mcpPane = document.querySelector(".mcp-pane");
+const settingsPane = document.querySelector(".settings-pane");
+const usersPane = document.querySelector(".users-pane");
 const sessionsSearch = document.getElementById("sessions-search");
 const sessionRail = document.querySelector(".session-rail");
 const transcript = document.getElementById("transcript");
 const slashMenu = document.getElementById("slash-menu");
 const slashMenuList = document.getElementById("slash-menu-list");
+const currentUserDisplay = document.getElementById("current-user-display");
+const currentUserRole = document.getElementById("current-user-role");
+const logoutButton = document.getElementById("logout-button");
+const adminUsersTab = document.getElementById("admin-users-tab");
+const settingsRefreshButton = document.getElementById("settings-refresh-button");
+const settingsForm = document.getElementById("settings-form");
+const settingsDefaultProfile = document.getElementById("settings-default-profile");
+const settingsTelegramEnabled = document.getElementById("settings-telegram-enabled");
+const settingsTelegramToken = document.getElementById("settings-telegram-token");
+const settingsWeixinEnabled = document.getElementById("settings-weixin-enabled");
+const settingsWeixinApiBase = document.getElementById("settings-weixin-api-base");
+const settingsWecomEnabled = document.getElementById("settings-wecom-enabled");
+const settingsWecomBotId = document.getElementById("settings-wecom-bot-id");
+const settingsWecomSecret = document.getElementById("settings-wecom-secret");
+const configEditor = document.getElementById("config-editor");
+const changePasswordForm = document.getElementById("change-password-form");
+const currentPasswordInput = document.getElementById("current-password-input");
+const newPasswordInput = document.getElementById("new-password-input");
+const usersRefreshButton = document.getElementById("users-refresh-button");
+const createUserForm = document.getElementById("create-user-form");
+const createUsernameInput = document.getElementById("create-username");
+const createDisplayNameInput = document.getElementById("create-display-name");
+const createPasswordInput = document.getElementById("create-password");
+const createRoleInput = document.getElementById("create-role");
+const adminUsersList = document.getElementById("admin-users-list");
 
 const legacyStoredSessionId = localStorage.getItem(SESSION_KEY);
 
@@ -93,6 +138,9 @@ let currentSessionReadOnly = false;
 let currentSessionCanDuplicate = false;
 let currentSessionGroups = [];
 let currentMessages = [];
+let currentUser = null;
+let currentConfig = null;
+let appBootstrapped = false;
 let pendingSelectionToken = 0;
 let weixinPollTimer = null;
 let busyTimer = null;
@@ -180,6 +228,128 @@ function restoreDraft() {
 function clearDraft() {
   const key = draftKey();
   if (key) localStorage.removeItem(key);
+}
+
+function setAuthState(user) {
+  currentUser = user;
+  loginShell.hidden = Boolean(user);
+  document.getElementById("app").hidden = !user;
+  currentUserDisplay.textContent = user?.displayName || user?.username || "Guest";
+  currentUserRole.textContent = user?.role || "guest";
+  adminUsersTab.hidden = !user || user.role !== "admin";
+  if ((!user || user.role !== "admin") && usersPane && !usersPane.hidden) {
+    switchTab("chat");
+  }
+}
+
+function stableStringifyConfig(config) {
+  return JSON.stringify(config, null, 2);
+}
+
+function syncStructuredSettings(config) {
+  settingsDefaultProfile.value = config?.agents?.defaults?.defaultProfile || "";
+  settingsTelegramEnabled.checked = Boolean(config?.channels?.telegram?.enabled);
+  settingsTelegramToken.value = config?.channels?.telegram?.token || "";
+  settingsWeixinEnabled.checked = Boolean(config?.channels?.weixin?.enabled);
+  settingsWeixinApiBase.value = config?.channels?.weixin?.apiBase || "";
+  settingsWecomEnabled.checked = Boolean(config?.channels?.wecom?.enabled);
+  settingsWecomBotId.value = config?.channels?.wecom?.botId || "";
+  settingsWecomSecret.value = config?.channels?.wecom?.secret || "";
+}
+
+function applyStructuredSettings(config) {
+  const next = structuredClone(config || {});
+  next.agents ??= {};
+  next.agents.defaults ??= {};
+  next.channels ??= {};
+  next.channels.telegram ??= {};
+  next.channels.weixin ??= {};
+  next.channels.wecom ??= {};
+
+  if (settingsDefaultProfile.value.trim()) {
+    next.agents.defaults.defaultProfile = settingsDefaultProfile.value.trim();
+  }
+  next.channels.telegram.enabled = settingsTelegramEnabled.checked;
+  next.channels.telegram.token = settingsTelegramToken.value.trim();
+  next.channels.weixin.enabled = settingsWeixinEnabled.checked;
+  next.channels.weixin.apiBase = settingsWeixinApiBase.value.trim();
+  next.channels.wecom.enabled = settingsWecomEnabled.checked;
+  next.channels.wecom.botId = settingsWecomBotId.value.trim();
+  next.channels.wecom.secret = settingsWecomSecret.value.trim();
+  return next;
+}
+
+function renderAdminUsers(users) {
+  if (!users.length) {
+    adminUsersList.innerHTML = `<div class="jobs-empty">No users yet.</div>`;
+    return;
+  }
+  adminUsersList.innerHTML = users
+    .map(
+      (user) => `
+        <article class="admin-user-card" data-user-id="${user.userId}">
+          <div class="admin-user-head">
+            <div class="admin-user-name">
+              <strong>${user.displayName || user.username}</strong>
+              <span>${user.username}</span>
+            </div>
+            <div class="admin-user-badges">
+              <span class="admin-user-badge">${user.role}</span>
+              <span class="admin-user-badge" data-state="${user.enabled ? "enabled" : "disabled"}">${user.enabled ? "enabled" : "disabled"}</span>
+              <span class="admin-user-badge">${user.runtimeStatus || "unknown"}</span>
+            </div>
+          </div>
+          <div class="admin-user-actions">
+            <button type="button" data-action="${user.enabled ? "disable" : "enable"}" data-user-id="${user.userId}">
+              ${user.enabled ? "Disable" : "Enable"}
+            </button>
+            <button type="button" data-action="role" data-user-id="${user.userId}" data-role="${user.role}">
+              ${user.role === "admin" ? "Make user" : "Make admin"}
+            </button>
+            <button type="button" data-action="password" data-user-id="${user.userId}" data-username="${user.username}">
+              Reset password
+            </button>
+          </div>
+        </article>
+      `
+    )
+    .join("");
+}
+
+async function loadSettings() {
+  currentConfig = await fetchMyConfig();
+  syncStructuredSettings(currentConfig);
+  configEditor.value = stableStringifyConfig(currentConfig);
+}
+
+async function refreshAdminUsers() {
+  if (!currentUser || currentUser.role !== "admin") return;
+  const users = await fetchAdminUsers();
+  renderAdminUsers(users);
+}
+
+async function initializeAuthenticatedApp() {
+  renderTranscript([]);
+  setComposerAccess(false, false);
+  setStatus("", "idle");
+  clearWeixinPollTimer();
+
+  fetchMcpServers()
+    .then((servers) =>
+      setMcpServerIcons(
+        Object.fromEntries(servers.filter((server) => server.icon).map((server) => [server.name, server.icon]))
+      )
+    )
+    .catch(() => {});
+
+  await Promise.all([
+    bootstrapSessions(),
+    loadWeixinAccount(),
+    loadProfiles().then(renderProfiles),
+    loadSettings(),
+    currentUser?.role === "admin" ? refreshAdminUsers() : Promise.resolve(),
+  ]);
+  appBootstrapped = true;
 }
 
 function syncSessionsList() {
@@ -335,11 +505,12 @@ async function bootstrapSessions() {
   const storedSessionId = localStorage.getItem(SELECTED_SESSION_KEY);
   const restoredSessionId = storedSessionId || legacyStoredSessionId;
   const sessions = await fetchSessions();
-  currentSessionGroups = sessions;
+  const groups = sessions;
+  currentSessionGroups = groups;
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
   syncSessionsList();
-  const storedSession = findSession(sessions, storedChannel || "web", restoredSessionId);
-  const initialSession = storedSession || findLatestWritableWebSession(sessions);
+  const storedSession = findSession(groups, storedChannel || "web", restoredSessionId);
+  const initialSession = storedSession || findLatestWritableWebSession(groups);
   if (!initialSession) {
     setSelectedSession(null, null);
     const created = await createSession();
@@ -348,6 +519,12 @@ async function bootstrapSessions() {
     return;
   }
   await selectSession(initialSession.channel, initialSession.sessionId);
+}
+
+async function loadWeixinAccount() {
+  const account = await fetchWeixinAccount();
+  renderWeixinAccount(account);
+  return account;
 }
 
 // ── Weixin polling state machine ──────────────────────────────────────────────
@@ -371,7 +548,7 @@ async function pollWeixinLoginStatus() {
       weixinStatusLabel.textContent = t("connected");
       weixinQrPanel.hidden = true;
       clearWeixinPollTimer();
-      renderWeixinAccount(await fetchWeixinAccount());
+      await loadWeixinAccount();
       await refreshSessions();
       return;
     }
@@ -380,7 +557,7 @@ async function pollWeixinLoginStatus() {
       weixinStatusLabel.textContent = t("login_expired");
       weixinUserLabel.textContent = t("refresh_qr");
       clearWeixinPollTimer();
-      renderWeixinAccount(await fetchWeixinAccount());
+      await loadWeixinAccount();
       return;
     }
 
@@ -395,7 +572,7 @@ async function pollWeixinLoginStatus() {
   } catch (error) {
     clearWeixinPollTimer();
     setStatus(error?.message || t("failed_poll_weixin"), "error");
-    fetchWeixinAccount().then(renderWeixinAccount).catch(() => {});
+    loadWeixinAccount().catch(() => {});
   }
 }
 
@@ -509,8 +686,14 @@ function switchTab(tab) {
   channelsPane.hidden = tab !== "channels";
   jobsPane.hidden = tab !== "jobs";
   mcpPane.hidden = tab !== "mcp";
+  settingsPane.hidden = tab !== "settings";
+  usersPane.hidden = tab !== "users";
   if (tab === "jobs") refreshJobs();
   if (tab === "mcp") refreshMcp();
+  if (tab === "settings") loadSettings().catch((error) => setStatus(error?.message || "Failed to load settings", "error"));
+  if (tab === "users" && currentUser?.role === "admin") {
+    refreshAdminUsers().catch((error) => setStatus(error?.message || "Failed to load users", "error"));
+  }
 }
 
 tabButtons.forEach((btn) => {
@@ -559,6 +742,131 @@ langToggleBtn.addEventListener("click", () => {
   applyWide(document.body.getAttribute("data-wide") !== "false");
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
   syncSessionsList();
+});
+
+loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  loginError.textContent = "";
+  try {
+    const user = await loginUser(loginUsernameInput.value.trim(), loginPasswordInput.value);
+    setAuthState(user);
+    try {
+      await initializeAuthenticatedApp();
+    } catch (error) {
+      setStatus(error?.message || t("failed_load_sessions"), "error");
+    }
+    loginPasswordInput.value = "";
+  } catch (error) {
+    loginError.textContent = error?.message || "Failed to sign in";
+  }
+});
+
+logoutButton.addEventListener("click", async () => {
+  try {
+    await logoutUser();
+  } catch (_) {
+    // Ignore logout transport failures and force a local reset.
+  }
+  window.location.reload();
+});
+
+settingsRefreshButton.addEventListener("click", async () => {
+  try {
+    await loadSettings();
+    setStatus("Configuration reloaded.", "idle");
+  } catch (error) {
+    setStatus(error?.message || "Failed to reload settings", "error");
+  }
+});
+
+settingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const parsed = JSON.parse(configEditor.value || "{}");
+    const nextConfig = applyStructuredSettings(parsed);
+    await updateMyConfig(stableStringifyConfig(nextConfig));
+    currentConfig = nextConfig;
+    syncStructuredSettings(nextConfig);
+    configEditor.value = stableStringifyConfig(nextConfig);
+    await loadProfiles().then(renderProfiles);
+    await refreshSessions();
+    setStatus("Configuration saved.", "idle");
+  } catch (error) {
+    setStatus(error?.message || "Failed to save config", "error");
+  }
+});
+
+changePasswordForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    await changePassword(currentPasswordInput.value, newPasswordInput.value);
+    currentPasswordInput.value = "";
+    newPasswordInput.value = "";
+    setStatus("Password updated.", "idle");
+  } catch (error) {
+    setStatus(error?.message || "Failed to update password", "error");
+  }
+});
+
+usersRefreshButton.addEventListener("click", async () => {
+  try {
+    await refreshAdminUsers();
+    setStatus("User list refreshed.", "idle");
+  } catch (error) {
+    setStatus(error?.message || "Failed to load users", "error");
+  }
+});
+
+createUserForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    await createAdminUser({
+      username: createUsernameInput.value.trim(),
+      displayName: createDisplayNameInput.value.trim(),
+      password: createPasswordInput.value,
+      role: createRoleInput.value,
+    });
+    createUserForm.reset();
+    await refreshAdminUsers();
+    setStatus("User created.", "idle");
+  } catch (error) {
+    setStatus(error?.message || "Failed to create user", "error");
+  }
+});
+
+adminUsersList.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  const userId = button.dataset.userId;
+  if (!userId) return;
+
+  try {
+    if (button.dataset.action === "enable") {
+      await enableAdminUser(userId);
+    } else if (button.dataset.action === "disable") {
+      await disableAdminUser(userId);
+    } else if (button.dataset.action === "role") {
+      const nextRole = button.dataset.role === "admin" ? "user" : "admin";
+      await setAdminUserRole(userId, nextRole);
+    } else if (button.dataset.action === "password") {
+      const nextPassword = window.prompt(`Set a new password for ${button.dataset.username}:`);
+      if (!nextPassword) return;
+      await setAdminUserPassword(userId, nextPassword);
+    }
+    await refreshAdminUsers();
+    setStatus("User updated.", "idle");
+  } catch (error) {
+    setStatus(error?.message || "Failed to update user", "error");
+  }
+});
+
+profileSelect.addEventListener("change", async () => {
+  const profile = profileSelect.value;
+  setCurrentProfile(profile);
+  if (!profile || !currentChannel || !currentSessionId) return;
+  try {
+    await setSessionProfile(currentChannel, currentSessionId, profile);
+  } catch (_) {}
 });
 
 profilePickerBtn.addEventListener("click", (e) => {
@@ -620,6 +928,8 @@ duplicateButton.addEventListener("click", async () => {
   setStatus(t("duplicating_session"), "loading");
   try {
     const duplicated = await duplicateSession(currentChannel, currentSessionId);
+    // const duplicated = await duplicateSession();
+    // body: JSON.stringify({ channel: currentChannel, sessionId: currentSessionId })
     await refreshSessions();
     await selectSession(duplicated.channel, duplicated.sessionId);
     setStatus(t("session_duplicated"), "idle");
@@ -648,7 +958,7 @@ weixinLoginButton.addEventListener("click", async () => {
   } catch (error) {
     weixinQrPanel.hidden = true;
     setStatus(error?.message || t("failed_start_weixin"), "error");
-    fetchWeixinAccount().then(renderWeixinAccount).catch(() => {});
+    loadWeixinAccount().catch(() => {});
   }
 });
 
@@ -660,7 +970,7 @@ weixinLogoutButton.addEventListener("click", async () => {
     weixinQrPanel.hidden = true;
     weixinQrImage.src = "";
     renderWeixinAccount(payload);
-    renderWeixinAccount(await fetchWeixinAccount());
+    await loadWeixinAccount();
     await refreshSessions();
     setStatus(t("weixin_disconnected"), "idle");
   } catch (error) {
@@ -919,21 +1229,23 @@ document.addEventListener("keydown", (e) => {
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 renderTranscript([]);
 setComposerAccess(false, false);
+setAuthState(null);
 
-// Pre-load MCP server icons so chat tool badges show the right icon
-// even before the user opens the MCP tab.
-fetchMcpServers()
-  .then((servers) => setMcpServerIcons(Object.fromEntries(servers.filter(s => s.icon).map(s => [s.name, s.icon]))))
-  .catch(() => {});
-
-Promise.all([
-  bootstrapSessions(),
-  fetchWeixinAccount().then(renderWeixinAccount),
-  loadProfiles().then(renderProfiles),
-]).catch((error) => {
-  clearWeixinPollTimer();
-  setStatus(error?.message || t("failed_load_sessions"), "error");
-});
+(async () => {
+  try {
+    const user = await fetchCurrentUser();
+    setAuthState(user);
+    try {
+      await initializeAuthenticatedApp();
+    } catch (error) {
+      clearWeixinPollTimer();
+      setStatus(error?.message || t("failed_load_sessions"), "error");
+    }
+  } catch (_) {
+    setAuthState(null);
+    loginUsernameInput.focus();
+  }
+})();
 
 // ── Jobs tab ──────────────────────────────────────────────────────────────────
 
