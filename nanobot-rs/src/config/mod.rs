@@ -581,6 +581,9 @@ pub struct McpServerConfig {
     pub enabled_tools: Vec<String>,
     /// Per-call timeout in seconds.
     pub tool_timeout: u64,
+    /// Optional icon for display in the UI (emoji, URL, or data URI).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 impl Default for McpServerConfig {
@@ -594,6 +597,7 @@ impl Default for McpServerConfig {
             headers: HashMap::new(),
             enabled_tools: vec!["*".to_string()],
             tool_timeout: 30,
+            icon: None,
         }
     }
 }

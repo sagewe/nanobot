@@ -32,16 +32,40 @@ function parseMcpTool(name) {
   return m ? { server: m[1], shortName: m[2] } : null;
 }
 
+// Server icon map: server_name → icon string (emoji, URL, or data URI)
+const mcpServerIcons = new Map();
+
+export function setMcpServerIcons(icons) {
+  mcpServerIcons.clear();
+  for (const [k, v] of Object.entries(icons)) mcpServerIcons.set(k, v);
+}
+
 // Build a label element for a tool name: [server-badge] ShortName
 function buildToolNameEl(name) {
   const mcp = parseMcpTool(name);
   const span = document.createElement("span");
   span.className = "msg-tool-name";
   if (mcp) {
-    const badge = document.createElement("span");
-    badge.className = "msg-mcp-server-badge";
-    badge.textContent = mcp.server;
-    span.appendChild(badge);
+    const icon = mcpServerIcons.get(mcp.server);
+    if (icon) {
+      if (icon.startsWith("http") || icon.startsWith("/") || icon.startsWith("data:")) {
+        const img = document.createElement("img");
+        img.className = "msg-mcp-server-icon";
+        img.src = icon;
+        img.alt = mcp.server;
+        span.appendChild(img);
+      } else {
+        const badge = document.createElement("span");
+        badge.className = "msg-mcp-server-badge msg-mcp-server-badge--emoji";
+        badge.textContent = icon;
+        span.appendChild(badge);
+      }
+    } else {
+      const badge = document.createElement("span");
+      badge.className = "msg-mcp-server-badge";
+      badge.textContent = mcp.server;
+      span.appendChild(badge);
+    }
     span.appendChild(document.createTextNode(mcp.shortName));
   } else {
     span.textContent = name;

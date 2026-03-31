@@ -35,6 +35,7 @@ import {
   renderEmptyState,
   renderWeixinAccount,
   normalizeWeixinQrSource,
+  setMcpServerIcons,
 } from "./render.js";
 
 applyI18n();
@@ -1257,6 +1258,7 @@ function mcpToolIcon(name) {
 }
 
 function renderMcpList(servers) {
+  setMcpServerIcons(Object.fromEntries(servers.filter(s => s.icon).map(s => [s.name, s.icon])));
   if (!servers.length) {
     mcpList.innerHTML = `<div class="jobs-empty">${t("mcp_empty")}<br><span class="jobs-empty-hint">${t("mcp_empty_hint")}</span></div>`;
     return;
@@ -1279,12 +1281,17 @@ function renderMcpList(servers) {
       </div>`;
     }).join("");
     const enabledCount = server.tools.filter(t => t.enabled !== false).length;
+    const iconHtml = server.icon
+      ? (server.icon.startsWith("http") || server.icon.startsWith("/") || server.icon.startsWith("data:")
+          ? `<img class="mcp-server-icon" src="${escapeHtml(server.icon)}" alt="${escapeHtml(server.name)}">`
+          : `<span class="mcp-server-icon-emoji">${escapeHtml(server.icon)}</span>`)
+      : "";
     return `
 <div class="mcp-server-card">
   <div class="mcp-server-header">
     <div class="mcp-server-info">
       <span class="mcp-status-dot"></span>
-      <strong class="mcp-server-name">${escapeHtml(server.name)}</strong>
+      ${iconHtml}<strong class="mcp-server-name">${escapeHtml(server.name)}</strong>
       <span class="mcp-server-count">${formatMcpToolCount(enabledCount, server.tool_count)}</span>
     </div>
     <div class="mcp-server-actions">
@@ -1327,6 +1334,7 @@ function renderMcpList(servers) {
 async function refreshMcp() {
   try {
     const servers = await fetchMcpServers();
+    setMcpServerIcons(Object.fromEntries(servers.filter(s => s.icon).map(s => [s.name, s.icon])));
     renderMcpList(servers);
   } catch (_) {
     mcpList.innerHTML = `<div class="jobs-empty">${t("mcp_empty")}</div>`;

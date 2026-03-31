@@ -144,6 +144,8 @@ pub struct McpClients {
     /// Tool names (full `mcp_{server}_{tool}` form) that are disabled by the user.
     disabled_tools: Arc<std::sync::Mutex<HashSet<String>>>,
     state_path: Option<PathBuf>,
+    /// Maps server_name → icon string (emoji, URL, or data URI).
+    server_icons: HashMap<String, String>,
 }
 
 /// Info about a single MCP tool, exposed via the web API.
@@ -161,6 +163,7 @@ pub struct McpServerInfo {
     pub name: String,
     pub tool_count: usize,
     pub tools: Vec<McpToolInfo>,
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -272,10 +275,12 @@ impl McpClients {
             .into_iter()
             .map(|name| {
                 let tools = map.remove(&name).unwrap_or_default();
+                let icon = self.server_icons.get(&name).cloned();
                 McpServerInfo {
                     tool_count: tools.len(),
                     name,
                     tools,
+                    icon,
                 }
             })
             .collect()
@@ -332,6 +337,12 @@ pub async fn connect_mcp_servers(
     let mut services: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
     let mut all_wrappers: Vec<McpToolWrapper> = Vec::new();
 
+    // Collect icons from config
+    let server_icons: HashMap<String, String> = servers
+        .iter()
+        .filter_map(|(name, cfg)| cfg.icon.as_ref().map(|icon| (name.clone(), icon.clone())))
+        .collect();
+
     for (name, cfg) in servers {
         match connect_one(name, cfg).await {
             Ok((service, wrappers)) => {
@@ -351,6 +362,7 @@ pub async fn connect_mcp_servers(
             state_path.as_deref(),
         ))),
         state_path,
+        server_icons,
     }
 }
 
@@ -568,6 +580,7 @@ pub(crate) fn test_clients(
                 .collect(),
         )),
         state_path,
+        server_icons: HashMap::new(),
     }
 }
 
@@ -617,6 +630,7 @@ mod tests {
             ],
             disabled_tools: Arc::new(std::sync::Mutex::new(load_disabled_tools(Some(&path)))),
             state_path: Some(path.clone()),
+            server_icons: HashMap::new(),
         };
 
         clients

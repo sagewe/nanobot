@@ -2829,3 +2829,31 @@
       .hljs-tag     { color: var(--hljs-tag); }
       .hljs-name    { color: var(--hljs-name); }
       .hljs-punctuation { color: var(--hljs-punct); }
+
+.msg-mcp-server-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: contain;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.msg-mcp-server-badge--emoji {
+  font-size: 0.85rem;
+  line-height: 1;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+.mcp-server-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.mcp-server-icon-emoji {
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
