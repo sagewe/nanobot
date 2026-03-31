@@ -666,7 +666,7 @@ pub fn expand_tilde(path: &Path) -> PathBuf {
 }
 
 pub fn load_config(path: Option<&Path>) -> Result<Config> {
-    let config_path = resolve_config_path(path);
+    let config_path = resolve_config_path(path)?;
     if !config_path.exists() {
         return Ok(Config::default());
     }
@@ -684,22 +684,28 @@ pub fn load_config_from_str(path: &Path, raw: &str) -> Result<Config> {
         .map_err(|err| anyhow!("failed to validate config {}: {err}", path.display()))
 }
 
-fn resolve_config_path(path: Option<&Path>) -> PathBuf {
+fn resolve_config_path(path: Option<&Path>) -> Result<PathBuf> {
     if path.is_some() {
-        return Config::config_path(path);
+        let config_path = Config::config_path(path);
+        recover_canonical_config_backup_if_needed(&config_path)?;
+        return Ok(config_path);
     }
     let base = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".nanobot-rs");
     let toml_path = base.join("config.toml");
     if toml_path.exists() {
-        return toml_path;
+        return Ok(toml_path);
+    }
+    recover_canonical_config_backup_if_needed(&toml_path)?;
+    if toml_path.exists() {
+        return Ok(toml_path);
     }
     let json_path = base.join("config.json");
     if json_path.exists() {
-        return json_path;
+        return Ok(json_path);
     }
-    toml_path
+    Ok(toml_path)
 }
 
 fn parse_config_str(path: &Path, raw: &str) -> Result<RawConfig> {
@@ -733,6 +739,25 @@ pub fn save_config(config: &Config, path: Option<&Path>) -> Result<PathBuf> {
 
 fn is_canonical_config_path(path: &Path) -> bool {
     path.file_name().and_then(|name| name.to_str()) == Some("config.toml")
+}
+
+fn recover_canonical_config_backup_if_needed(config_path: &Path) -> Result<()> {
+    if !is_canonical_config_path(config_path) || config_path.exists() {
+        return Ok(());
+    }
+
+    let backup_path = config_path.with_extension("toml.bak");
+    if backup_path.exists() {
+        std::fs::rename(&backup_path, config_path).with_context(|| {
+            format!(
+                "failed to restore config {} from {}",
+                config_path.display(),
+                backup_path.display()
+            )
+        })?;
+    }
+
+    Ok(())
 }
 
 fn save_canonical_config_file(config_path: &Path, content: &str) -> Result<()> {

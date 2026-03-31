@@ -174,6 +174,61 @@ request = {}
 }
 
 #[test]
+fn load_config_recovers_canonical_backup_before_json_fallback() {
+    let home_dir = tempdir().expect("tempdir");
+    let config_dir = home_dir.path().join(".nanobot-rs");
+    fs::create_dir_all(&config_dir).expect("create config dir");
+    fs::write(
+        config_dir.join("config.toml.bak"),
+        r#"[agents.defaults]
+workspace = "/tmp/nanobot"
+defaultProfile = "openai:gpt-4.1-mini"
+maxToolIterations = 20
+messageDebounceMs = 0
+
+[agents.profiles."openai:gpt-4.1-mini"]
+provider = "openai"
+model = "gpt-4.1-mini"
+request = {}
+"#,
+    )
+    .expect("write backup toml");
+    fs::write(
+        config_dir.join("config.json"),
+        r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/nanobot",
+      "defaultProfile": "codex:gpt-5.4",
+      "maxToolIterations": 20
+    },
+    "profiles": {
+      "codex:gpt-5.4": {
+        "provider": "codex",
+        "model": "gpt-5.4",
+        "request": {}
+      }
+    }
+  }
+}"#,
+    )
+    .expect("write json config");
+
+    with_home_dir(home_dir.path(), || {
+        let config = load_config(None).expect("load config");
+        assert_eq!(
+            config.agents.defaults.default_profile,
+            "openai:gpt-4.1-mini"
+        );
+        assert_eq!(config.agents.defaults.provider, "openai");
+        assert_eq!(config.agents.defaults.model, "gpt-4.1-mini");
+    });
+
+    assert!(config_dir.join("config.toml").exists());
+    assert!(!config_dir.join("config.toml.bak").exists());
+}
+
+#[test]
 fn save_config_to_toml_replaces_stale_json_copy() {
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("config.toml");
