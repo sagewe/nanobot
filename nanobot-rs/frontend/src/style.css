@@ -1196,7 +1196,7 @@
 
       .msg-bubble {
         padding: 0.68rem 0.9rem;
-        line-height: 1.6;
+        line-height: 1.5;
         border-radius: 0.95rem;
         max-width: 100%;
       }
@@ -1816,7 +1816,7 @@
         border-right: 2px solid rgba(193, 95, 60, 0.15);
         color: var(--dim);
         font-size: 0.9rem;
-        line-height: 1.6;
+        line-height: 1.5;
         text-align: left;
       }
 
@@ -2116,7 +2116,7 @@
         padding: 0.65rem 1.1rem 0.45rem;
         font-family: inherit;
         font-size: 0.875rem;
-        line-height: 1.6;
+        line-height: 1.5;
         color: var(--ink);
         background: transparent;
         outline: none;
@@ -2714,7 +2714,7 @@
         border-radius: 3px;
         text-transform: uppercase;
         letter-spacing: 0.06em;
-        line-height: 1.6;
+        line-height: 1.5;
         background: rgba(193, 95, 60, 0.12);
         color: var(--accent);
       }
