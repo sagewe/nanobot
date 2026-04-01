@@ -6,12 +6,15 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
 use futures_util::{SinkExt, StreamExt};
+use prost::Message as ProstMessage;
 use regex::Regex;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
+use tokio::time::{self, MissedTickBehavior};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::warn;
+use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
@@ -21,6 +24,72 @@ use crate::presentation::should_deliver_to_channel;
 
 const FEISHU_DEDUP_CAPACITY: usize = 1000;
 const FEISHU_RECONNECT_DELAY: Duration = Duration::from_millis(100);
+const FEISHU_FRAME_METHOD_CONTROL: i32 = 0;
+const FEISHU_FRAME_METHOD_DATA: i32 = 1;
+const FEISHU_EVENT_TYPE: &str = "event";
+const FEISHU_PING_TYPE: &str = "ping";
+const FEISHU_PONG_TYPE: &str = "pong";
+const FEISHU_HEADER_TYPE: &str = "type";
+const FEISHU_HEADER_BIZ_RT: &str = "biz_rt";
+const FEISHU_HTTP_OK: i32 = 200;
+const FEISHU_HTTP_INTERNAL_ERROR: i32 = 500;
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct FeishuWsHeader {
+    #[prost(string, tag = "1")]
+    key: String,
+    #[prost(string, tag = "2")]
+    value: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct FeishuWsFrame {
+    #[prost(uint64, tag = "1")]
+    seq_id: u64,
+    #[prost(uint64, tag = "2")]
+    log_id: u64,
+    #[prost(int32, tag = "3")]
+    service: i32,
+    #[prost(int32, tag = "4")]
+    method: i32,
+    #[prost(message, repeated, tag = "5")]
+    headers: Vec<FeishuWsHeader>,
+    #[prost(string, tag = "6")]
+    payload_encoding: String,
+    #[prost(string, tag = "7")]
+    payload_type: String,
+    #[prost(bytes = "vec", tag = "8")]
+    payload: Vec<u8>,
+    #[prost(string, tag = "9")]
+    log_id_new: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FeishuWsConnectConfigResponse {
+    code: i64,
+    data: Option<FeishuWsConnectConfigData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FeishuWsConnectConfigData {
+    #[serde(rename = "URL")]
+    url: String,
+    #[serde(rename = "ClientConfig")]
+    client_config: FeishuWsClientConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct FeishuWsClientConfig {
+    #[serde(rename = "PingInterval")]
+    ping_interval: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct FeishuWsSessionConfig {
+    connect_url: String,
+    service_id: i32,
+    ping_interval: Duration,
+}
 
 #[derive(Clone, Debug)]
 struct FeishuToken {
@@ -64,12 +133,7 @@ impl FeishuChannel {
             "invalid feishu api_base scheme"
         );
 
-        let ws_url = Url::parse(self.config.ws_base.trim())
-            .map_err(|error| anyhow::anyhow!("invalid feishu ws_base: {error}"))?;
-        ensure!(
-            matches!(ws_url.scheme(), "ws" | "wss"),
-            "invalid feishu ws_base scheme"
-        );
+        normalize_ws_config_endpoint(self.config.ws_base.trim())?;
 
         Ok(())
     }
@@ -85,6 +149,7 @@ impl FeishuChannel {
 
     async fn tenant_access_token(&self) -> Result<String> {
         if let Some(token) = self.cached_token().await {
+            debug!("feishu tenant token cache hit");
             return Ok(token);
         }
 
@@ -121,6 +186,7 @@ impl FeishuChannel {
             token: token.clone(),
             expire_at_unix: chrono::Utc::now().timestamp() + expire - 60,
         });
+        debug!(expires_in_s = expire, "feishu tenant token refreshed");
         Ok(token)
     }
 
@@ -148,7 +214,55 @@ impl FeishuChannel {
             .ok_or_else(|| anyhow::anyhow!("missing feishu bot open_id"))?
             .to_string();
         *self.bot_open_id.lock().await = Some(open_id.clone());
+        info!(bot_open_id = %redact_identifier(&open_id), "feishu bot identity resolved");
         Ok(open_id)
+    }
+
+    async fn ws_session_config(&self) -> Result<FeishuWsSessionConfig> {
+        let endpoint = normalize_ws_config_endpoint(self.config.ws_base.trim())?;
+        let payload: FeishuWsConnectConfigResponse = self
+            .client
+            .post(endpoint.clone())
+            .header("locale", "zh")
+            .json(&json!({
+                "AppID": self.config.app_id,
+                "AppSecret": self.config.app_secret,
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        ensure!(payload.code == 0, "feishu ws config failed");
+        let data = payload
+            .data
+            .ok_or_else(|| anyhow::anyhow!("missing feishu ws config data"))?;
+        let connect_url = Url::parse(data.url.as_str()).context("invalid feishu connect URL")?;
+        let service_id = connect_url
+            .query_pairs()
+            .find_map(|(key, value)| {
+                if key == "service_id" {
+                    Some(value.to_string())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| anyhow::anyhow!("missing feishu service_id"))?
+            .parse::<i32>()
+            .context("invalid feishu service_id")?;
+        let ping_secs = data.client_config.ping_interval.unwrap_or(120).max(1);
+        info!(
+            ws_endpoint = %sanitize_url_for_log(endpoint.as_str()),
+            connect_url = %sanitize_url_for_log(data.url.as_str()),
+            service_id,
+            ping_interval_s = ping_secs,
+            "feishu websocket session config loaded"
+        );
+        Ok(FeishuWsSessionConfig {
+            connect_url: data.url,
+            service_id,
+            ping_interval: Duration::from_secs(ping_secs),
+        })
     }
 
     async fn create_message(
@@ -248,36 +362,164 @@ impl FeishuChannel {
 
     async fn run_session(&self) -> Result<()> {
         let bot_open_id = self.bot_open_id().await?;
-        let (stream, _) = connect_async(self.config.ws_base.as_str())
+        let session_config = self.ws_session_config().await?;
+        info!(
+            connect_url = %sanitize_url_for_log(session_config.connect_url.as_str()),
+            service_id = session_config.service_id,
+            "feishu websocket connecting"
+        );
+        let (stream, _) = connect_async(session_config.connect_url.as_str())
             .await
-            .with_context(|| format!("failed to connect to {}", self.config.ws_base))?;
+            .with_context(|| format!("failed to connect to {}", session_config.connect_url))?;
+        info!(
+            connect_url = %sanitize_url_for_log(session_config.connect_url.as_str()),
+            service_id = session_config.service_id,
+            "feishu websocket connected"
+        );
         let (mut writer, mut reader) = stream.split();
+        let mut ping_timer = time::interval(session_config.ping_interval);
+        ping_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         while self.running.load(Ordering::SeqCst) {
-            let frame = match reader.next().await {
-                Some(Ok(frame)) => frame,
-                Some(Err(error)) => return Err(error.into()),
-                None => bail!("feishu websocket closed"),
-            };
+            tokio::select! {
+                _ = ping_timer.tick() => {
+                    self.send_ping_frame(&mut writer, session_config.service_id).await?;
+                }
+                incoming = reader.next() => {
+                    let frame = match incoming {
+                        Some(Ok(frame)) => frame,
+                        Some(Err(error)) => return Err(error.into()),
+                        None => bail!("feishu websocket closed"),
+                    };
 
-            match frame {
-                Message::Text(text) => {
-                    if let Err(error) = self.handle_text_frame(text.as_ref(), &bot_open_id).await {
-                        warn!("feishu dropped invalid frame: {error}");
+                    match frame {
+                        Message::Binary(bytes) => {
+                            if let Err(error) = self
+                                .handle_binary_frame(&mut writer, bytes.to_vec(), &bot_open_id)
+                                .await
+                            {
+                                warn!("feishu dropped invalid frame: {error}");
+                            }
+                        }
+                        Message::Text(text) => {
+                            if let Err(error) = self.handle_text_frame(text.as_ref(), &bot_open_id).await {
+                                warn!("feishu dropped invalid frame: {error}");
+                            }
+                        }
+                        Message::Ping(payload) => {
+                            writer
+                                .send(Message::Pong(payload))
+                                .await
+                                .context("failed to respond to feishu websocket ping")?;
+                        }
+                        Message::Close(_) => bail!("feishu websocket closed"),
+                        _ => {}
                     }
                 }
-                Message::Ping(payload) => {
-                    writer
-                        .send(Message::Pong(payload))
-                        .await
-                        .context("failed to respond to feishu websocket ping")?;
-                }
-                Message::Close(_) => bail!("feishu websocket closed"),
-                _ => {}
             }
         }
 
         Ok(())
+    }
+
+    async fn send_ping_frame<S>(&self, writer: &mut S, service_id: i32) -> Result<()>
+    where
+        S: SinkExt<Message> + Unpin,
+        S::Error: Into<anyhow::Error>,
+    {
+        let frame = FeishuWsFrame {
+            seq_id: 0,
+            log_id: 0,
+            service: service_id,
+            method: FEISHU_FRAME_METHOD_CONTROL,
+            headers: vec![FeishuWsHeader {
+                key: FEISHU_HEADER_TYPE.to_string(),
+                value: FEISHU_PING_TYPE.to_string(),
+            }],
+            payload_encoding: String::new(),
+            payload_type: String::new(),
+            payload: Vec::new(),
+            log_id_new: String::new(),
+        };
+        writer
+            .send(Message::Binary(encode_frame(&frame).into()))
+            .await
+            .map_err(Into::into)
+            .context("failed to send feishu ping frame")?;
+        debug!(service_id, "feishu websocket ping sent");
+        Ok(())
+    }
+
+    async fn handle_binary_frame<S>(
+        &self,
+        writer: &mut S,
+        bytes: Vec<u8>,
+        bot_open_id: &str,
+    ) -> Result<()>
+    where
+        S: SinkExt<Message> + Unpin,
+        S::Error: Into<anyhow::Error>,
+    {
+        let frame =
+            FeishuWsFrame::decode(bytes.as_slice()).context("invalid feishu protobuf frame")?;
+        match frame.method {
+            FEISHU_FRAME_METHOD_CONTROL => {
+                debug!(
+                    frame_type = frame_header(&frame, FEISHU_HEADER_TYPE).unwrap_or_default(),
+                    service_id = frame.service,
+                    "feishu control frame received"
+                );
+                if frame_header(&frame, FEISHU_HEADER_TYPE) == Some(FEISHU_PONG_TYPE) {
+                    debug!(service_id = frame.service, "feishu websocket pong received");
+                    return Ok(());
+                }
+                Ok(())
+            }
+            FEISHU_FRAME_METHOD_DATA => {
+                debug!(
+                    frame_type = frame_header(&frame, FEISHU_HEADER_TYPE).unwrap_or_default(),
+                    message_id = frame_header(&frame, "message_id").unwrap_or_default(),
+                    trace_id = frame_header(&frame, "trace_id").unwrap_or_default(),
+                    service_id = frame.service,
+                    "feishu data frame received"
+                );
+                let status_code = match self.handle_event_frame(&frame, bot_open_id).await {
+                    Ok(()) => FEISHU_HTTP_OK,
+                    Err(error) => {
+                        warn!("feishu event frame handling failed: {error}");
+                        FEISHU_HTTP_INTERNAL_ERROR
+                    }
+                };
+                let mut ack_frame = frame.clone();
+                ack_frame.headers.push(FeishuWsHeader {
+                    key: FEISHU_HEADER_BIZ_RT.to_string(),
+                    value: "0".to_string(),
+                });
+                ack_frame.payload = format!("{{\"code\":{status_code}}}").into_bytes();
+                writer
+                    .send(Message::Binary(encode_frame(&ack_frame).into()))
+                    .await
+                    .map_err(Into::into)
+                    .context("failed to send feishu event ack")?;
+                debug!(
+                    status_code,
+                    message_id = frame_header(&frame, "message_id").unwrap_or_default(),
+                    trace_id = frame_header(&frame, "trace_id").unwrap_or_default(),
+                    "feishu event ack sent"
+                );
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    async fn handle_event_frame(&self, frame: &FeishuWsFrame, bot_open_id: &str) -> Result<()> {
+        if frame_header(frame, FEISHU_HEADER_TYPE) != Some(FEISHU_EVENT_TYPE) {
+            return Ok(());
+        }
+        let text = std::str::from_utf8(frame.payload.as_slice())
+            .context("invalid feishu payload encoding")?;
+        self.handle_text_frame(text, bot_open_id).await
     }
 
     async fn handle_text_frame(&self, text: &str, bot_open_id: &str) -> Result<()> {
@@ -295,9 +537,19 @@ impl FeishuChannel {
             .and_then(Value::as_str)
             .unwrap_or_default();
         if sender_type == "bot" || sender_id.is_empty() || sender_id == bot_open_id {
+            debug!(
+                sender_type,
+                sender_id = %redact_identifier(sender_id),
+                "feishu inbound ignored: bot or invalid sender"
+            );
             return Ok(());
         }
         if !is_allowed_sender(&self.config, sender_id) {
+            debug!(
+                sender_id = %redact_identifier(sender_id),
+                allow_from = %summarize_allowlist(self.config.allow_from.as_slice()),
+                "feishu inbound ignored: sender not allowed"
+            );
             return Ok(());
         }
 
@@ -328,6 +580,11 @@ impl FeishuChannel {
             .unwrap_or_default();
 
         if message_id.is_empty() || chat_id.is_empty() {
+            debug!(
+                message_id,
+                chat_id = %redact_identifier(chat_id),
+                "feishu inbound ignored: missing message or chat id"
+            );
             return Ok(());
         }
         if chat_type != "p2p"
@@ -338,26 +595,49 @@ impl FeishuChannel {
                 self.config.group_policy.as_str(),
             )
         {
+            debug!(
+                message_id,
+                chat_id = %redact_identifier(chat_id),
+                chat_type,
+                group_policy = self.config.group_policy.as_str(),
+                "feishu inbound ignored: group policy not matched"
+            );
             return Ok(());
         }
 
         let content = match normalize_inbound_content(message_type, raw_content)? {
             Some(content) => content,
-            None => return Ok(()),
+            None => {
+                debug!(
+                    message_id,
+                    chat_id = %redact_identifier(chat_id),
+                    message_type,
+                    "feishu inbound ignored: unsupported message type"
+                );
+                return Ok(());
+            }
         };
         if content.trim().is_empty() {
+            debug!(
+                message_id,
+                chat_id = %redact_identifier(chat_id),
+                message_type,
+                "feishu inbound ignored: empty content"
+            );
             return Ok(());
         }
 
         {
             let mut dedup = self.dedup.lock().await;
             if !dedup.insert(message_id) {
+                debug!(message_id, "feishu inbound ignored: duplicate message id");
                 return Ok(());
             }
         }
 
         let parent_id = event.pointer("/message/parent_id").and_then(Value::as_str);
         let root_id = event.pointer("/message/root_id").and_then(Value::as_str);
+        let content_chars = content.chars().count();
         let mut metadata = HashMap::new();
         metadata.insert("message_id".to_string(), json!(message_id));
         metadata.insert("chat_type".to_string(), json!(chat_type));
@@ -380,9 +660,26 @@ impl FeishuChannel {
                 session_key_override: None,
             })
             .await?;
+        info!(
+            message_id,
+            sender_id = %redact_identifier(sender_id),
+            chat_id = %redact_identifier(chat_id),
+            chat_type,
+            message_type,
+            parent_id = parent_id.unwrap_or_default(),
+            root_id = root_id.unwrap_or_default(),
+            content_chars,
+            "feishu inbound accepted"
+        );
 
         if let Err(error) = self.add_reaction(message_id).await {
             warn!("feishu reaction failed for {message_id}: {error}");
+        } else if !self.config.react_emoji.trim().is_empty() {
+            debug!(
+                message_id,
+                react_emoji = self.config.react_emoji.as_str(),
+                "feishu reaction sent"
+            );
         }
 
         Ok(())
@@ -426,6 +723,108 @@ impl RecentMessageDedup {
         }
         true
     }
+}
+
+fn normalize_ws_config_endpoint(raw: &str) -> Result<Url> {
+    let mut url =
+        Url::parse(raw).map_err(|error| anyhow::anyhow!("invalid feishu ws_base: {error}"))?;
+    match url.scheme() {
+        "http" | "https" => {}
+        "ws" => {
+            url.set_scheme("http")
+                .map_err(|_| anyhow::anyhow!("invalid feishu ws_base scheme"))?;
+        }
+        "wss" => {
+            url.set_scheme("https")
+                .map_err(|_| anyhow::anyhow!("invalid feishu ws_base scheme"))?;
+        }
+        _ => bail!("invalid feishu ws_base scheme"),
+    }
+
+    let path = url.path().trim_end_matches('/');
+    let endpoint_path = if path.is_empty() || path == "/" {
+        "/callback/ws/endpoint".to_string()
+    } else if path.ends_with("/callback/ws/endpoint") {
+        path.to_string()
+    } else if path.ends_with("/open-apis/ws") {
+        join_feishu_path(
+            &path[..path.len() - "/open-apis/ws".len()],
+            "/callback/ws/endpoint",
+        )
+    } else if path.ends_with("/open-apis") {
+        join_feishu_path(
+            &path[..path.len() - "/open-apis".len()],
+            "/callback/ws/endpoint",
+        )
+    } else if path.ends_with("/ws") {
+        join_feishu_path(&path[..path.len() - "/ws".len()], "/callback/ws/endpoint")
+    } else {
+        join_feishu_path(path, "/callback/ws/endpoint")
+    };
+    url.set_path(endpoint_path.as_str());
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url)
+}
+
+fn join_feishu_path(prefix: &str, suffix: &str) -> String {
+    let prefix = prefix.trim_end_matches('/');
+    if prefix.is_empty() {
+        suffix.to_string()
+    } else {
+        format!("{prefix}{suffix}")
+    }
+}
+
+fn frame_header<'a>(frame: &'a FeishuWsFrame, key: &str) -> Option<&'a str> {
+    frame
+        .headers
+        .iter()
+        .find(|header| header.key == key)
+        .map(|header| header.value.as_str())
+}
+
+fn encode_frame(frame: &FeishuWsFrame) -> Vec<u8> {
+    frame.encode_to_vec()
+}
+
+fn redact_identifier(value: &str) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+    if value.chars().count() <= 8 {
+        return value.to_string();
+    }
+    let prefix: String = value.chars().take(4).collect();
+    let suffix: String = value
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{prefix}...{suffix}")
+}
+
+fn summarize_allowlist(allow_from: &[String]) -> String {
+    match allow_from {
+        [] => "empty".to_string(),
+        [only] if only == "*" => "wildcard".to_string(),
+        values if values.iter().any(|value| value == "*") => {
+            format!("{} entries including wildcard", values.len())
+        }
+        values => format!("{} entries", values.len()),
+    }
+}
+
+fn sanitize_url_for_log(raw: &str) -> String {
+    let Ok(mut url) = Url::parse(raw) else {
+        return raw.to_string();
+    };
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
 }
 
 fn markdown_link_re() -> &'static Regex {
@@ -899,6 +1298,16 @@ impl Channel for FeishuChannel {
 
     async fn start(&self) -> Result<()> {
         self.validate_startup_config()?;
+        info!(
+            app_id = %redact_identifier(self.config.app_id.as_str()),
+            api_base = self.config.api_base.as_str(),
+            ws_base = %sanitize_url_for_log(self.config.ws_base.as_str()),
+            allow_from = %summarize_allowlist(self.config.allow_from.as_slice()),
+            group_policy = self.config.group_policy.as_str(),
+            reply_to_message = self.config.reply_to_message,
+            react_emoji = self.config.react_emoji.as_str(),
+            "starting feishu channel"
+        );
         self.running.store(true, Ordering::SeqCst);
         let _ = self.bot_open_id().await?;
         while self.running.load(Ordering::SeqCst) {
@@ -915,6 +1324,7 @@ impl Channel for FeishuChannel {
 
     async fn stop(&self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
+        info!("stopping feishu channel");
         Ok(())
     }
 
@@ -963,18 +1373,52 @@ impl Channel for FeishuChannel {
             None
         };
 
+        info!(
+            receive_id_type,
+            chat_id = %redact_identifier(msg.chat_id.as_str()),
+            payload_count = payloads.len(),
+            reply_message_id = %reply_message_id
+                .map(redact_identifier)
+                .unwrap_or_else(|| "none".to_string()),
+            content_chars = msg.content.chars().count(),
+            "feishu outbound prepared"
+        );
+
         for (index, (msg_type, content)) in payloads.iter().enumerate() {
             let use_reply = index == 0 && reply_message_id.is_some();
             if use_reply {
                 let message_id = reply_message_id.expect("reply id");
+                debug!(
+                    message_id = %redact_identifier(message_id),
+                    msg_type,
+                    content_chars = content.chars().count(),
+                    "feishu outbound reply attempt"
+                );
                 if self
                     .reply_message(&access_token, message_id, msg_type, content)
                     .await
                     .is_ok()
                 {
+                    info!(
+                        message_id = %redact_identifier(message_id),
+                        msg_type,
+                        "feishu outbound replied"
+                    );
                     continue;
                 }
+                warn!(
+                    message_id = %redact_identifier(message_id),
+                    msg_type,
+                    "feishu reply failed, falling back to create message"
+                );
             }
+            debug!(
+                receive_id_type,
+                chat_id = %redact_identifier(msg.chat_id.as_str()),
+                msg_type,
+                content_chars = content.chars().count(),
+                "feishu outbound create attempt"
+            );
             self.create_message(
                 &access_token,
                 receive_id_type,
@@ -983,6 +1427,12 @@ impl Channel for FeishuChannel {
                 content,
             )
             .await?;
+            info!(
+                receive_id_type,
+                chat_id = %redact_identifier(msg.chat_id.as_str()),
+                msg_type,
+                "feishu outbound sent"
+            );
         }
         Ok(())
     }
@@ -1207,5 +1657,36 @@ mod tests {
         assert!(!dedup.insert("m1"));
         assert!(dedup.insert("m3"));
         assert!(dedup.insert("m1"));
+    }
+
+    #[test]
+    fn feishu_redacts_identifiers_for_logs() {
+        assert_eq!(redact_identifier(""), "");
+        assert_eq!(redact_identifier("ou_user"), "ou_user");
+        assert_eq!(redact_identifier("ou_123456789"), "ou_1...6789");
+    }
+
+    #[test]
+    fn feishu_summarizes_allowlists_for_logs() {
+        assert_eq!(summarize_allowlist(&[]), "empty");
+        assert_eq!(summarize_allowlist(&["*".to_string()]), "wildcard");
+        assert_eq!(
+            summarize_allowlist(&["ou_1".to_string(), "ou_2".to_string()]),
+            "2 entries"
+        );
+        assert_eq!(
+            summarize_allowlist(&["ou_1".to_string(), "*".to_string()]),
+            "2 entries including wildcard"
+        );
+    }
+
+    #[test]
+    fn feishu_sanitizes_sensitive_ws_query_params_in_logs() {
+        assert_eq!(
+            sanitize_url_for_log(
+                "wss://msg-frontier.feishu.cn/ws/v2?device_id=1&access_key=secret&ticket=secret"
+            ),
+            "wss://msg-frontier.feishu.cn/ws/v2"
+        );
     }
 }

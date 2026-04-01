@@ -11,6 +11,7 @@ use futures_util::{SinkExt, StreamExt};
 use nanobot_rs::bus::{InboundMessage, MessageBus, OutboundMessage};
 use nanobot_rs::channels::{Channel, FeishuChannel};
 use nanobot_rs::config::FeishuConfig;
+use prost::Message as ProstMessage;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -36,27 +37,58 @@ struct RecordedReaction {
     payload: Value,
 }
 
+#[derive(Clone, PartialEq, prost::Message)]
+struct ProtoHeader {
+    #[prost(string, tag = "1")]
+    key: String,
+    #[prost(string, tag = "2")]
+    value: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct ProtoFrame {
+    #[prost(uint64, tag = "1")]
+    seq_id: u64,
+    #[prost(uint64, tag = "2")]
+    log_id: u64,
+    #[prost(int32, tag = "3")]
+    service: i32,
+    #[prost(int32, tag = "4")]
+    method: i32,
+    #[prost(message, repeated, tag = "5")]
+    headers: Vec<ProtoHeader>,
+    #[prost(string, tag = "6")]
+    payload_encoding: String,
+    #[prost(string, tag = "7")]
+    payload_type: String,
+    #[prost(bytes = "vec", tag = "8")]
+    payload: Vec<u8>,
+    #[prost(string, tag = "9")]
+    log_id_new: String,
+}
+
 #[derive(Default)]
 struct FeishuFixtureState {
     token_calls: AtomicUsize,
     bot_info_calls: AtomicUsize,
+    ws_config_calls: AtomicUsize,
     create_messages: Mutex<Vec<RecordedCreateMessage>>,
     reply_messages: Mutex<Vec<RecordedReplyMessage>>,
     reactions: Mutex<Vec<RecordedReaction>>,
     fail_reply_once: AtomicBool,
+    ws_connect_url: String,
 }
 
 #[derive(Clone)]
 struct FeishuFixture {
     http_addr: SocketAddr,
-    ws_addr: SocketAddr,
     state: Arc<FeishuFixtureState>,
     ws_sender: broadcast::Sender<WsAction>,
 }
 
 #[derive(Clone, Debug)]
 enum WsAction {
-    Text(String),
+    Binary(Vec<u8>),
     Close,
 }
 
@@ -82,6 +114,23 @@ async fn feishu_get_bot_info(State(state): State<Arc<FeishuFixtureState>>) -> Js
         "msg": "success",
         "bot": {
             "open_id": "ou_bot_1"
+        }
+    }))
+}
+
+async fn feishu_get_ws_config(State(state): State<Arc<FeishuFixtureState>>) -> Json<Value> {
+    state.ws_config_calls.fetch_add(1, Ordering::SeqCst);
+    Json(json!({
+        "code": 0,
+        "msg": "success",
+        "data": {
+            "URL": state.ws_connect_url,
+            "ClientConfig": {
+                "PingInterval": 120,
+                "ReconnectCount": -1,
+                "ReconnectInterval": 1,
+                "ReconnectNonce": 0
+            }
         }
     }))
 }
@@ -135,12 +184,18 @@ async fn feishu_add_reaction(
 
 impl FeishuFixture {
     async fn start() -> Self {
-        let state = Arc::new(FeishuFixtureState::default());
+        let ws_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ws");
+        let ws_addr = ws_listener.local_addr().expect("ws addr");
+        let state = Arc::new(FeishuFixtureState {
+            ws_connect_url: format!("ws://{}/ws/v2?device_id=device-1&service_id=7", ws_addr),
+            ..FeishuFixtureState::default()
+        });
         let app = Router::new()
             .route(
                 "/open-apis/auth/v3/tenant_access_token/internal",
                 post(feishu_get_token),
             )
+            .route("/callback/ws/endpoint", post(feishu_get_ws_config))
             .route("/open-apis/bot/v3/info", get(feishu_get_bot_info))
             .route("/open-apis/im/v1/messages", post(feishu_create_message))
             .route(
@@ -157,8 +212,6 @@ impl FeishuFixture {
         tokio::spawn(async move {
             axum::serve(listener, app).await.expect("serve");
         });
-        let ws_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ws");
-        let ws_addr = ws_listener.local_addr().expect("ws addr");
         let (ws_sender, _) = broadcast::channel(32);
         let ws_broadcast = ws_sender.clone();
         tokio::spawn(async move {
@@ -172,8 +225,8 @@ impl FeishuFixture {
                         tokio::select! {
                             maybe_action = rx.recv() => {
                                 match maybe_action {
-                                    Ok(WsAction::Text(text)) => {
-                                        if write.send(Message::Text(text.into())).await.is_err() {
+                                    Ok(WsAction::Binary(bytes)) => {
+                                        if write.send(Message::Binary(bytes.into())).await.is_err() {
                                             break;
                                         }
                                     }
@@ -198,7 +251,6 @@ impl FeishuFixture {
         });
         Self {
             http_addr,
-            ws_addr,
             state,
             ws_sender,
         }
@@ -218,7 +270,7 @@ impl FeishuFixture {
             app_id: "cli_a1".to_string(),
             app_secret: "secret".to_string(),
             api_base: format!("http://{}/open-apis", self.http_addr),
-            ws_base: format!("ws://{}/open-apis/ws", self.ws_addr),
+            ws_base: format!("http://{}", self.http_addr),
             encrypt_key: String::new(),
             verification_token: String::new(),
             allow_from: vec!["*".to_string()],
@@ -248,8 +300,8 @@ impl FeishuFixture {
         self.state.fail_reply_once.store(true, Ordering::SeqCst);
     }
 
-    fn send_ws_frame(&self, text: String) {
-        let _ = self.ws_sender.send(WsAction::Text(text));
+    fn send_ws_frame(&self, bytes: Vec<u8>) {
+        let _ = self.ws_sender.send(WsAction::Binary(bytes));
     }
 
     fn disconnect_ws_clients(&self) {
@@ -366,7 +418,7 @@ impl FeishuFixture {
     }
 
     fn push_malformed_frame(&self) {
-        self.send_ws_frame("not json".to_string());
+        self.send_ws_frame(vec![0xde, 0xad, 0xbe, 0xef]);
     }
 
     fn message_event(
@@ -379,8 +431,8 @@ impl FeishuFixture {
         content: Value,
         mentions: Vec<Value>,
         sender_type: &str,
-    ) -> String {
-        json!({
+    ) -> Vec<u8> {
+        let payload = json!({
             "event": {
                 "sender": {
                     "sender_type": sender_type,
@@ -399,6 +451,41 @@ impl FeishuFixture {
             }
         })
         .to_string()
+        .into_bytes();
+
+        ProtoFrame {
+            seq_id: 0,
+            log_id: 1,
+            service: 7,
+            method: 1,
+            headers: vec![
+                ProtoHeader {
+                    key: "type".to_string(),
+                    value: "event".to_string(),
+                },
+                ProtoHeader {
+                    key: "message_id".to_string(),
+                    value: format!("wire-{message_id}"),
+                },
+                ProtoHeader {
+                    key: "sum".to_string(),
+                    value: "1".to_string(),
+                },
+                ProtoHeader {
+                    key: "seq".to_string(),
+                    value: "0".to_string(),
+                },
+                ProtoHeader {
+                    key: "trace_id".to_string(),
+                    value: format!("trace-{message_id}"),
+                },
+            ],
+            payload_encoding: String::new(),
+            payload_type: String::new(),
+            payload,
+            log_id_new: String::new(),
+        }
+        .encode_to_vec()
     }
 }
 
@@ -854,6 +941,23 @@ async fn feishu_channel_reconnects_after_disconnect() {
     fixture.push_text_event("msg-15", "ou_user_1", "oc_any", "p2p", "hello again");
     let inbound = expect_inbound(&bus).await;
     assert_eq!(inbound.content, "hello again");
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn feishu_channel_supports_legacy_ws_style_base_config() {
+    let fixture = FeishuFixture::start().await;
+    let bus = MessageBus::new(32);
+    let mut config = fixture.base_config();
+    config.ws_base = format!("ws://{}/open-apis/ws", fixture.http_addr);
+    let channel = fixture.channel_with_config(bus.clone(), config);
+    let handle = start_channel(channel).await;
+
+    fixture.push_text_event("msg-legacy", "ou_user_1", "oc_any", "p2p", "hello");
+    let inbound = expect_inbound(&bus).await;
+    assert_eq!(inbound.content, "hello");
+    assert_eq!(fixture.state.ws_config_calls.load(Ordering::SeqCst), 1);
 
     handle.abort();
 }
