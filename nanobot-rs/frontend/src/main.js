@@ -97,6 +97,7 @@ const channelsPane = document.querySelector(".channels-pane");
 const sessionsPane = document.querySelector(".sessions-pane");
 const jobsPane = document.querySelector(".jobs-pane");
 const mcpPane = document.querySelector(".mcp-pane");
+const skillsPane = document.querySelector(".skills-pane");
 const settingsPane = document.querySelector(".settings-pane");
 const usersPane = document.querySelector(".users-pane");
 const sessionsSearch = document.getElementById("sessions-search");
@@ -706,6 +707,7 @@ function switchTab(tab) {
   channelsPane.hidden = tab !== "channels";
   jobsPane.hidden = tab !== "jobs";
   mcpPane.hidden = tab !== "mcp";
+  skillsPane.hidden = tab !== "skills";
   settingsPane.hidden = tab !== "settings";
   usersPane.hidden = tab !== "users";
   if (tab === "jobs") refreshJobs();

@@ -346,6 +346,13 @@ describe("tool trace output", () => {
     expect(TRANSLATIONS.zh.tab_skills).toBe("\u6280\u80fd");
   });
 
+  it("wires the skills pane into the main tab switcher", () => {
+    const js = readJs();
+
+    expect(js).toContain('const skillsPane = document.querySelector(".skills-pane");');
+    expect(js).toContain('skillsPane.hidden = tab !== "skills";');
+  });
+
   it("groups channels by provider and wires settings/users labels through i18n", async () => {
     const html = readHtml();
     const js = readJs();
