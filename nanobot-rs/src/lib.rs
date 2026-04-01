@@ -11,6 +11,7 @@ pub mod presentation;
 pub mod providers;
 pub mod security;
 pub mod session;
+pub mod skills;
 pub mod tools;
 pub mod web;
 
