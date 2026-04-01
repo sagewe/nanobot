@@ -8,6 +8,7 @@ use anyhow::Result;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use tracing::warn;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SkillRequirements {
@@ -431,11 +432,31 @@ impl SkillsCatalog {
 }
 
 fn load_managed_state(path: &Path) -> Result<BTreeMap<String, ManagedSkillState>> {
-    let Ok(raw) = fs::read_to_string(path) else {
-        return Ok(BTreeMap::new());
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(BTreeMap::new());
+        }
+        Err(error) => {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "skipping unreadable skills state"
+            );
+            return Ok(BTreeMap::new());
+        }
     };
-    let state = serde_json::from_str(&raw)?;
-    Ok(state)
+    match serde_json::from_str(&raw) {
+        Ok(state) => Ok(state),
+        Err(error) => {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "skipping malformed skills state"
+            );
+            Ok(BTreeMap::new())
+        }
+    }
 }
 
 fn skill_dir_has_extra_files(path: &Path) -> bool {
