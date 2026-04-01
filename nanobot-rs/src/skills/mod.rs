@@ -59,6 +59,37 @@ impl DiscoveredSkills {
     pub fn entries(&self) -> &[SkillEntry] {
         &self.entries
     }
+
+    pub fn render_summary(&self) -> String {
+        self.entries
+            .iter()
+            .map(|entry| {
+                let source = match entry.source {
+                    SkillSource::Builtin => "builtin",
+                    SkillSource::Workspace => "workspace",
+                };
+                if entry.available {
+                    format!(
+                        "- {}: {} [{}] ({})",
+                        entry.name,
+                        entry.description,
+                        source,
+                        entry.path.display()
+                    )
+                } else {
+                    format!(
+                        "- {}: {} [{}] ({}) unavailable: {}",
+                        entry.name,
+                        entry.description,
+                        source,
+                        entry.path.display(),
+                        entry.missing_requirements
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +118,14 @@ pub struct SelectedSkills {
 }
 
 impl SelectedSkills {
+    pub fn render_active_skills(&self) -> String {
+        self.active
+            .iter()
+            .map(|selected| format!("### Skill: {}\n\n{}", selected.entry.name, selected.entry.body))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
     pub fn render_requested_status(&self) -> String {
         self.requested_unavailable
             .iter()

@@ -20,6 +20,7 @@ use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
 use crate::providers::{LlmProvider, ProviderRequestDescriptor};
 use crate::session::{Session, SessionGroupSummary, SessionMessage, SessionStore, SessionSummary};
+use crate::skills::{SkillSelector, SkillsCatalog};
 use crate::tools::{
     EditFileTool, ExecTool, ListDirTool, ReadFileTool, ToolContext, ToolRegistry, WebFetchTool,
     WebSearchTool, WriteFileTool, assistant_message_with_extra, build_default_tools,
@@ -59,7 +60,7 @@ impl ContextBuilder {
         Self { workspace }
     }
 
-    pub fn build_system_prompt(&self) -> String {
+    pub fn build_system_prompt(&self, current_message: &str) -> String {
         let mut parts = vec![format!(
             "# nanobot-rs\n\nYou are nanobot-rs, a helpful AI assistant.\n\n## Workspace\n{}\n",
             self.workspace.display()
@@ -76,27 +77,67 @@ impl ContextBuilder {
                 parts.push(format!("## Memory\n\n{memory}"));
             }
         }
-        let skills_dir = self.workspace.join("skills");
-        if let Ok(entries) = std::fs::read_dir(skills_dir) {
-            let mut skills = Vec::new();
-            for entry in entries.flatten() {
-                let skill_path = entry.path().join("SKILL.md");
-                if skill_path.exists() {
-                    skills.push(format!(
-                        "- {} ({})",
-                        entry.file_name().to_string_lossy(),
-                        skill_path.display()
+
+        match SkillsCatalog::new(self.workspace.clone()).discover() {
+            Ok(catalog) => {
+                let summary = catalog.render_summary();
+                match SkillSelector::default().select(&catalog, current_message) {
+                    Ok(selected) => {
+                        let active = selected.render_active_skills();
+                        if !active.is_empty() {
+                            parts.push(format!("## Active Skills\n\n{active}"));
+                        }
+                        let requested = selected.render_requested_status();
+                        if !requested.is_empty() {
+                            parts.push(format!("## Requested Skills Status\n\n{requested}"));
+                        }
+                    }
+                    Err(error) => {
+                        warn!("failed to select skills for prompt: {error}");
+                    }
+                }
+                if !summary.is_empty() {
+                    parts.push(format!(
+                        "## Skills\n\nThe following skills are available. Read the SKILL.md file before using one.\n{summary}",
                     ));
                 }
             }
-            if !skills.is_empty() {
-                parts.push(format!(
-                    "## Skills\n\nThe following skills are available. Read the SKILL.md file before using one.\n{}",
-                    skills.join("\n")
-                ));
+            Err(error) => {
+                warn!("failed to discover skills for prompt: {error}");
             }
         }
         parts.join("\n\n---\n\n")
+    }
+
+    pub fn build_skills_summary(&self) -> String {
+        match SkillsCatalog::new(self.workspace.clone()).discover() {
+            Ok(catalog) => {
+                let summary = catalog.render_summary();
+                if summary.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "## Skills\n\nThe following skills are available. Read the SKILL.md file before using one.\n{summary}",
+                    )
+                }
+            }
+            Err(error) => {
+                warn!("failed to discover skills for summary: {error}");
+                String::new()
+            }
+        }
+    }
+
+    pub fn build_subagent_system_prompt(&self) -> String {
+        let mut parts = vec![format!(
+            "# Subagent\n\nYou are a background subagent. Focus only on the assigned task.\nWorkspace: {}",
+            self.workspace.display()
+        )];
+        let summary = self.build_skills_summary();
+        if !summary.is_empty() {
+            parts.push(summary);
+        }
+        parts.join("\n\n")
     }
 
     pub fn build_messages(
@@ -110,7 +151,7 @@ impl ContextBuilder {
         let runtime = self.runtime_context(channel, chat_id);
         let merged = format!("{runtime}\n\n{current_message}");
         let mut messages = Vec::with_capacity(history.len() + 2);
-        messages.push(system_message(&self.build_system_prompt()));
+        messages.push(system_message(&self.build_system_prompt(current_message)));
         messages.extend(history);
         messages.push(json!({
             "role": current_role,
@@ -574,10 +615,7 @@ impl SubagentManager {
         tools
             .register(WebFetchTool::new(self.web_tools.fetch.clone()))
             .await;
-        let system_prompt = format!(
-            "# Subagent\n\nYou are a background subagent. Focus only on the assigned task.\nWorkspace: {}",
-            self.workspace.display()
-        );
+        let system_prompt = ContextBuilder::new(self.workspace.clone()).build_subagent_system_prompt();
         let mut messages = vec![
             system_message(&system_prompt),
             json!({"role": "user", "content": task}),

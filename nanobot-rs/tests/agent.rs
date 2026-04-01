@@ -56,6 +56,88 @@ fn mock_provider(responses: Vec<LlmResponse>) -> Arc<dyn LlmProvider> {
     })
 }
 
+fn write_skill(root: &std::path::Path, name: &str, content: &str) {
+    let skill_dir = root.join(name);
+    fs::create_dir_all(&skill_dir).expect("create skill dir");
+    fs::write(skill_dir.join("SKILL.md"), content).expect("write skill");
+}
+
+const ALWAYS_SKILL: &str = r#"---
+name: always-on
+description: always-on helper
+always: true
+---
+
+# Always On
+
+Always apply this skill.
+"#;
+
+const WEATHER_SKILL: &str = r#"---
+name: weather
+description: weather helper
+---
+
+# Weather
+
+Check rain forecasts carefully.
+"#;
+
+const UNAVAILABLE_DEPLOY_SKILL: &str = r#"---
+name: deploy
+description: deployment helper
+metadata: '{"nanobot":{"requires":{"bins":["definitely_missing_binary_for_agent_prompt_test"]}}}'
+---
+
+# Deploy
+
+Roll out services safely.
+"#;
+
+#[derive(Clone, Default)]
+struct PromptCaptureProvider {
+    prompts: Arc<Mutex<Vec<String>>>,
+}
+
+impl PromptCaptureProvider {
+    async fn first_system_prompt(&self) -> String {
+        self.prompts
+            .lock()
+            .await
+            .first()
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+#[async_trait]
+impl LlmProvider for PromptCaptureProvider {
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+    async fn chat(
+        &self,
+        messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        if let Some(system_prompt) = messages
+            .iter()
+            .find(|message| message.get("role").and_then(Value::as_str) == Some("system"))
+            .and_then(|message| message.get("content").and_then(Value::as_str))
+        {
+            self.prompts.lock().await.push(system_prompt.to_string());
+        }
+        Ok(LlmResponse {
+            content: Some("captured".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            extra: Map::new(),
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CapturedCodexRequest {
     method: String,
@@ -1191,6 +1273,60 @@ async fn subagent_reports_back_via_bus() {
         .expect("inbound message");
     assert_eq!(inbound.channel, "system");
     assert!(inbound.content.contains("background result"));
+}
+
+#[test]
+fn context_builder_includes_active_skills_requested_status_and_summary() {
+    let dir = tempdir().expect("tempdir");
+    let workspace = dir.path().join("workspace");
+    write_skill(&workspace.join("skills"), "always-on", ALWAYS_SKILL);
+    write_skill(&workspace.join("skills"), "weather", WEATHER_SKILL);
+    write_skill(&workspace.join("skills"), "deploy", UNAVAILABLE_DEPLOY_SKILL);
+
+    let context = ContextBuilder::new(workspace);
+    let prompt = context.build_system_prompt("use $weather and $deploy to check conditions");
+
+    assert!(prompt.contains("## Active Skills"));
+    assert!(prompt.contains("### Skill: always-on"));
+    assert!(prompt.contains("### Skill: weather"));
+    assert!(prompt.contains("## Requested Skills Status"));
+    assert!(prompt.contains("deploy"));
+    assert!(prompt.contains("## Skills"));
+}
+
+#[tokio::test]
+async fn subagent_prompt_only_includes_skills_summary() {
+    let dir = tempdir().expect("tempdir");
+    write_skill(&dir.path().join("skills"), "weather", WEATHER_SKILL);
+    let provider = Arc::new(PromptCaptureProvider::default());
+    let bus = MessageBus::new(8);
+    let manager = SubagentManager::new(
+        provider.clone(),
+        dir.path().to_path_buf(),
+        bus.clone(),
+        "mock-model".to_string(),
+        2,
+        10,
+        false,
+        WebToolsConfig::default(),
+    );
+
+    let _ = manager
+        .spawn(
+            "check rain".to_string(),
+            Some("weather".to_string()),
+            "cli".to_string(),
+            "test".to_string(),
+        )
+        .await;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("inbound message");
+
+    let system_prompt = provider.first_system_prompt().await;
+    assert!(system_prompt.contains("## Skills"));
+    assert!(!system_prompt.contains("## Active Skills"));
 }
 
 #[tokio::test]
