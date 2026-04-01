@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use regex::Regex;
+use serde::Deserialize;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -41,6 +42,34 @@ pub struct SkillEntry {
     pub available: bool,
     pub missing_requirements: String,
     pub search_text: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ManagedSkillEntry {
+    pub id: String,
+    pub source: SkillSource,
+    pub enabled: bool,
+    pub effective: bool,
+    pub overrides_builtin: bool,
+    pub shadowed_by_workspace: bool,
+    pub has_extra_files: bool,
+    pub entry: SkillEntry,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ManagedSkills {
+    pub workspace: Vec<ManagedSkillEntry>,
+    pub builtin: Vec<ManagedSkillEntry>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+struct ManagedSkillState {
+    #[serde(default = "default_enabled")]
+    enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default)]
@@ -92,6 +121,23 @@ impl DiscoveredSkills {
     }
 }
 
+impl ManagedSkills {
+    fn into_discovered(self) -> DiscoveredSkills {
+        let mut merged = BTreeMap::new();
+        for skill in self
+            .builtin
+            .into_iter()
+            .chain(self.workspace.into_iter())
+            .filter(|skill| skill.effective)
+        {
+            merged.insert(skill.entry.normalized_name.clone(), skill.entry);
+        }
+        DiscoveredSkills {
+            entries: merged.into_values().collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionReason {
     Always,
@@ -121,7 +167,12 @@ impl SelectedSkills {
     pub fn render_active_skills(&self) -> String {
         self.active
             .iter()
-            .map(|selected| format!("### Skill: {}\n\n{}", selected.entry.name, selected.entry.body))
+            .map(|selected| {
+                format!(
+                    "### Skill: {}\n\n{}",
+                    selected.entry.name, selected.entry.body
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n\n")
     }
@@ -133,7 +184,10 @@ impl SelectedSkills {
                 if status.missing_requirements.is_empty() {
                     format!("- {}: unavailable", status.name)
                 } else {
-                    format!("- {}: unavailable ({})", status.name, status.missing_requirements)
+                    format!(
+                        "- {}: unavailable ({})",
+                        status.name, status.missing_requirements
+                    )
                 }
             })
             .collect::<Vec<_>>()
@@ -162,7 +216,10 @@ impl SkillSelector {
         let mut seen = HashSet::new();
 
         for entry in catalog.entries() {
-            if entry.metadata.always && entry.available && seen.insert(entry.normalized_name.clone()) {
+            if entry.metadata.always
+                && entry.available
+                && seen.insert(entry.normalized_name.clone())
+            {
                 selected.active.push(SelectedSkill {
                     entry: entry.clone(),
                     reason: SelectionReason::Always,
@@ -240,32 +297,110 @@ impl SkillsCatalog {
     }
 
     pub fn discover(&self) -> Result<DiscoveredSkills> {
-        let mut merged = BTreeMap::new();
-        self.collect_root(&self.builtin_root, SkillSource::Builtin, &mut merged)?;
-        self.collect_root(
-            &self.workspace.join("skills"),
-            SkillSource::Workspace,
-            &mut merged,
-        )?;
-        Ok(DiscoveredSkills {
-            entries: merged.into_values().collect(),
-        })
+        Ok(self.discover_managed()?.into_discovered())
     }
 
-    fn collect_root(
+    pub fn discover_managed(&self) -> Result<ManagedSkills> {
+        let state = load_managed_state(&self.managed_state_path())?;
+        let mut builtin = self.collect_root_managed(&self.builtin_root, SkillSource::Builtin)?;
+        let mut workspace =
+            self.collect_root_managed(&self.workspace.join("skills"), SkillSource::Workspace)?;
+
+        let mut effective_by_name = BTreeMap::<String, (SkillSource, String)>::new();
+        let mut workspace_by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut builtin_by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut workspace_enabled_by_name: BTreeMap<String, bool> = BTreeMap::new();
+        let mut builtin_present_by_name: BTreeMap<String, bool> = BTreeMap::new();
+
+        for (index, skill) in workspace.iter_mut().enumerate() {
+            skill.enabled = state.get(&skill.id).map_or(true, |state| state.enabled);
+            workspace_by_name
+                .entry(skill.entry.normalized_name.clone())
+                .or_default()
+                .push(index);
+            if skill.enabled {
+                workspace_enabled_by_name.insert(skill.entry.normalized_name.clone(), true);
+            }
+        }
+        for (index, skill) in builtin.iter_mut().enumerate() {
+            builtin_by_name
+                .entry(skill.entry.normalized_name.clone())
+                .or_default()
+                .push(index);
+            builtin_present_by_name.insert(skill.entry.normalized_name.clone(), true);
+        }
+
+        for (normalized_name, workspace_indexes) in &workspace_by_name {
+            let enabled_workspace_indexes = workspace_indexes
+                .iter()
+                .copied()
+                .filter(|index| workspace[*index].enabled)
+                .collect::<Vec<_>>();
+            if let Some(index) = enabled_workspace_indexes.last().copied() {
+                effective_by_name.insert(
+                    normalized_name.clone(),
+                    (SkillSource::Workspace, workspace[index].id.clone()),
+                );
+            }
+        }
+
+        for (normalized_name, builtin_indexes) in &builtin_by_name {
+            if effective_by_name.contains_key(normalized_name) {
+                continue;
+            }
+            if let Some(index) = builtin_indexes.last().copied() {
+                effective_by_name.insert(
+                    normalized_name.clone(),
+                    (SkillSource::Builtin, builtin[index].id.clone()),
+                );
+            }
+        }
+
+        for skill in &mut workspace {
+            let is_effective = effective_by_name
+                .get(&skill.entry.normalized_name)
+                .is_some_and(|(source, id)| *source == SkillSource::Workspace && *id == skill.id);
+            skill.effective = is_effective;
+            skill.overrides_builtin = is_effective
+                && builtin_present_by_name
+                    .get(&skill.entry.normalized_name)
+                    .copied()
+                    .unwrap_or(false);
+            skill.shadowed_by_workspace = false;
+        }
+
+        for skill in &mut builtin {
+            let is_effective = effective_by_name
+                .get(&skill.entry.normalized_name)
+                .is_some_and(|(source, id)| *source == SkillSource::Builtin && *id == skill.id);
+            skill.effective = is_effective;
+            skill.shadowed_by_workspace = workspace_enabled_by_name
+                .get(&skill.entry.normalized_name)
+                .copied()
+                .unwrap_or(false);
+            skill.overrides_builtin = false;
+        }
+
+        workspace.sort_by(|left, right| left.id.cmp(&right.id));
+        builtin.sort_by(|left, right| left.id.cmp(&right.id));
+
+        Ok(ManagedSkills { workspace, builtin })
+    }
+
+    fn collect_root_managed(
         &self,
         root: &Path,
         source: SkillSource,
-        merged: &mut BTreeMap<String, SkillEntry>,
-    ) -> Result<()> {
+    ) -> Result<Vec<ManagedSkillEntry>> {
         if !root.exists() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let mut dirs = fs::read_dir(root)?
             .flatten()
             .filter(|entry| entry.path().is_dir())
             .collect::<Vec<_>>();
         dirs.sort_by_key(|entry| entry.file_name());
+        let mut entries = Vec::new();
         for entry in dirs {
             let skill_path = entry.path().join("SKILL.md");
             if !skill_path.exists() {
@@ -274,10 +409,45 @@ impl SkillsCatalog {
             let Some(skill) = load_skill(&skill_path, source)? else {
                 continue;
             };
-            merged.insert(skill.normalized_name.clone(), skill);
+            let id = entry.file_name().to_string_lossy().into_owned();
+            let has_extra_files = skill_dir_has_extra_files(&entry.path());
+            entries.push(ManagedSkillEntry {
+                id,
+                source,
+                enabled: true,
+                effective: false,
+                overrides_builtin: false,
+                shadowed_by_workspace: false,
+                has_extra_files,
+                entry: skill,
+            });
         }
-        Ok(())
+        Ok(entries)
     }
+
+    fn managed_state_path(&self) -> PathBuf {
+        self.workspace.join(".nanobot").join("skills-state.json")
+    }
+}
+
+fn load_managed_state(path: &Path) -> Result<BTreeMap<String, ManagedSkillState>> {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Ok(BTreeMap::new());
+    };
+    let state = serde_json::from_str(&raw)?;
+    Ok(state)
+}
+
+fn skill_dir_has_extra_files(path: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .path()
+            .file_name()
+            .is_none_or(|name| name != OsStr::new("SKILL.md"))
+    })
 }
 
 pub fn builtin_skills_root() -> PathBuf {
