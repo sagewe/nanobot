@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -112,28 +112,32 @@ fn unique_skill_id(prefix: &str) -> String {
     )
 }
 
-struct TempBuiltinSkill {
-    path: PathBuf,
+struct BuiltinSkillsFixture {
+    dir: TempDir,
 }
 
-impl TempBuiltinSkill {
-    fn new(id: &str, content: &str) -> Self {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("skills")
-            .join(id);
-        if path.exists() {
-            std::fs::remove_dir_all(&path).expect("remove stale builtin skill");
+impl BuiltinSkillsFixture {
+    fn new() -> Self {
+        Self {
+            dir: tempdir().expect("builtin skills tempdir"),
         }
-        std::fs::create_dir_all(&path).expect("create builtin skill dir");
-        std::fs::write(path.join("SKILL.md"), content).expect("write builtin skill");
-        Self { path }
+    }
+
+    fn root(&self) -> &Path {
+        self.dir.path()
+    }
+
+    fn write_skill(&self, id: &str, content: &str) {
+        write_skill(self.root(), id, content);
     }
 }
 
-impl Drop for TempBuiltinSkill {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
+fn multiuser_state_with_builtin_root(builtin_root: &Path) -> (AppState, TempDir) {
+    let (state, dir) = multiuser_state();
+    (
+        state.with_builtin_skills_root(builtin_root.to_path_buf()),
+        dir,
+    )
 }
 
 #[derive(Clone)]
@@ -802,17 +806,18 @@ async fn change_password_endpoint_rotates_credentials_for_the_authenticated_user
 
 #[tokio::test]
 async fn skills_api_lists_builtin_and_workspace_entries_for_authenticated_user() {
+    let builtin = BuiltinSkillsFixture::new();
     let builtin_id = unique_skill_id("builtin-weather");
     let workspace_id = unique_skill_id("alice-weather");
     let other_workspace_id = unique_skill_id("bob-weather");
     let builtin_name = format!("Builtin Weather {builtin_id}");
     let workspace_name = format!("Alice Workspace Weather {workspace_id}");
-    let _builtin = TempBuiltinSkill::new(
+    builtin.write_skill(
         &builtin_id,
         &format!("---\nname: {builtin_name}\ndescription: builtin weather\n---\n\nBuiltin body\n"),
     );
 
-    let (state, dir) = multiuser_state();
+    let (state, dir) = multiuser_state_with_builtin_root(builtin.root());
     let store = ControlStore::new(dir.path()).expect("control store");
     let bob = store
         .create_user("bob", "Bob", Role::User, "password456")
@@ -915,13 +920,14 @@ async fn skills_api_toggles_workspace_state_in_single_user_mode_without_rewritin
 
 #[tokio::test]
 async fn skills_api_rejects_builtin_state_toggle_with_clear_client_error() {
+    let builtin = BuiltinSkillsFixture::new();
     let builtin_id = unique_skill_id("builtin-read-only");
-    let _builtin = TempBuiltinSkill::new(
+    builtin.write_skill(
         &builtin_id,
         "---\nname: builtin read only\ndescription: builtin skill\n---\n\nBuiltin body\n",
     );
     let dir = tempdir().expect("tempdir");
-    let app = agent_app(&dir, Vec::new()).await;
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
 
     let response = app
         .oneshot(
@@ -945,6 +951,277 @@ async fn skills_api_rejects_builtin_state_toggle_with_clear_client_error() {
             .as_str()
             .unwrap_or_default()
             .contains("read-only")
+    );
+}
+
+#[tokio::test]
+async fn skills_api_returns_detail_for_builtin_and_workspace_sources() {
+    let builtin = BuiltinSkillsFixture::new();
+    let builtin_id = unique_skill_id("builtin-detail");
+    let workspace_id = unique_skill_id("workspace-detail");
+    builtin.write_skill(
+        &builtin_id,
+        "---\nname: builtin detail\ndescription: builtin detail skill\n---\n\nBuiltin detail body\n",
+    );
+    let dir = tempdir().expect("tempdir");
+    let workspace_raw = "---\nname: workspace detail\ndescription: workspace detail skill\n---\n\nWorkspace detail body\n";
+    write_skill(
+        dir.path().join("skills").as_path(),
+        &workspace_id,
+        workspace_raw,
+    );
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
+
+    let (builtin_status, builtin_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/skills/builtin/{builtin_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(builtin_status, StatusCode::OK);
+    assert_eq!(builtin_payload["id"], json!(builtin_id));
+    assert_eq!(builtin_payload["readOnly"], json!(true));
+    assert_eq!(
+        builtin_payload["rawContent"],
+        json!(
+            "---\nname: builtin detail\ndescription: builtin detail skill\n---\n\nBuiltin detail body\n"
+        )
+    );
+
+    let (workspace_status, workspace_payload) = json_response(
+        app,
+        Request::builder()
+            .uri(format!("/api/skills/workspace/{workspace_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(workspace_status, StatusCode::OK);
+    assert_eq!(workspace_payload["id"], json!(workspace_id));
+    assert_eq!(workspace_payload["readOnly"], json!(false));
+    assert_eq!(workspace_payload["rawContent"], json!(workspace_raw));
+}
+
+#[tokio::test]
+async fn skills_api_creates_updates_and_deletes_workspace_skills_preserving_raw_content() {
+    let builtin = BuiltinSkillsFixture::new();
+    let dir = tempdir().expect("tempdir");
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
+    let created_raw =
+        "---\nname: created skill\ndescription: created skill description\n---\n\nCreated body\n";
+    let updated_raw =
+        "---\nname: created skill\ndescription: updated description\n---\n\nUpdated body\n";
+
+    let (create_status, create_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/skills/workspace")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "id": "created-skill",
+                    "rawContent": created_raw,
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::OK);
+    assert_eq!(create_payload["id"], json!("created-skill"));
+    assert_eq!(create_payload["rawContent"], json!(created_raw));
+    assert_eq!(
+        std::fs::read_to_string(
+            dir.path()
+                .join("skills")
+                .join("created-skill")
+                .join("SKILL.md"),
+        )
+        .expect("created skill on disk"),
+        created_raw
+    );
+
+    let (update_status, update_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri("/api/skills/workspace/created-skill")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "rawContent": updated_raw,
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(update_status, StatusCode::OK);
+    assert_eq!(update_payload["rawContent"], json!(updated_raw));
+    assert_eq!(
+        std::fs::read_to_string(
+            dir.path()
+                .join("skills")
+                .join("created-skill")
+                .join("SKILL.md"),
+        )
+        .expect("updated skill on disk"),
+        updated_raw
+    );
+
+    let (delete_status, delete_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("DELETE")
+            .uri("/api/skills/workspace/created-skill")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(delete_status, StatusCode::OK);
+    assert_eq!(delete_payload["ok"], json!(true));
+    assert!(!dir.path().join("skills").join("created-skill").exists());
+
+    let (missing_status, _) = json_response(
+        app,
+        Request::builder()
+            .uri("/api/skills/workspace/created-skill")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(missing_status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn skills_api_returns_successful_fallback_detail_when_saved_skill_cannot_be_rediscovered() {
+    let builtin = BuiltinSkillsFixture::new();
+    let dir = tempdir().expect("tempdir");
+    write_skill(
+        dir.path().join("skills").as_path(),
+        "odd-skill",
+        "---\nname: valid skill\ndescription: valid description\n---\n\nValid body\n",
+    );
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
+    let invalid_raw = "---\nname: !!!\ndescription: odd description\n---\n\nOdd body\n";
+
+    let (status, payload) = json_response(
+        app,
+        Request::builder()
+            .method("PUT")
+            .uri("/api/skills/workspace/odd-skill")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "rawContent": invalid_raw,
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["id"], json!("odd-skill"));
+    assert_eq!(payload["rawContent"], json!(invalid_raw));
+    assert_eq!(payload["normalizedName"], json!("odd-skill"));
+    assert_eq!(
+        payload["parseWarnings"][0],
+        json!("saved raw content could not be rediscovered as a managed skill")
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("skills").join("odd-skill").join("SKILL.md"),)
+            .expect("invalid saved skill on disk"),
+        invalid_raw
+    );
+}
+
+#[tokio::test]
+async fn skills_api_preserves_extended_state_fields_when_toggling_workspace_skill() {
+    let builtin = BuiltinSkillsFixture::new();
+    let dir = tempdir().expect("tempdir");
+    write_skill(
+        dir.path().join("skills").as_path(),
+        "stateful-skill",
+        "---\nname: stateful skill\ndescription: stateful description\n---\n\nStateful body\n",
+    );
+    std::fs::create_dir_all(dir.path().join(".nanobot")).expect("nanobot dir");
+    std::fs::write(
+        dir.path().join(".nanobot").join("skills-state.json"),
+        r#"{
+  "stateful-skill": {"enabled": true, "future": 123},
+  "other-skill": {"enabled": true, "note": "keep"}
+}"#,
+    )
+    .expect("write extended state");
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
+
+    let (status, payload) = json_response(
+        app,
+        Request::builder()
+            .method("PUT")
+            .uri("/api/skills/workspace/stateful-skill/state")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"enabled":false}"#))
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["enabled"], json!(false));
+    let state_json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join(".nanobot").join("skills-state.json"))
+            .expect("state file"),
+    )
+    .expect("state json");
+    assert_eq!(state_json["stateful-skill"]["enabled"], json!(false));
+    assert_eq!(state_json["stateful-skill"]["future"], json!(123));
+    assert_eq!(state_json["other-skill"]["note"], json!("keep"));
+}
+
+#[tokio::test]
+async fn skills_api_rejects_malformed_state_file_without_overwriting_it() {
+    let builtin = BuiltinSkillsFixture::new();
+    let dir = tempdir().expect("tempdir");
+    write_skill(
+        dir.path().join("skills").as_path(),
+        "broken-state-skill",
+        "---\nname: broken state skill\ndescription: broken state description\n---\n\nBody\n",
+    );
+    std::fs::create_dir_all(dir.path().join(".nanobot")).expect("nanobot dir");
+    let malformed = "{not-json";
+    std::fs::write(
+        dir.path().join(".nanobot").join("skills-state.json"),
+        malformed,
+    )
+    .expect("write malformed state");
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
+
+    let (status, payload) = json_response(
+        app,
+        Request::builder()
+            .method("PUT")
+            .uri("/api/skills/workspace/broken-state-skill/state")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"enabled":false}"#))
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("malformed")
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".nanobot").join("skills-state.json"))
+            .expect("malformed state after request"),
+        malformed
     );
 }
 
@@ -1204,6 +1481,31 @@ async fn agent_app(dir: &TempDir, responses: Vec<LlmResponse>) -> Router {
     .await
     .expect("agent");
     web::build_router(AppState::new(Arc::new(AgentChatService::new(agent)), None))
+}
+
+async fn agent_app_with_builtin_root(
+    dir: &TempDir,
+    builtin_root: &Path,
+    responses: Vec<LlmResponse>,
+) -> Router {
+    let provider = mock_provider(responses);
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::new(
+        bus,
+        provider,
+        dir.path().to_path_buf(),
+        "mock-model".to_string(),
+        5,
+        10,
+        false,
+        WebToolsConfig::default(),
+    )
+    .await
+    .expect("agent");
+    web::build_router(
+        AppState::new(Arc::new(AgentChatService::new(agent)), None)
+            .with_builtin_skills_root(builtin_root.to_path_buf()),
+    )
 }
 
 async fn agent_app_with_config(

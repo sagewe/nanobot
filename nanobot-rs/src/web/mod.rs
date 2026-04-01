@@ -31,6 +31,7 @@ use crate::presentation::render_web_html;
 use crate::session::{
     Session, SessionGroupSummary, SessionMessage, SessionSummary, split_session_key,
 };
+use crate::skills::SkillsCatalog;
 
 const WEB_NAMESPACE: &str = "web";
 
@@ -328,6 +329,7 @@ pub struct AppState {
     pub(crate) auth: Option<AuthService>,
     pub(crate) control: Option<ControlStore>,
     pub(crate) runtimes: Option<RuntimeManager>,
+    pub(crate) builtin_skills_root: Option<PathBuf>,
 }
 
 impl AppState {
@@ -338,6 +340,7 @@ impl AppState {
             auth: None,
             control: None,
             runtimes: None,
+            builtin_skills_root: None,
         }
     }
 
@@ -348,7 +351,13 @@ impl AppState {
             auth: Some(AuthService::new(control.clone())),
             control: Some(control),
             runtimes: Some(runtimes),
+            builtin_skills_root: None,
         }
+    }
+
+    pub fn with_builtin_skills_root(mut self, builtin_skills_root: PathBuf) -> Self {
+        self.builtin_skills_root = Some(builtin_skills_root);
+        self
     }
 
     pub fn auth_service(&self) -> Option<&AuthService> {
@@ -412,6 +421,13 @@ impl AppState {
             .and_then(|chat| chat.workspace_path())
             .map(Path::to_path_buf)
             .ok_or_else(|| anyhow::anyhow!("workspace path is not configured"))
+    }
+
+    pub fn skills_catalog(&self, workspace: PathBuf) -> SkillsCatalog {
+        match &self.builtin_skills_root {
+            Some(builtin_root) => SkillsCatalog::with_builtin_root(workspace, builtin_root.clone()),
+            None => SkillsCatalog::new(workspace),
+        }
     }
 }
 
@@ -482,7 +498,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/skills/workspace", post(api::create_workspace_skill))
         .route(
             "/api/skills/workspace/{id}",
-            axum::routing::put(api::update_workspace_skill).delete(api::delete_workspace_skill),
+            get(api::get_workspace_skill)
+                .put(api::update_workspace_skill)
+                .delete(api::delete_workspace_skill),
         )
         .route(
             "/api/skills/workspace/{id}/state",
