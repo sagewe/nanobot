@@ -1,6 +1,24 @@
+use std::fs;
+
 use nanobot_rs::tools::{EditFileTool, ExecTool, ListDirTool, ReadFileTool, Tool};
 use serde_json::json;
 use tempfile::tempdir;
+
+fn write_skill(root: &std::path::Path, name: &str, content: &str) {
+    let skill_dir = root.join(name);
+    fs::create_dir_all(&skill_dir).expect("create skill dir");
+    fs::write(skill_dir.join("SKILL.md"), content).expect("write skill");
+}
+
+const WEATHER_SKILL: &str = r#"---
+name: weather
+description: weather helper
+---
+
+# Weather
+
+Check rain forecasts carefully.
+"#;
 
 #[tokio::test]
 async fn read_file_supports_offset_and_limit() {
@@ -74,4 +92,44 @@ async fn exec_runs_safe_commands() {
     let tool = ExecTool::new(dir.path().to_path_buf(), 5, false);
     let result = tool.execute(json!({"command": "echo hello"})).await;
     assert!(result.contains("hello"));
+}
+
+#[tokio::test]
+async fn read_file_allows_builtin_skill_root_when_workspace_is_restricted() {
+    let dir = tempdir().expect("tempdir");
+    let workspace = dir.path().join("workspace");
+    let builtin_root = dir.path().join("builtin");
+    fs::create_dir_all(&workspace).expect("workspace");
+    write_skill(&builtin_root, "weather", WEATHER_SKILL);
+
+    let tool = ReadFileTool::with_additional_roots(
+        workspace.clone(),
+        true,
+        vec![builtin_root.clone()],
+    );
+    let result = tool
+        .execute(json!({"path": builtin_root.join("weather").join("SKILL.md").display().to_string()}))
+        .await;
+
+    assert!(result.contains("Weather"));
+}
+
+#[tokio::test]
+async fn list_dir_allows_builtin_skill_root_when_workspace_is_restricted() {
+    let dir = tempdir().expect("tempdir");
+    let workspace = dir.path().join("workspace");
+    let builtin_root = dir.path().join("builtin");
+    fs::create_dir_all(&workspace).expect("workspace");
+    write_skill(&builtin_root, "weather", WEATHER_SKILL);
+
+    let tool = ListDirTool::with_additional_roots(
+        workspace.clone(),
+        true,
+        vec![builtin_root.clone()],
+    );
+    let result = tool
+        .execute(json!({"path": builtin_root.display().to_string(), "recursive": true}))
+        .await;
+
+    assert!(result.contains("weather/SKILL.md"));
 }

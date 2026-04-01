@@ -20,7 +20,7 @@ use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
 use crate::providers::{LlmProvider, ProviderRequestDescriptor};
 use crate::session::{Session, SessionGroupSummary, SessionMessage, SessionStore, SessionSummary};
-use crate::skills::{SkillSelector, SkillsCatalog};
+use crate::skills::{SkillSelector, SkillsCatalog, builtin_skills_root};
 use crate::tools::{
     EditFileTool, ExecTool, ListDirTool, ReadFileTool, ToolContext, ToolRegistry, WebFetchTool,
     WebSearchTool, WriteFileTool, assistant_message_with_extra, build_default_tools,
@@ -578,10 +578,12 @@ impl SubagentManager {
         request: ProviderRequestDescriptor,
     ) {
         let tools = ToolRegistry::new();
+        let builtin_root = builtin_skills_root();
         tools
-            .register(ReadFileTool::new(
+            .register(ReadFileTool::with_additional_roots(
                 self.workspace.clone(),
                 self.restrict_to_workspace,
+                vec![builtin_root.clone()],
             ))
             .await;
         tools
@@ -597,9 +599,10 @@ impl SubagentManager {
             ))
             .await;
         tools
-            .register(ListDirTool::new(
+            .register(ListDirTool::with_additional_roots(
                 self.workspace.clone(),
                 self.restrict_to_workspace,
+                vec![builtin_root],
             ))
             .await;
         tools

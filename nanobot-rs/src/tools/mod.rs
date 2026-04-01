@@ -20,6 +20,7 @@ use crate::config::WebToolsConfig;
 use crate::cron::{CronSchedule, CronService};
 use crate::providers::ProviderRequestDescriptor;
 use crate::security::network::contains_internal_url;
+use crate::skills::builtin_skills_root;
 
 pub use web::{WebFetchTool, WebSearchTool};
 
@@ -156,6 +157,15 @@ impl ToolRegistry {
 }
 
 fn resolve_path(path: &str, workspace: &Path, restrict: bool) -> anyhow::Result<PathBuf> {
+    resolve_path_with_roots(path, workspace, restrict, &[])
+}
+
+fn resolve_path_with_roots(
+    path: &str,
+    workspace: &Path,
+    restrict: bool,
+    extra_roots: &[PathBuf],
+) -> anyhow::Result<PathBuf> {
     let input = PathBuf::from(path);
     let path = if input.is_absolute() {
         input
@@ -163,7 +173,10 @@ fn resolve_path(path: &str, workspace: &Path, restrict: bool) -> anyhow::Result<
         workspace.join(input)
     };
     let resolved = path.canonicalize().unwrap_or(path.clone());
-    if restrict && !resolved.starts_with(workspace) {
+    if restrict
+        && !resolved.starts_with(workspace)
+        && !extra_roots.iter().any(|root| resolved.starts_with(root))
+    {
         anyhow::bail!("Path {path:?} is outside workspace {}", workspace.display());
     }
     Ok(resolved)
@@ -172,13 +185,26 @@ fn resolve_path(path: &str, workspace: &Path, restrict: bool) -> anyhow::Result<
 pub struct ReadFileTool {
     workspace: PathBuf,
     restrict: bool,
+    extra_read_roots: Vec<PathBuf>,
 }
 
 impl ReadFileTool {
     pub fn new(workspace: PathBuf, restrict: bool) -> Self {
+        Self::with_additional_roots(workspace, restrict, Vec::new())
+    }
+
+    pub fn with_additional_roots(
+        workspace: PathBuf,
+        restrict: bool,
+        extra_read_roots: Vec<PathBuf>,
+    ) -> Self {
         Self {
             workspace,
             restrict,
+            extra_read_roots: extra_read_roots
+                .into_iter()
+                .map(|root| root.canonicalize().unwrap_or(root))
+                .collect(),
         }
     }
 }
@@ -207,7 +233,12 @@ impl Tool for ReadFileTool {
         let path = args.get("path").and_then(Value::as_str).unwrap_or_default();
         let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(1) as usize;
         let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(2000) as usize;
-        match resolve_path(path, &self.workspace, self.restrict) {
+        match resolve_path_with_roots(
+            path,
+            &self.workspace,
+            self.restrict,
+            &self.extra_read_roots,
+        ) {
             Ok(path) => match std::fs::read_to_string(&path) {
                 Ok(content) => {
                     let lines = content.lines().collect::<Vec<_>>();
@@ -440,13 +471,26 @@ impl Tool for EditFileTool {
 pub struct ListDirTool {
     workspace: PathBuf,
     restrict: bool,
+    extra_read_roots: Vec<PathBuf>,
 }
 
 impl ListDirTool {
     pub fn new(workspace: PathBuf, restrict: bool) -> Self {
+        Self::with_additional_roots(workspace, restrict, Vec::new())
+    }
+
+    pub fn with_additional_roots(
+        workspace: PathBuf,
+        restrict: bool,
+        extra_read_roots: Vec<PathBuf>,
+    ) -> Self {
         Self {
             workspace,
             restrict,
+            extra_read_roots: extra_read_roots
+                .into_iter()
+                .map(|root| root.canonicalize().unwrap_or(root))
+                .collect(),
         }
     }
 }
@@ -491,7 +535,12 @@ impl Tool for ListDirTool {
             .get("max_entries")
             .and_then(Value::as_u64)
             .unwrap_or(200) as usize;
-        let resolved = match resolve_path(path, &self.workspace, self.restrict) {
+        let resolved = match resolve_path_with_roots(
+            path,
+            &self.workspace,
+            self.restrict,
+            &self.extra_read_roots,
+        ) {
             Ok(path) => path,
             Err(error) => return format!("Error: {error}"),
         };
@@ -888,8 +937,13 @@ pub async fn build_default_tools(
     cron: Option<Arc<CronService>>,
 ) -> ToolRegistry {
     let registry = ToolRegistry::new();
+    let builtin_root = builtin_skills_root();
     registry
-        .register(ReadFileTool::new(workspace.clone(), restrict_to_workspace))
+        .register(ReadFileTool::with_additional_roots(
+            workspace.clone(),
+            restrict_to_workspace,
+            vec![builtin_root.clone()],
+        ))
         .await;
     registry
         .register(WriteFileTool::new(workspace.clone(), restrict_to_workspace))
@@ -898,7 +952,11 @@ pub async fn build_default_tools(
         .register(EditFileTool::new(workspace.clone(), restrict_to_workspace))
         .await;
     registry
-        .register(ListDirTool::new(workspace.clone(), restrict_to_workspace))
+        .register(ListDirTool::with_additional_roots(
+            workspace.clone(),
+            restrict_to_workspace,
+            vec![builtin_root],
+        ))
         .await;
     registry
         .register(ExecTool::new(
