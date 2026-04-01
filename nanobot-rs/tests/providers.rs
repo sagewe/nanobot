@@ -6,7 +6,7 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use nanobot_rs::config::Config;
+use nanobot_rs::config::{Config, FeishuConfig};
 use nanobot_rs::config::load_config;
 use nanobot_rs::config::save_config;
 use nanobot_rs::providers::{
@@ -119,6 +119,67 @@ fn config_defaults_expose_the_new_default_profile_shape() {
     );
     assert!(value.pointer("/channels/weixin/api_base").is_none());
     assert!(value.pointer("/channels/weixin/cdn_base").is_none());
+    assert_eq!(
+        value
+            .pointer("/channels/feishu/enabled")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        value
+            .pointer("/channels/feishu/apiBase")
+            .and_then(Value::as_str),
+        Some("https://open.feishu.cn/open-apis")
+    );
+    assert_eq!(
+        value
+            .pointer("/channels/feishu/wsBase")
+            .and_then(Value::as_str),
+        Some("wss://open.feishu.cn/open-apis/ws")
+    );
+    assert_eq!(
+        value
+            .pointer("/channels/feishu/reactEmoji")
+            .and_then(Value::as_str),
+        Some("THUMBSUP")
+    );
+    assert_eq!(
+        value
+            .pointer("/channels/feishu/groupPolicy")
+            .and_then(Value::as_str),
+        Some("mention")
+    );
+    assert_eq!(
+        value
+            .pointer("/channels/feishu/replyToMessage")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert!(value.pointer("/channels/feishu/app_id").is_none());
+}
+
+#[test]
+fn sparse_feishu_config_keeps_legacy_shape_and_fills_new_defaults() {
+    let value = serde_json::json!({
+        "enabled": true,
+        "appId": "cli_legacy",
+        "appSecret": "secret",
+        "apiBase": "https://open.feishu.cn/open-apis",
+        "allowFrom": ["*"]
+    });
+
+    let config: FeishuConfig = serde_json::from_value(value).expect("legacy config");
+    assert!(config.enabled);
+    assert_eq!(config.app_id, "cli_legacy");
+    assert_eq!(config.app_secret, "secret");
+    assert_eq!(config.api_base, "https://open.feishu.cn/open-apis");
+    assert_eq!(config.allow_from, vec!["*".to_string()]);
+    assert_eq!(config.ws_base, "wss://open.feishu.cn/open-apis/ws");
+    assert_eq!(config.encrypt_key, "");
+    assert_eq!(config.verification_token, "");
+    assert_eq!(config.react_emoji, "THUMBSUP");
+    assert_eq!(config.group_policy, "mention");
+    assert!(!config.reply_to_message);
 }
 
 #[test]

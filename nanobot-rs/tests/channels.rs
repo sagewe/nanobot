@@ -10,8 +10,8 @@ use axum::{Json, Router};
 use chrono::Utc;
 use nanobot_rs::bus::{MessageBus, OutboundMessage};
 use nanobot_rs::channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinChannel};
-use nanobot_rs::channels::{Channel, ChannelManager, TelegramChannel};
-use nanobot_rs::config::{Config, TelegramConfig, WeixinConfig};
+use nanobot_rs::channels::{Channel, ChannelManager, FeishuChannel, TelegramChannel};
+use nanobot_rs::config::{Config, FeishuConfig, TelegramConfig, WeixinConfig};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
@@ -199,6 +199,66 @@ async fn channel_manager_registers_weixin_when_enabled() {
 
     let manager = ChannelManager::new(&config, MessageBus::new(32));
     assert!(manager.enabled_channels().contains(&"weixin".to_string()));
+}
+
+#[tokio::test]
+async fn channel_manager_registers_feishu_when_enabled() {
+    let mut config = Config::default();
+    config.channels.feishu.enabled = true;
+    config.channels.feishu.app_id = "cli_a1".to_string();
+    config.channels.feishu.app_secret = "secret".to_string();
+
+    let manager = ChannelManager::new(&config, MessageBus::new(32));
+    assert!(manager.enabled_channels().contains(&"feishu".to_string()));
+}
+
+fn base_feishu_config() -> FeishuConfig {
+    FeishuConfig {
+        enabled: true,
+        app_id: "cli_a1".to_string(),
+        app_secret: "secret".to_string(),
+        api_base: "https://open.feishu.cn/open-apis".to_string(),
+        ws_base: "wss://open.feishu.cn/open-apis/ws".to_string(),
+        encrypt_key: String::new(),
+        verification_token: String::new(),
+        allow_from: vec!["*".to_string()],
+        react_emoji: "THUMBSUP".to_string(),
+        group_policy: "mention".to_string(),
+        reply_to_message: false,
+    }
+}
+
+#[tokio::test]
+async fn feishu_channel_start_requires_credentials() {
+    let bus = MessageBus::new(32);
+    let mut config = base_feishu_config();
+    config.app_id.clear();
+    let channel = FeishuChannel::new(config, bus);
+
+    let error = channel.start().await.expect_err("missing credentials");
+    assert!(error.to_string().contains("feishu"));
+}
+
+#[tokio::test]
+async fn feishu_channel_start_rejects_malformed_api_base() {
+    let bus = MessageBus::new(32);
+    let mut config = base_feishu_config();
+    config.api_base = "not a url".to_string();
+    let channel = FeishuChannel::new(config, bus);
+
+    let error = channel.start().await.expect_err("bad api base");
+    assert!(error.to_string().contains("api"));
+}
+
+#[tokio::test]
+async fn feishu_channel_start_rejects_malformed_ws_base() {
+    let bus = MessageBus::new(32);
+    let mut config = base_feishu_config();
+    config.ws_base = "still not a url".to_string();
+    let channel = FeishuChannel::new(config, bus);
+
+    let error = channel.start().await.expect_err("bad ws base");
+    assert!(error.to_string().contains("ws"));
 }
 
 #[tokio::test]
