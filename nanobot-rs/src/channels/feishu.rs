@@ -1,21 +1,32 @@
 use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use anyhow::{Result, bail, ensure};
 use regex::Regex;
 use serde_json::{Value, json};
+use tokio::sync::Mutex;
 use url::Url;
 
 use crate::bus::{MessageBus, OutboundMessage};
 use crate::channels::Channel;
 use crate::config::FeishuConfig;
 
+#[derive(Clone, Debug)]
+struct FeishuToken {
+    token: String,
+    expire_at_unix: i64,
+}
+
 pub struct FeishuChannel {
     config: FeishuConfig,
     #[allow(dead_code)]
     bus: MessageBus,
+    client: reqwest::Client,
     running: AtomicBool,
+    token: Arc<Mutex<Option<FeishuToken>>>,
+    bot_open_id: Arc<Mutex<Option<String>>>,
 }
 
 impl FeishuChannel {
@@ -23,7 +34,10 @@ impl FeishuChannel {
         Self {
             config,
             bus,
+            client: reqwest::Client::new(),
             running: AtomicBool::new(false),
+            token: Arc::new(Mutex::new(None)),
+            bot_open_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -47,6 +61,147 @@ impl FeishuChannel {
             "invalid feishu ws_base scheme"
         );
 
+        Ok(())
+    }
+
+    async fn cached_token(&self) -> Option<String> {
+        let now = chrono::Utc::now().timestamp();
+        self.token
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|state| (state.expire_at_unix > now).then(|| state.token.clone()))
+    }
+
+    async fn tenant_access_token(&self) -> Result<String> {
+        if let Some(token) = self.cached_token().await {
+            return Ok(token);
+        }
+
+        let url = format!(
+            "{}/auth/v3/tenant_access_token/internal",
+            self.config.api_base.trim_end_matches('/')
+        );
+        let payload: Value = self
+            .client
+            .post(url)
+            .json(&json!({
+                "app_id": self.config.app_id,
+                "app_secret": self.config.app_secret,
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let code = payload.get("code").and_then(Value::as_i64).unwrap_or(-1);
+        ensure!(code == 0, "feishu auth failed");
+
+        let token = payload
+            .get("tenant_access_token")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing tenant_access_token"))?
+            .to_string();
+        let expire = payload
+            .get("expire")
+            .and_then(Value::as_i64)
+            .unwrap_or(7200)
+            .max(120);
+        *self.token.lock().await = Some(FeishuToken {
+            token: token.clone(),
+            expire_at_unix: chrono::Utc::now().timestamp() + expire - 60,
+        });
+        Ok(token)
+    }
+
+    async fn bot_open_id(&self) -> Result<String> {
+        if let Some(open_id) = self.bot_open_id.lock().await.clone() {
+            return Ok(open_id);
+        }
+
+        let access_token = self.tenant_access_token().await?;
+        let url = format!("{}/bot/v3/info", self.config.api_base.trim_end_matches('/'));
+        let payload: Value = self
+            .client
+            .get(url)
+            .bearer_auth(access_token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let code = payload.get("code").and_then(Value::as_i64).unwrap_or(-1);
+        ensure!(code == 0, "feishu bot info failed");
+        let open_id = payload
+            .pointer("/bot/open_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing feishu bot open_id"))?
+            .to_string();
+        *self.bot_open_id.lock().await = Some(open_id.clone());
+        Ok(open_id)
+    }
+
+    async fn create_message(
+        &self,
+        access_token: &str,
+        receive_id_type: &str,
+        receive_id: &str,
+        msg_type: &str,
+        content: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/im/v1/messages?receive_id_type={receive_id_type}",
+            self.config.api_base.trim_end_matches('/')
+        );
+        let payload: Value = self
+            .client
+            .post(url)
+            .bearer_auth(access_token)
+            .json(&json!({
+                "receive_id": receive_id,
+                "msg_type": msg_type,
+                "content": content,
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        ensure!(
+            payload.get("code").and_then(Value::as_i64).unwrap_or(-1) == 0,
+            "feishu create message failed"
+        );
+        Ok(())
+    }
+
+    async fn reply_message(
+        &self,
+        access_token: &str,
+        message_id: &str,
+        msg_type: &str,
+        content: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/im/v1/messages/{message_id}/reply",
+            self.config.api_base.trim_end_matches('/')
+        );
+        let payload: Value = self
+            .client
+            .post(url)
+            .bearer_auth(access_token)
+            .json(&json!({
+                "msg_type": msg_type,
+                "content": content,
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        ensure!(
+            payload.get("code").and_then(Value::as_i64).unwrap_or(-1) == 0,
+            "feishu reply failed"
+        );
         Ok(())
     }
 }
@@ -523,6 +678,7 @@ impl Channel for FeishuChannel {
 
     async fn start(&self) -> Result<()> {
         self.validate_startup_config()?;
+        let _ = self.bot_open_id().await?;
         self.running.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -535,6 +691,50 @@ impl Channel for FeishuChannel {
     async fn send(&self, msg: OutboundMessage) -> Result<()> {
         if msg.chat_id.trim().is_empty() {
             bail!("feishu chat_id is required");
+        }
+
+        let access_token = self.tenant_access_token().await?;
+        let _ = self.bot_open_id().await?;
+        let receive_id_type = resolve_receive_id_type(&msg.chat_id);
+
+        let payloads: Vec<(&'static str, String)> = match detect_message_format(&msg.content) {
+            FeishuMessageFormat::Text => vec![(
+                "text",
+                json!({
+                    "text": msg.content.trim(),
+                })
+                .to_string(),
+            )],
+            FeishuMessageFormat::Post => vec![("post", render_post_body(&msg.content))],
+            FeishuMessageFormat::Interactive => render_interactive_cards(&msg.content)
+                .into_iter()
+                .map(|card| ("interactive", card))
+                .collect(),
+        };
+
+        let reply_message_id = if self.config.reply_to_message
+            && !msg.metadata.get("_progress").and_then(Value::as_bool).unwrap_or(false)
+            && !msg.metadata.get("_tool_hint").and_then(Value::as_bool).unwrap_or(false)
+        {
+            msg.metadata.get("message_id").and_then(Value::as_str)
+        } else {
+            None
+        };
+
+        for (index, (msg_type, content)) in payloads.iter().enumerate() {
+            let use_reply = index == 0 && reply_message_id.is_some();
+            if use_reply {
+                let message_id = reply_message_id.expect("reply id");
+                if self
+                    .reply_message(&access_token, message_id, msg_type, content)
+                    .await
+                    .is_ok()
+                {
+                    continue;
+                }
+            }
+            self.create_message(&access_token, receive_id_type, &msg.chat_id, msg_type, content)
+                .await?;
         }
         Ok(())
     }
