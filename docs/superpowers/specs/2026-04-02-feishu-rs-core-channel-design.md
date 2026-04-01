@@ -124,7 +124,7 @@ The channel accepts:
 
 - direct messages from allowlisted senders
 - group messages when `groupPolicy = "open"`
-- group messages when `groupPolicy = "mention"` and the bot is mentioned
+- group messages when `groupPolicy = "mention"` and the bot is mentioned by `open_id`
 
 The channel ignores:
 
@@ -138,10 +138,10 @@ The channel ignores:
 For normal replies:
 
 - short plain text uses Feishu `text`
-- medium text with links but no complex markdown uses Feishu `post`
+- medium plain text or link-bearing text without complex markdown uses Feishu `post`
 - headings, code blocks, tables, lists, or long content use Feishu `interactive`
 
-When `replyToMessage = true`, the first outbound response for a turn attempts Feishu's reply API using the inbound `message_id`. If that fails, the channel falls back to ordinary message creation.
+When `replyToMessage = true`, the first Feishu payload emitted from a single `send(OutboundMessage)` call attempts Feishu's reply API using the inbound `message_id`. If that fails, the channel falls back to ordinary message creation. Any additional payloads produced by the same `send()` call use ordinary message creation.
 
 Progress and tool-hint filtering continues to use the existing presentation-layer visibility rules already applied to external channels.
 
@@ -156,6 +156,7 @@ Progress and tool-hint filtering continues to use the existing presentation-laye
   - move from outbound-only sender to full long-connection channel
   - keep Feishu-specific helpers private to this module
 - Modify `nanobot-rs/src/channels/mod.rs`
+  - inject `MessageBus` into Feishu the same way `telegram` and `wecom` already do for inbound-capable channels
   - keep registration and re-export glue only
 - Modify `nanobot-rs/tests/channels.rs`
   - cover long-connection behavior, filtering, reply routing, and outbound format selection
@@ -165,6 +166,16 @@ Progress and tool-hint filtering continues to use the existing presentation-laye
   - update Feishu capability and config docs to match actual Rust behavior
 
 No bus or public channel trait redesign is needed for this slice.
+
+### Channel Wiring
+
+`FeishuChannel` becomes bus-aware. The concrete constructor path is:
+
+- `ChannelManager::new(config, bus)` passes `bus.clone()` into `FeishuChannelHandle::new(...)`
+- `FeishuChannelHandle::new(config, bus)` stores a `FeishuChannel::new(config, bus)`
+- `FeishuChannel` publishes supported inbound events directly to `MessageBus`
+
+This keeps the current public `Channel` trait unchanged and follows the same dependency direction already used by other inbound channels.
 
 ### Internal Structure In `feishu.rs`
 
@@ -188,8 +199,9 @@ The module may remain one file for this slice if it stays readable. If it grows 
 1. `ChannelManager` creates `FeishuChannelHandle`.
 2. `start()` validates required config.
 3. The channel authenticates or waits until it needs a token.
-4. The channel opens a Feishu long connection.
-5. The long-connection loop receives event frames and dispatches supported message events.
+4. The channel fetches and caches the bot's own `open_id` through the Feishu bot-info API.
+5. The channel opens a Feishu long connection.
+6. The long-connection loop receives event frames and dispatches supported message events.
 
 ### Inbound Flow
 
@@ -210,7 +222,7 @@ The module may remain one file for this slice if it stays readable. If it grows 
 4. Add the configured reaction emoji on a best-effort basis.
 5. Convert supported content into agent input:
    - `text` -> plain text
-   - `post` -> extracted text
+   - `post` -> normalized plain text
 6. Build `InboundMessage` with:
    - `channel = "feishu"`
    - `sender_id = sender open_id`
@@ -223,12 +235,85 @@ The module may remain one file for this slice if it stays readable. If it grows 
 
 1. Existing agent loop emits `OutboundMessage`.
 2. `send()` checks presentation filtering.
-3. The channel determines the target id type:
-   - `chat_id` for group sessions and direct sessions keyed by explicit chat ids
-   - `open_id` for direct replies keyed by sender open id
+3. The channel determines the target id type from `msg.chat_id` only:
+   - values starting with `ou_` use `receive_id_type = "open_id"`
+   - all other values use `receive_id_type = "chat_id"`
 4. The channel chooses `text`, `post`, or `interactive` based on content complexity.
 5. If `replyToMessage` and `metadata.message_id` are present, try the reply API first.
 6. If reply fails or does not apply, send via `im/v1/messages`.
+
+### Outbound Target Routing
+
+Outbound routing is intentionally prefix-based so it remains deterministic with the current `OutboundMessage` shape:
+
+| `msg.chat_id` form | `receive_id_type` | Expected source |
+|--------------------|-------------------|-----------------|
+| starts with `ou_` | `open_id` | direct-message session keyed by sender open id |
+| anything else | `chat_id` | group chat, explicit Feishu chat id, or manually supplied target |
+
+This matches the inbound normalization rule for direct messages and avoids adding another target field to `OutboundMessage` in this slice.
+
+### Reply Routing
+
+`replyToMessage` is scoped to one `send(OutboundMessage)` invocation, not to an agent turn across multiple bus messages.
+
+Rules:
+
+- if `replyToMessage = false`, never call Feishu reply API
+- if `replyToMessage = true` but `metadata.message_id` is missing, never call Feishu reply API
+- if `metadata._progress = true` or `metadata._tool_hint = true`, never call Feishu reply API
+- otherwise, only the first Feishu payload produced during that `send()` call attempts the reply API
+- if the reply API call fails, retry that same payload through normal create-message send
+- all later payloads produced by the same `send()` call skip reply API and use normal create-message send
+
+## Outbound Format Selection
+
+Message format choice is deterministic and testable:
+
+| Condition | Format |
+|----------|--------|
+| Trimmed content length `<= 200`, no markdown links, no fenced code blocks, no ATX headings, no markdown table header+separator, no unordered/ordered list markers, no bold/italic/strikethrough markers | `text` |
+| Trimmed content length `<= 2000`, no fenced code blocks, no ATX headings, no markdown table header+separator, no unordered/ordered list markers, no bold/italic/strikethrough markers | `post` |
+| Anything else | `interactive` |
+
+Concrete pattern rules:
+
+- fenced code block: contains `` ``` ``
+- ATX heading: line starts with `#` through `######` plus a space
+- markdown table: header row plus separator row like `|---|`
+- unordered list: line starts with optional spaces then `-`, `*`, or `+` plus a space
+- ordered list: line starts with optional spaces then `<digits>. `
+- style markers: `**bold**`, `__bold__`, `*italic*`, or `~~strike~~`
+- markdown link: `[text](https://...)` or `[text](http://...)`
+
+### `post` Rendering
+
+`post` output follows the Python channel behavior closely:
+
+- split content by line into paragraphs
+- convert markdown links into Feishu `a` elements
+- keep all non-link text as `text` elements
+- wrap the result as a `zh_cn` post body
+
+### `interactive` Rendering
+
+`interactive` output uses a card payload with:
+
+```json
+{
+  "config": { "wide_screen_mode": true },
+  "elements": []
+}
+```
+
+Element rules:
+
+- plain blocks become `markdown` elements
+- headings become `div` elements whose `text` uses `lark_md` with bold display text
+- markdown tables are converted into Feishu `table` elements
+- one card may contain at most one table; if multiple tables are present, split into multiple card messages
+
+This is the exact rendering target for tests in this slice.
 
 ## Parsing Rules
 
@@ -243,7 +328,17 @@ Feishu follows the security behavior already documented elsewhere in the repo:
 ### Group Policy
 
 - `open`: accept all supported group messages
-- `mention`: accept only when the message explicitly mentions the bot or uses `@_all`
+- `mention`: accept only when the raw content contains `@_all` or the event mentions list contains an entry whose `id.open_id` matches the cached bot `open_id`
+
+The bot identity source is deterministic:
+
+- fetch Feishu bot info during channel startup and cache `bot_open_id`
+- compare each group-message mention against `bot_open_id`
+- if `bot_open_id` is unavailable, `mention` mode rejects group messages and logs the reason
+
+Example match rule:
+
+- mention payload `{"id":{"open_id":"ou_bot_123"}}` matches when cached `bot_open_id == "ou_bot_123"`
 
 ### Supported Inbound Message Types
 
@@ -252,12 +347,48 @@ Required in this slice:
 - `text`
 - `post`
 
+### `post` Inbound Normalization
+
+Inbound `post` messages flatten into plain text with fixed rules:
+
+- unwrap optional `{"post": ...}` envelope first
+- prefer locale blocks in this order: `zh_cn`, `en_us`, `ja_jp`, then the first object-valued locale block
+- if the chosen locale block has a `title`, prepend it as the first line
+- process paragraph rows in order
+- within one row:
+  - `text` -> append `text`
+  - `a` -> append display `text`, not the URL
+  - `at` -> append `@` plus `user_name`, defaulting to `@user`
+  - `code_block` -> append a fenced code block using its `language` and `text`
+  - `img` -> ignore in this slice
+- join row elements with a single space
+- join rows with newline characters
+- trim the final result
+
+This rule is the single source of truth for `post` inbound tests.
+
 Fallback behavior:
 
-- other message types become a compact placeholder such as `[image]`, `[file]`, or `[interactive]`
-- placeholders are only published when they still carry useful conversational meaning; otherwise the event may be ignored
+- `image` publishes `[image]`
+- `audio` publishes `[audio]`
+- `file` publishes `[file]`
+- `sticker` publishes `[sticker]`
+- `interactive`, `share_chat`, `share_user`, `share_calendar_event`, `system`, and `merge_forward` publish a bracketed placeholder using the Feishu message type name
+- unknown types are ignored
 
 This preserves a useful agent transcript without pulling media support into the plan.
+
+### Deduplication
+
+Deduplication is process-local and keyed by Feishu `message_id`.
+
+The channel keeps a bounded ordered cache of the most recent 1000 accepted message ids:
+
+- if an inbound event's `message_id` is already present, drop it
+- after accepting a new id, append it
+- when the cache grows beyond 1000 entries, evict the oldest id
+
+No persistence or time-based TTL is required for this slice.
 
 ## Failure Handling
 
