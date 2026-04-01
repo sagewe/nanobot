@@ -1,6 +1,6 @@
 use std::fs;
 
-use nanobot_rs::skills::SkillsCatalog;
+use nanobot_rs::skills::{SelectionReason, SkillSelector, SkillsCatalog};
 use tempfile::tempdir;
 
 fn write_skill(root: &std::path::Path, name: &str, content: &str) {
@@ -8,6 +8,49 @@ fn write_skill(root: &std::path::Path, name: &str, content: &str) {
     fs::create_dir_all(&skill_dir).expect("create skill dir");
     fs::write(skill_dir.join("SKILL.md"), content).expect("write skill");
 }
+
+const FRONTMATTER_ALWAYS: &str = r#"---
+name: guard
+description: always-on guardrails
+always: true
+---
+
+# Guard
+
+Always apply guardrails.
+"#;
+
+const FRONTMATTER_WEATHER: &str = r#"---
+name: weather
+description: check rain forecasts
+---
+
+# Weather
+
+Use weather tools to check rain and forecast conditions.
+"#;
+
+const FRONTMATTER_TMUX: &str = r#"---
+name: tmux
+description: manage tmux sessions
+metadata: '{"nanobot":{"keywords":["attach","session","terminal"]}}'
+---
+
+# Tmux
+
+Attach to sessions and inspect terminal state.
+"#;
+
+const UNAVAILABLE_DEPLOY_SKILL: &str = r#"---
+name: deploy
+description: deploy services
+metadata: '{"nanobot":{"requires":{"bins":["definitely_missing_binary_for_selector_test"]}}}'
+---
+
+# Deploy
+
+Roll out services safely.
+"#;
 
 #[test]
 fn catalog_prefers_workspace_skill_over_builtin_by_normalized_name() {
@@ -84,4 +127,54 @@ Inspect shell commands carefully.
     );
     assert!(skill.missing_requirements.contains("ENV: SKILL_TOKEN"));
     assert!(skill.body.contains("Inspect shell commands carefully."));
+}
+
+#[test]
+fn selector_orders_always_explicit_and_semantic_matches() {
+    let temp = tempdir().expect("tempdir");
+    let builtin_root = temp.path().join("builtin");
+    let workspace = temp.path().join("workspace");
+    write_skill(&builtin_root, "guard", FRONTMATTER_ALWAYS);
+    write_skill(&builtin_root, "weather", FRONTMATTER_WEATHER);
+    write_skill(&builtin_root, "tmux", FRONTMATTER_TMUX);
+
+    let catalog = SkillsCatalog::with_builtin_root(workspace, builtin_root)
+        .discover()
+        .expect("discover");
+    let selected = SkillSelector::default()
+        .select(
+            &catalog,
+            "Use $weather to check rain, then help me attach to a tmux session",
+        )
+        .expect("select");
+
+    let names = selected
+        .active
+        .iter()
+        .map(|skill| skill.entry.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["guard", "weather", "tmux"]);
+    assert_eq!(selected.active[0].reason, SelectionReason::Always);
+    assert_eq!(selected.active[1].reason, SelectionReason::Explicit);
+    assert_eq!(selected.active[2].reason, SelectionReason::Semantic);
+}
+
+#[test]
+fn selector_reports_unavailable_explicit_requests() {
+    let temp = tempdir().expect("tempdir");
+    let builtin_root = temp.path().join("builtin");
+    write_skill(&builtin_root, "deploy", UNAVAILABLE_DEPLOY_SKILL);
+
+    let catalog = SkillsCatalog::with_builtin_root(temp.path().join("workspace"), builtin_root)
+        .discover()
+        .expect("discover");
+    let selected = SkillSelector::default()
+        .select(&catalog, "Please use $deploy")
+        .expect("select");
+
+    assert!(selected.active.is_empty());
+    assert_eq!(selected.requested_unavailable.len(), 1);
+    assert!(selected
+        .render_requested_status()
+        .contains("CLI: definitely_missing_binary_for_selector_test"));
 }

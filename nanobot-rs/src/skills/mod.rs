@@ -1,10 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use regex::Regex;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -39,6 +40,7 @@ pub struct SkillEntry {
     pub metadata: SkillMetadata,
     pub available: bool,
     pub missing_requirements: String,
+    pub search_text: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -56,6 +58,124 @@ impl DiscoveredSkills {
 
     pub fn entries(&self) -> &[SkillEntry] {
         &self.entries
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionReason {
+    Always,
+    Explicit,
+    Semantic,
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectedSkill {
+    pub entry: SkillEntry,
+    pub reason: SelectionReason,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequestedSkillStatus {
+    pub name: String,
+    pub missing_requirements: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SelectedSkills {
+    pub active: Vec<SelectedSkill>,
+    pub requested_unavailable: Vec<RequestedSkillStatus>,
+}
+
+impl SelectedSkills {
+    pub fn render_requested_status(&self) -> String {
+        self.requested_unavailable
+            .iter()
+            .map(|status| {
+                if status.missing_requirements.is_empty() {
+                    format!("- {}: unavailable", status.name)
+                } else {
+                    format!("- {}: unavailable ({})", status.name, status.missing_requirements)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SkillSelector {
+    semantic_limit: usize,
+    semantic_threshold: usize,
+}
+
+impl Default for SkillSelector {
+    fn default() -> Self {
+        Self {
+            semantic_limit: 3,
+            semantic_threshold: 2,
+        }
+    }
+}
+
+impl SkillSelector {
+    pub fn select(&self, catalog: &DiscoveredSkills, message: &str) -> Result<SelectedSkills> {
+        let mut selected = SelectedSkills::default();
+        let mut seen = HashSet::new();
+
+        for entry in catalog.entries() {
+            if entry.metadata.always && entry.available && seen.insert(entry.normalized_name.clone()) {
+                selected.active.push(SelectedSkill {
+                    entry: entry.clone(),
+                    reason: SelectionReason::Always,
+                });
+            }
+        }
+
+        for explicit_name in explicit_mentions(message) {
+            let Some(entry) = catalog.find(&explicit_name) else {
+                continue;
+            };
+            if entry.available {
+                if seen.insert(entry.normalized_name.clone()) {
+                    selected.active.push(SelectedSkill {
+                        entry: entry.clone(),
+                        reason: SelectionReason::Explicit,
+                    });
+                }
+            } else {
+                selected.requested_unavailable.push(RequestedSkillStatus {
+                    name: entry.name.clone(),
+                    missing_requirements: entry.missing_requirements.clone(),
+                });
+            }
+        }
+
+        let message_tokens = semantic_tokens(message);
+        let mut semantic_matches = catalog
+            .entries()
+            .iter()
+            .filter(|entry| entry.available && !seen.contains(&entry.normalized_name))
+            .filter_map(|entry| {
+                let score = semantic_score(&message_tokens, entry);
+                (score >= self.semantic_threshold).then_some((score, entry))
+            })
+            .collect::<Vec<_>>();
+        semantic_matches.sort_by(|(score_a, entry_a), (score_b, entry_b)| {
+            score_b
+                .cmp(score_a)
+                .then_with(|| entry_a.normalized_name.cmp(&entry_b.normalized_name))
+        });
+
+        for (_, entry) in semantic_matches.into_iter().take(self.semantic_limit) {
+            if seen.insert(entry.normalized_name.clone()) {
+                selected.active.push(SelectedSkill {
+                    entry: entry.clone(),
+                    reason: SelectionReason::Semantic,
+                });
+            }
+        }
+
+        Ok(selected)
     }
 }
 
@@ -173,6 +293,7 @@ fn load_skill(path: &Path, source: SkillSource) -> Result<Option<SkillEntry>> {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| name.clone());
     let missing_requirements = collect_missing_requirements(&metadata);
+    let search_text = build_search_text(path, parsed.meta.get("description"), &parsed.body);
     Ok(Some(SkillEntry {
         name,
         normalized_name,
@@ -184,6 +305,7 @@ fn load_skill(path: &Path, source: SkillSource) -> Result<Option<SkillEntry>> {
         metadata,
         available: missing_requirements.is_empty(),
         missing_requirements,
+        search_text,
     }))
 }
 
@@ -334,4 +456,71 @@ fn trim_wrapped_quotes(value: &str) -> String {
         .trim()
         .trim_matches(|ch| ch == '"' || ch == '\'')
         .to_string()
+}
+
+fn build_search_text(path: &Path, description: Option<&String>, body: &str) -> String {
+    let directory_name = path
+        .parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    [
+        directory_name,
+        description.cloned().unwrap_or_default(),
+        body.to_string(),
+    ]
+    .join("\n")
+}
+
+fn explicit_mentions(message: &str) -> Vec<String> {
+    let mut mentions = Vec::new();
+    let mut seen = HashSet::new();
+    let dollar = Regex::new(r"\$([A-Za-z0-9][A-Za-z0-9_\-]*)").expect("dollar regex");
+    for capture in dollar.captures_iter(message) {
+        let normalized = normalize_skill_name(&capture[1]);
+        if !normalized.is_empty() && seen.insert(normalized.clone()) {
+            mentions.push(normalized);
+        }
+    }
+    let backticks = Regex::new(r"`([^`]+)`").expect("backtick regex");
+    for capture in backticks.captures_iter(message) {
+        let normalized = normalize_skill_name(&capture[1]);
+        if !normalized.is_empty() && seen.insert(normalized.clone()) {
+            mentions.push(normalized);
+        }
+    }
+    mentions
+}
+
+fn semantic_score(message_tokens: &BTreeSet<String>, entry: &SkillEntry) -> usize {
+    let entry_tokens = semantic_tokens(&entry.search_text);
+    message_tokens.intersection(&entry_tokens).count()
+}
+
+fn semantic_tokens(text: &str) -> BTreeSet<String> {
+    let token_re = Regex::new(r"[A-Za-z0-9][A-Za-z0-9_\-]*").expect("token regex");
+    token_re
+        .find_iter(text)
+        .map(|capture| normalize_skill_name(capture.as_str()))
+        .filter(|token| token.len() > 1)
+        .filter(|token| !is_stop_token(token))
+        .collect()
+}
+
+fn is_stop_token(token: &str) -> bool {
+    matches!(
+        token,
+        "a" | "an"
+            | "and"
+            | "check"
+            | "for"
+            | "help"
+            | "me"
+            | "please"
+            | "the"
+            | "then"
+            | "to"
+            | "use"
+            | "with"
+    )
 }
