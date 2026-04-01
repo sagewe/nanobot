@@ -564,7 +564,7 @@ async fn feishu_channel_skips_reply_api_for_progress_messages() {
         .expect("send");
 
     assert!(fixture.reply_messages().await.is_empty());
-    assert_eq!(fixture.create_messages().await.len(), 1);
+    assert!(fixture.create_messages().await.is_empty());
 }
 
 #[tokio::test]
@@ -587,7 +587,7 @@ async fn feishu_channel_skips_reply_api_for_tool_hint_messages() {
         .expect("send");
 
     assert!(fixture.reply_messages().await.is_empty());
-    assert_eq!(fixture.create_messages().await.len(), 1);
+    assert!(fixture.create_messages().await.is_empty());
 }
 
 #[tokio::test]

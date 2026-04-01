@@ -125,7 +125,7 @@ fn load_user_config_reads_legacy_json_when_toml_is_missing() {
 }
 
 #[test]
-fn validation_rejects_duplicate_telegram_and_wecom_connectors() {
+fn validation_rejects_duplicate_telegram_wecom_and_feishu_connectors() {
     let dir = tempdir().expect("tempdir");
     let store = ControlStore::new(dir.path()).expect("control store");
     let admin = store
@@ -145,6 +145,9 @@ fn validation_rejects_duplicate_telegram_and_wecom_connectors() {
     first.channels.wecom.enabled = true;
     first.channels.wecom.bot_id = "bot-a".to_string();
     first.channels.wecom.secret = "secret-a".to_string();
+    first.channels.feishu.enabled = true;
+    first.channels.feishu.app_id = "cli_a1".to_string();
+    first.channels.feishu.app_secret = "secret-a".to_string();
     store
         .write_user_config(&admin.user_id, &first)
         .expect("write first config");
@@ -165,6 +168,15 @@ fn validation_rejects_duplicate_telegram_and_wecom_connectors() {
         .validate_user_config(&user.user_id, &second)
         .expect_err("duplicate wecom credentials");
     assert!(wecom_error.to_string().contains("wecom"));
+
+    second.channels.wecom.enabled = false;
+    second.channels.feishu.enabled = true;
+    second.channels.feishu.app_id = "cli_a1".to_string();
+    second.channels.feishu.app_secret = "secret-a".to_string();
+    let feishu_error = store
+        .validate_user_config(&user.user_id, &second)
+        .expect_err("duplicate feishu credentials");
+    assert!(feishu_error.to_string().contains("feishu"));
 }
 
 #[test]
@@ -188,6 +200,9 @@ fn validation_rejects_duplicates_from_legacy_json_user_configs() {
     legacy.channels.wecom.enabled = true;
     legacy.channels.wecom.bot_id = "bot-a".to_string();
     legacy.channels.wecom.secret = "secret-a".to_string();
+    legacy.channels.feishu.enabled = true;
+    legacy.channels.feishu.app_id = "cli_a1".to_string();
+    legacy.channels.feishu.app_secret = "secret-a".to_string();
     let legacy_json_path = store.user_dir(&admin.user_id).join("config.json");
     nanobot_rs::config::save_config(&legacy, Some(&legacy_json_path)).expect("write legacy json");
     std::fs::remove_file(store.user_config_path(&admin.user_id)).expect("remove canonical toml");
@@ -208,6 +223,15 @@ fn validation_rejects_duplicates_from_legacy_json_user_configs() {
         .validate_user_config(&user.user_id, &second)
         .expect_err("duplicate wecom credentials");
     assert!(wecom_error.to_string().contains("wecom"));
+
+    second.channels.wecom.enabled = false;
+    second.channels.feishu.enabled = true;
+    second.channels.feishu.app_id = "cli_a1".to_string();
+    second.channels.feishu.app_secret = "secret-a".to_string();
+    let feishu_error = store
+        .validate_user_config(&user.user_id, &second)
+        .expect_err("duplicate feishu credentials");
+    assert!(feishu_error.to_string().contains("feishu"));
 }
 
 #[test]

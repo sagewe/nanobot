@@ -13,7 +13,7 @@ pub fn should_deliver_to_channel(channel: &str, metadata: &HashMap<String, Value
             .unwrap_or(false);
 
     match channel {
-        "telegram" | "wecom" | "web" | "weixin" => !is_runtime,
+        "telegram" | "wecom" | "web" | "weixin" | "feishu" => !is_runtime,
         _ => true,
     }
 }

@@ -21,6 +21,8 @@ fn runtime_messages_are_hidden_from_external_channels() {
     assert!(!should_deliver_to_channel("web", &progress_metadata()));
     assert!(!should_deliver_to_channel("weixin", &progress_metadata()));
     assert!(!should_deliver_to_channel("weixin", &tool_hint_metadata()));
+    assert!(!should_deliver_to_channel("feishu", &progress_metadata()));
+    assert!(!should_deliver_to_channel("feishu", &tool_hint_metadata()));
 }
 
 #[test]
@@ -33,6 +35,7 @@ fn normal_messages_remain_visible_everywhere() {
     assert!(should_deliver_to_channel("telegram", &HashMap::new()));
     assert!(should_deliver_to_channel("wecom", &HashMap::new()));
     assert!(should_deliver_to_channel("web", &HashMap::new()));
+    assert!(should_deliver_to_channel("feishu", &HashMap::new()));
 }
 
 #[test]
