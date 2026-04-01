@@ -12,6 +12,19 @@ fn page_shell_contains_core_ui_regions() {
 }
 
 #[test]
+fn page_shell_includes_skills_tab_and_static_shell_hooks() {
+    let html = nanobot_rs::web::page::render_index_html();
+
+    assert!(html.contains("data-tab=\"skills\""));
+    assert!(html.contains("class=\"skills-pane\""));
+    assert!(html.contains("id=\"skills-search\""));
+    assert!(html.contains("id=\"skills-workspace-list\""));
+    assert!(html.contains("id=\"skills-builtin-list\""));
+    assert!(html.contains("id=\"skill-editor\""));
+    assert!(html.contains("id=\"skill-enabled-toggle\""));
+}
+
+#[test]
 fn page_shell_includes_slash_command_palette_shell() {
     let html = nanobot_rs::web::page::render_index_html();
 

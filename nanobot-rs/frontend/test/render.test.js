@@ -311,6 +311,41 @@ describe("tool trace output", () => {
     expect(css).toContain("grid-template-columns: 1fr;");
   });
 
+  it("adds a static skills shell with responsive master-detail scaffolding", async () => {
+    const html = readHtml();
+    const css = readCss();
+    const skillsLayoutCss = readCssBlock("\\.skills-layout");
+    const skillsListCss = readCssBlock("\\.skills-list");
+    const skillsDetailCss = readCssBlock("\\.skills-detail");
+    const { TRANSLATIONS } = await import("../src/i18n.js");
+
+    expect(html).toContain('data-tab="skills"');
+    expect(html).toContain('class="skills-pane"');
+    expect(html).toContain('id="skills-search"');
+    expect(html).toContain('id="skills-workspace-list"');
+    expect(html).toContain('id="skills-builtin-list"');
+    expect(html).toContain('id="skill-editor"');
+    expect(html).toContain('id="skill-enabled-toggle"');
+    expect(html).toContain('data-i18n="tab_skills"');
+    expect(html).toContain('data-i18n-placeholder="skills_search_placeholder"');
+    expect(html).toContain('data-i18n="skills_create"');
+    expect(html).toContain('data-i18n="skill_enabled"');
+    expect(html).toContain('data-i18n="skills_builtin_title"');
+    expect(html).toContain('data-i18n="skills_workspace_title"');
+    expect(html).toContain('data-i18n="skill_editor_title"');
+
+    expect(skillsLayoutCss).toContain("display: grid;");
+    expect(skillsLayoutCss).toContain("grid-template-columns:");
+    expect(skillsListCss).toContain("display: grid;");
+    expect(skillsDetailCss).toContain("display: grid;");
+    expect(css).toContain("@media (max-width: 1100px)");
+    expect(css).toContain(".skills-layout");
+    expect(css).toContain("grid-template-columns: 1fr;");
+
+    expect(TRANSLATIONS.en.tab_skills).toBe("Skills");
+    expect(TRANSLATIONS.zh.tab_skills).toBe("\u6280\u80fd");
+  });
+
   it("groups channels by provider and wires settings/users labels through i18n", async () => {
     const html = readHtml();
     const js = readJs();
