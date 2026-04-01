@@ -8,6 +8,7 @@ The Rust runtime currently supports these primary paths:
 
 - `agent`
 - `gateway` with embedded web
+- `feishu`
 - `telegram`
 - `wecom`
 - `weixin`
@@ -51,7 +52,7 @@ The current config model is profile-based:
 - `agents.defaults.defaultProfile` selects the default profile for new sessions
 - `agents.profiles` defines the available `provider:model` choices
 - `providers` contains provider-specific connection settings
-- `channels` enables Telegram, WeCom, or Weixin
+- `channels` enables Telegram, Feishu, WeCom, or Weixin
 - `tools` contains tool-specific settings such as web search/fetch
 
 Minimal example:
@@ -114,6 +115,8 @@ cargo run --release -- web
 ```
 
 But the main operational path is `gateway`, because it combines embedded web with the active channel runtime.
+
+Feishu in the Rust runtime currently supports long-connection inbound messaging, sender allowlists, group `mention`/`open` policy handling, reply-to-message routing, reaction emoji acknowledgements, and outbound `text` / `post` / `interactive` delivery with app credentials.
 
 ## Provider Notes
 

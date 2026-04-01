@@ -483,12 +483,49 @@ impl Default for WecomConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
+pub struct FeishuConfig {
+    pub enabled: bool,
+    pub app_id: String,
+    pub app_secret: String,
+    #[serde(default = "default_feishu_api_base")]
+    pub api_base: String,
+    #[serde(default = "default_feishu_ws_base")]
+    pub ws_base: String,
+    pub encrypt_key: String,
+    pub verification_token: String,
+    pub allow_from: Vec<String>,
+    pub react_emoji: String,
+    pub group_policy: String,
+    pub reply_to_message: bool,
+}
+
+impl Default for FeishuConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            app_id: String::new(),
+            app_secret: String::new(),
+            api_base: default_feishu_api_base(),
+            ws_base: default_feishu_ws_base(),
+            encrypt_key: String::new(),
+            verification_token: String::new(),
+            allow_from: Vec::new(),
+            react_emoji: "THUMBSUP".to_string(),
+            group_policy: "mention".to_string(),
+            reply_to_message: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct ChannelsConfig {
     pub send_progress: bool,
     pub send_tool_hints: bool,
     pub telegram: TelegramConfig,
     pub weixin: WeixinConfig,
     pub wecom: WecomConfig,
+    pub feishu: FeishuConfig,
 }
 
 impl Default for ChannelsConfig {
@@ -499,6 +536,7 @@ impl Default for ChannelsConfig {
             telegram: TelegramConfig::default(),
             weixin: WeixinConfig::default(),
             wecom: WecomConfig::default(),
+            feishu: FeishuConfig::default(),
         }
     }
 }
@@ -839,6 +877,14 @@ fn default_weixin_cdn_base() -> String {
 
 fn default_wecom_ws_base() -> String {
     "wss://openws.work.weixin.qq.com".to_string()
+}
+
+fn default_feishu_api_base() -> String {
+    "https://open.feishu.cn/open-apis".to_string()
+}
+
+fn default_feishu_ws_base() -> String {
+    "wss://open.feishu.cn/open-apis/ws".to_string()
 }
 
 fn default_codex_auth_file() -> String {

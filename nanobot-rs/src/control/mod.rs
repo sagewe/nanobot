@@ -382,6 +382,18 @@ impl ControlStore {
                     user.username
                 );
             }
+            if config.channels.feishu.enabled
+                && other.channels.feishu.enabled
+                && !config.channels.feishu.app_id.trim().is_empty()
+                && !config.channels.feishu.app_secret.trim().is_empty()
+                && config.channels.feishu.app_id == other.channels.feishu.app_id
+                && config.channels.feishu.app_secret == other.channels.feishu.app_secret
+            {
+                bail!(
+                    "duplicate feishu credentials claimed by user '{}'",
+                    user.username
+                );
+            }
         }
         Ok(())
     }

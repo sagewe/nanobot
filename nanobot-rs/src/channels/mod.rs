@@ -1,3 +1,4 @@
+mod feishu;
 mod wecom;
 pub mod weixin;
 
@@ -20,6 +21,7 @@ use crate::presentation::{
     render_telegram_html, should_deliver_to_channel, split_telegram_html_chunks,
     telegram_message_limit,
 };
+pub use feishu::FeishuChannel;
 pub use wecom::{
     ParsedWecomTextCallback, WecomBotChannel, WecomTiming, build_wecom_markdown_reply_request,
     build_wecom_ping_request, build_wecom_subscribe_request, parse_wecom_text_callback,
@@ -249,6 +251,15 @@ impl ChannelManager {
                 "wecom".to_string(),
                 Arc::new(WecomBotChannel::new(
                     config.channels.wecom.clone(),
+                    bus.clone(),
+                )),
+            );
+        }
+        if config.channels.feishu.enabled {
+            channels.insert(
+                "feishu".to_string(),
+                Arc::new(FeishuChannel::new(
+                    config.channels.feishu.clone(),
                     bus.clone(),
                 )),
             );

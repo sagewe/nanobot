@@ -16,7 +16,7 @@ use crate::web;
 pub const DEFAULT_WEB_HOST: &str = "127.0.0.1";
 pub const DEFAULT_WEB_PORT: u16 = 3456;
 const ONBOARD_TEMPLATE_SUMMARY: &str =
-    "Template includes multi-profile support for codex, telegram, weixin, wecom, and embedded web.";
+    "Template includes multi-profile support for codex, telegram, weixin, wecom, feishu, and embedded web.";
 
 #[derive(Debug, Parser)]
 #[command(name = "nanobot-rs")]
