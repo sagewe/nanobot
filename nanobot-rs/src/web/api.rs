@@ -971,10 +971,7 @@ pub async fn update_workspace_skill(
 ) -> Result<Json<SkillDetailResponse>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
     let id = validate_skill_id(&id)?.to_string();
-    let skill_path = workspace_skill_dir(&workspace, &id).join("SKILL.md");
-    if !skill_path.exists() {
-        return Err(ApiError::not_found(format!("skill '{id}' not found")));
-    }
+    let skill_path = require_mutable_workspace_skill(&workspace, &id)?;
     fs::write(&skill_path, request.raw_content)
         .map_err(|error| ApiError::internal(error.into()))?;
     let skill = load_workspace_skill(&workspace, &id)?;
@@ -989,10 +986,7 @@ pub async fn update_workspace_skill_state(
 ) -> Result<Json<SkillDetailResponse>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
     let id = validate_skill_id(&id)?.to_string();
-    let skill_path = workspace_skill_dir(&workspace, &id).join("SKILL.md");
-    if !skill_path.exists() {
-        return Err(ApiError::not_found(format!("skill '{id}' not found")));
-    }
+    let _skill_path = require_mutable_workspace_skill(&workspace, &id)?;
     let state_path = workspace_skill_state_path(&workspace);
     let mut states = load_workspace_skill_states(&state_path);
     states.insert(
@@ -1013,10 +1007,7 @@ pub async fn delete_workspace_skill(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
     let id = validate_skill_id(&id)?.to_string();
-    let skill_dir = workspace_skill_dir(&workspace, &id);
-    if !skill_dir.exists() {
-        return Err(ApiError::not_found(format!("skill '{id}' not found")));
-    }
+    let skill_dir = require_mutable_workspace_skill_dir(&workspace, &id)?;
     fs::remove_dir_all(&skill_dir).map_err(|error| ApiError::internal(error.into()))?;
     remove_workspace_skill_state(&workspace, &id)?;
     Ok(Json(json!({ "ok": true })))
@@ -1135,6 +1126,39 @@ fn list_extra_files(skill_dir: &FsPath) -> Result<Vec<String>, ApiError> {
 
 fn workspace_skill_dir(workspace: &FsPath, id: &str) -> PathBuf {
     workspace.join("skills").join(id)
+}
+
+fn require_mutable_workspace_skill(workspace: &FsPath, id: &str) -> Result<PathBuf, ApiError> {
+    let skill_path = workspace_skill_dir(workspace, id).join("SKILL.md");
+    if skill_path.exists() {
+        return Ok(skill_path);
+    }
+    if builtin_skill_exists(workspace, id)? {
+        return Err(ApiError::bad_request(
+            "builtin skills are read-only; create a workspace copy to customize them",
+        ));
+    }
+    Err(ApiError::not_found(format!("skill '{id}' not found")))
+}
+
+fn require_mutable_workspace_skill_dir(workspace: &FsPath, id: &str) -> Result<PathBuf, ApiError> {
+    let skill_dir = workspace_skill_dir(workspace, id);
+    if skill_dir.exists() {
+        return Ok(skill_dir);
+    }
+    if builtin_skill_exists(workspace, id)? {
+        return Err(ApiError::bad_request(
+            "builtin skills are read-only; create a workspace copy to customize them",
+        ));
+    }
+    Err(ApiError::not_found(format!("skill '{id}' not found")))
+}
+
+fn builtin_skill_exists(workspace: &FsPath, id: &str) -> Result<bool, ApiError> {
+    let managed = SkillsCatalog::new(workspace.to_path_buf())
+        .discover_managed()
+        .map_err(ApiError::internal)?;
+    Ok(managed.builtin.iter().any(|skill| skill.id == id))
 }
 
 fn workspace_skill_state_path(workspace: &FsPath) -> PathBuf {

@@ -914,6 +914,41 @@ async fn skills_api_toggles_workspace_state_in_single_user_mode_without_rewritin
 }
 
 #[tokio::test]
+async fn skills_api_rejects_builtin_state_toggle_with_clear_client_error() {
+    let builtin_id = unique_skill_id("builtin-read-only");
+    let _builtin = TempBuiltinSkill::new(
+        &builtin_id,
+        "---\nname: builtin read only\ndescription: builtin skill\n---\n\nBuiltin body\n",
+    );
+    let dir = tempdir().expect("tempdir");
+    let app = agent_app(&dir, Vec::new()).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/skills/workspace/{builtin_id}/state"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"enabled":false}"#))
+                .unwrap(),
+        )
+        .await
+        .expect("builtin state toggle");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("builtin state toggle body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("builtin state json");
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("read-only")
+    );
+}
+
+#[tokio::test]
 async fn cron_jobs_are_scoped_to_the_authenticated_user_runtime() {
     let (state, dir) = multiuser_state();
     let store = ControlStore::new(dir.path()).expect("control store");
