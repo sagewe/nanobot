@@ -1140,6 +1140,142 @@ async fn skills_api_returns_successful_fallback_detail_when_saved_skill_cannot_b
 }
 
 #[tokio::test]
+async fn skills_api_keeps_saved_but_undiscoverable_workspace_skill_addressable_after_refresh() {
+    let builtin = BuiltinSkillsFixture::new();
+    let dir = tempdir().expect("tempdir");
+    write_skill(
+        dir.path().join("skills").as_path(),
+        "odd-skill",
+        "---\nname: valid skill\ndescription: valid description\n---\n\nValid body\n",
+    );
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
+    let invalid_raw = "---\nname: !!!\ndescription: odd description\n---\n\nOdd body\n";
+
+    let (save_status, save_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri("/api/skills/workspace/odd-skill")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "rawContent": invalid_raw,
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(save_status, StatusCode::OK);
+    assert_eq!(save_payload["id"], json!("odd-skill"));
+
+    let (list_status, list_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .uri("/api/skills")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(list_status, StatusCode::OK);
+    let workspace = list_payload["workspace"]
+        .as_array()
+        .expect("workspace skills array");
+    assert!(workspace.iter().any(|skill| {
+        skill["id"] == json!("odd-skill") && skill["description"] == json!("odd description")
+    }));
+
+    let (detail_status, detail_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .uri("/api/skills/workspace/odd-skill")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(detail_status, StatusCode::OK);
+    assert_eq!(detail_payload["rawContent"], json!(invalid_raw));
+    assert_eq!(detail_payload["normalizedName"], json!("odd-skill"));
+    assert_eq!(
+        detail_payload["parseWarnings"][0],
+        json!("saved raw content could not be rediscovered as a managed skill")
+    );
+
+    let (toggle_status, toggle_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri("/api/skills/workspace/odd-skill/state")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"enabled":false}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(toggle_status, StatusCode::OK);
+    assert_eq!(toggle_payload["id"], json!("odd-skill"));
+    assert_eq!(toggle_payload["enabled"], json!(false));
+    assert_eq!(toggle_payload["rawContent"], json!(invalid_raw));
+
+    let state_json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join(".nanobot").join("skills-state.json"))
+            .expect("state file"),
+    )
+    .expect("state json");
+    assert_eq!(state_json["odd-skill"]["enabled"], json!(false));
+
+    let (list_after_status, list_after_payload) = json_response(
+        app,
+        Request::builder()
+            .uri("/api/skills")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(list_after_status, StatusCode::OK);
+    let workspace_after = list_after_payload["workspace"]
+        .as_array()
+        .expect("workspace skills after toggle");
+    assert!(
+        workspace_after
+            .iter()
+            .any(|skill| { skill["id"] == json!("odd-skill") && skill["enabled"] == json!(false) })
+    );
+}
+
+#[tokio::test]
+async fn skills_api_create_rejects_empty_raw_content() {
+    let builtin = BuiltinSkillsFixture::new();
+    let dir = tempdir().expect("tempdir");
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
+
+    let (status, payload) = json_response(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/skills/workspace")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "id": "empty-skill",
+                    "rawContent": "",
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("rawContent")
+    );
+    assert!(!dir.path().join("skills").join("empty-skill").exists());
+}
+
+#[tokio::test]
 async fn skills_api_preserves_extended_state_fields_when_toggling_workspace_skill() {
     let builtin = BuiltinSkillsFixture::new();
     let dir = tempdir().expect("tempdir");
