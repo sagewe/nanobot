@@ -1,17 +1,26 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
+use futures_util::{SinkExt, StreamExt};
 use regex::Regex;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
+use tracing::warn;
 use url::Url;
 
-use crate::bus::{MessageBus, OutboundMessage};
+use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::channels::Channel;
 use crate::config::FeishuConfig;
+use crate::presentation::should_deliver_to_channel;
+
+const FEISHU_DEDUP_CAPACITY: usize = 1000;
+const FEISHU_RECONNECT_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug)]
 struct FeishuToken {
@@ -21,12 +30,12 @@ struct FeishuToken {
 
 pub struct FeishuChannel {
     config: FeishuConfig,
-    #[allow(dead_code)]
     bus: MessageBus,
     client: reqwest::Client,
     running: AtomicBool,
     token: Arc<Mutex<Option<FeishuToken>>>,
     bot_open_id: Arc<Mutex<Option<String>>>,
+    dedup: Arc<Mutex<RecentMessageDedup>>,
 }
 
 impl FeishuChannel {
@@ -38,6 +47,7 @@ impl FeishuChannel {
             running: AtomicBool::new(false),
             token: Arc::new(Mutex::new(None)),
             bot_open_id: Arc::new(Mutex::new(None)),
+            dedup: Arc::new(Mutex::new(RecentMessageDedup::new(FEISHU_DEDUP_CAPACITY))),
         }
     }
 
@@ -202,6 +212,179 @@ impl FeishuChannel {
             payload.get("code").and_then(Value::as_i64).unwrap_or(-1) == 0,
             "feishu reply failed"
         );
+        Ok(())
+    }
+
+    async fn add_reaction(&self, message_id: &str) -> Result<()> {
+        if self.config.react_emoji.trim().is_empty() {
+            return Ok(());
+        }
+
+        let access_token = self.tenant_access_token().await?;
+        let url = format!(
+            "{}/im/v1/messages/{message_id}/reactions",
+            self.config.api_base.trim_end_matches('/')
+        );
+        let payload: Value = self
+            .client
+            .post(url)
+            .bearer_auth(access_token)
+            .json(&json!({
+                "reaction_type": {
+                    "emoji_type": self.config.react_emoji,
+                }
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        ensure!(
+            payload.get("code").and_then(Value::as_i64).unwrap_or(-1) == 0,
+            "feishu add reaction failed"
+        );
+        Ok(())
+    }
+
+    async fn run_session(&self) -> Result<()> {
+        let bot_open_id = self.bot_open_id().await?;
+        let (stream, _) = connect_async(self.config.ws_base.as_str())
+            .await
+            .with_context(|| format!("failed to connect to {}", self.config.ws_base))?;
+        let (mut writer, mut reader) = stream.split();
+
+        while self.running.load(Ordering::SeqCst) {
+            let frame = match reader.next().await {
+                Some(Ok(frame)) => frame,
+                Some(Err(error)) => return Err(error.into()),
+                None => bail!("feishu websocket closed"),
+            };
+
+            match frame {
+                Message::Text(text) => {
+                    if let Err(error) = self.handle_text_frame(text.as_ref(), &bot_open_id).await {
+                        warn!("feishu dropped invalid frame: {error}");
+                    }
+                }
+                Message::Ping(payload) => {
+                    writer
+                        .send(Message::Pong(payload))
+                        .await
+                        .context("failed to respond to feishu websocket ping")?;
+                }
+                Message::Close(_) => bail!("feishu websocket closed"),
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_text_frame(&self, text: &str, bot_open_id: &str) -> Result<()> {
+        let payload: Value = serde_json::from_str(text).context("invalid feishu json payload")?;
+        let Some(event) = payload.get("event") else {
+            return Ok(());
+        };
+
+        let sender_type = event
+            .pointer("/sender/sender_type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let sender_id = event
+            .pointer("/sender/sender_id/open_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if sender_type == "bot" || sender_id.is_empty() || sender_id == bot_open_id {
+            return Ok(());
+        }
+        if !is_allowed_sender(&self.config, sender_id) {
+            return Ok(());
+        }
+
+        let message_id = event
+            .pointer("/message/message_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let message_type = event
+            .pointer("/message/message_type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let chat_id = event
+            .pointer("/message/chat_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let chat_type = event
+            .pointer("/message/chat_type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let raw_content = event
+            .pointer("/message/content")
+            .and_then(Value::as_str)
+            .unwrap_or("{}");
+        let mentions = event
+            .pointer("/message/mentions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        if message_id.is_empty() || chat_id.is_empty() {
+            return Ok(());
+        }
+        if chat_type != "p2p"
+            && !is_group_message_for_bot(
+                raw_content,
+                mentions.as_slice(),
+                Some(bot_open_id),
+                self.config.group_policy.as_str(),
+            )
+        {
+            return Ok(());
+        }
+
+        let content = match normalize_inbound_content(message_type, raw_content)? {
+            Some(content) => content,
+            None => return Ok(()),
+        };
+        if content.trim().is_empty() {
+            return Ok(());
+        }
+
+        {
+            let mut dedup = self.dedup.lock().await;
+            if !dedup.insert(message_id) {
+                return Ok(());
+            }
+        }
+
+        let parent_id = event.pointer("/message/parent_id").and_then(Value::as_str);
+        let root_id = event.pointer("/message/root_id").and_then(Value::as_str);
+        let mut metadata = HashMap::new();
+        metadata.insert("message_id".to_string(), json!(message_id));
+        metadata.insert("chat_type".to_string(), json!(chat_type));
+        metadata.insert("msg_type".to_string(), json!(message_type));
+        metadata.insert("parent_id".to_string(), json!(parent_id));
+        metadata.insert("root_id".to_string(), json!(root_id));
+
+        self.bus
+            .publish_inbound(InboundMessage {
+                channel: "feishu".to_string(),
+                sender_id: sender_id.to_string(),
+                chat_id: if chat_type == "p2p" {
+                    sender_id.to_string()
+                } else {
+                    chat_id.to_string()
+                },
+                content,
+                timestamp: chrono::Utc::now(),
+                metadata,
+                session_key_override: None,
+            })
+            .await?;
+
+        if let Err(error) = self.add_reaction(message_id).await {
+            warn!("feishu reaction failed for {message_id}: {error}");
+        }
+
         Ok(())
     }
 }
@@ -397,7 +580,10 @@ fn strip_md_formatting(text: &str) -> String {
 }
 
 fn parse_md_table(table_text: &str) -> Value {
-    let lines: Vec<&str> = table_text.lines().filter(|line| !line.trim().is_empty()).collect();
+    let lines: Vec<&str> = table_text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     let split_row = |line: &str| -> Vec<String> {
         line.trim()
             .trim_matches('|')
@@ -440,7 +626,11 @@ fn split_headings(content: &str) -> Vec<Value> {
     let mut code_blocks = Vec::new();
     for captures in code_block_re().find_iter(content) {
         code_blocks.push(captures.as_str().to_string());
-        protected = protected.replacen(captures.as_str(), &format!("\u{0}CODE{}\u{0}", code_blocks.len() - 1), 1);
+        protected = protected.replacen(
+            captures.as_str(),
+            &format!("\u{0}CODE{}\u{0}", code_blocks.len() - 1),
+            1,
+        );
     }
 
     let mut elements = Vec::new();
@@ -454,10 +644,7 @@ fn split_headings(content: &str) -> Vec<Value> {
             }));
         }
 
-        let heading_text = heading
-            .as_str()
-            .trim_start_matches('#')
-            .trim();
+        let heading_text = heading.as_str().trim_start_matches('#').trim();
         elements.push(json!({
             "tag": "div",
             "text": {
@@ -564,11 +751,7 @@ fn extract_post_text(payload: &Value) -> String {
     let block = ["zh_cn", "en_us", "ja_jp"]
         .iter()
         .find_map(|key| root_object.get(*key).and_then(Value::as_object))
-        .or_else(|| {
-            root_object
-                .values()
-                .find_map(|value| value.as_object())
-        });
+        .or_else(|| root_object.values().find_map(|value| value.as_object()));
 
     let Some(block) = block else {
         return String::new();
@@ -610,7 +793,10 @@ fn extract_post_text(payload: &Value) -> String {
                         row_parts.push(format!("@{user_name}"));
                     }
                     "code_block" => {
-                        let language = element.get("language").and_then(Value::as_str).unwrap_or("");
+                        let language = element
+                            .get("language")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
                         let text = element.get("text").and_then(Value::as_str).unwrap_or("");
                         row_parts.push(format!("```{language}\n{text}\n```"));
                     }
@@ -670,6 +856,41 @@ fn resolve_receive_id_type(chat_id: &str) -> &'static str {
     }
 }
 
+fn placeholder_message(message_type: &str) -> Option<String> {
+    match message_type {
+        "image"
+        | "audio"
+        | "file"
+        | "sticker"
+        | "interactive"
+        | "share_chat"
+        | "share_user"
+        | "share_calendar_event"
+        | "system"
+        | "merge_forward" => Some(format!("[{message_type}]")),
+        _ => None,
+    }
+}
+
+fn normalize_inbound_content(message_type: &str, raw_content: &str) -> Result<Option<String>> {
+    match message_type {
+        "text" => {
+            let payload: Value =
+                serde_json::from_str(raw_content).context("invalid feishu text content")?;
+            Ok(payload
+                .get("text")
+                .and_then(Value::as_str)
+                .map(|text| text.trim().to_string()))
+        }
+        "post" => {
+            let payload: Value =
+                serde_json::from_str(raw_content).context("invalid feishu post content")?;
+            Ok(Some(extract_post_text(&payload)))
+        }
+        other => Ok(placeholder_message(other)),
+    }
+}
+
 #[async_trait::async_trait]
 impl Channel for FeishuChannel {
     fn name(&self) -> &'static str {
@@ -678,8 +899,17 @@ impl Channel for FeishuChannel {
 
     async fn start(&self) -> Result<()> {
         self.validate_startup_config()?;
-        let _ = self.bot_open_id().await?;
         self.running.store(true, Ordering::SeqCst);
+        let _ = self.bot_open_id().await?;
+        while self.running.load(Ordering::SeqCst) {
+            if let Err(error) = self.run_session().await {
+                warn!("feishu channel session ended: {error}");
+            }
+            if !self.running.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(FEISHU_RECONNECT_DELAY).await;
+        }
         Ok(())
     }
 
@@ -689,6 +919,10 @@ impl Channel for FeishuChannel {
     }
 
     async fn send(&self, msg: OutboundMessage) -> Result<()> {
+        if !should_deliver_to_channel("feishu", &msg.metadata) {
+            return Ok(());
+        }
+
         if msg.chat_id.trim().is_empty() {
             bail!("feishu chat_id is required");
         }
@@ -713,8 +947,16 @@ impl Channel for FeishuChannel {
         };
 
         let reply_message_id = if self.config.reply_to_message
-            && !msg.metadata.get("_progress").and_then(Value::as_bool).unwrap_or(false)
-            && !msg.metadata.get("_tool_hint").and_then(Value::as_bool).unwrap_or(false)
+            && !msg
+                .metadata
+                .get("_progress")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            && !msg
+                .metadata
+                .get("_tool_hint")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
         {
             msg.metadata.get("message_id").and_then(Value::as_str)
         } else {
@@ -733,8 +975,14 @@ impl Channel for FeishuChannel {
                     continue;
                 }
             }
-            self.create_message(&access_token, receive_id_type, &msg.chat_id, msg_type, content)
-                .await?;
+            self.create_message(
+                &access_token,
+                receive_id_type,
+                &msg.chat_id,
+                msg_type,
+                content,
+            )
+            .await?;
         }
         Ok(())
     }
@@ -777,8 +1025,14 @@ mod tests {
 
     #[test]
     fn feishu_detects_threshold_boundaries() {
-        assert_eq!(detect_message_format(&"a".repeat(200)), FeishuMessageFormat::Text);
-        assert_eq!(detect_message_format(&"a".repeat(201)), FeishuMessageFormat::Post);
+        assert_eq!(
+            detect_message_format(&"a".repeat(200)),
+            FeishuMessageFormat::Text
+        );
+        assert_eq!(
+            detect_message_format(&"a".repeat(201)),
+            FeishuMessageFormat::Post
+        );
         assert_eq!(
             detect_message_format(&"a".repeat(2001)),
             FeishuMessageFormat::Interactive
@@ -787,18 +1041,39 @@ mod tests {
 
     #[test]
     fn feishu_detects_lists_and_style_markers_as_interactive() {
-        assert_eq!(detect_message_format("- item"), FeishuMessageFormat::Interactive);
-        assert_eq!(detect_message_format("1. item"), FeishuMessageFormat::Interactive);
-        assert_eq!(detect_message_format("**bold**"), FeishuMessageFormat::Interactive);
-        assert_eq!(detect_message_format("*italic*"), FeishuMessageFormat::Interactive);
-        assert_eq!(detect_message_format("~~strike~~"), FeishuMessageFormat::Interactive);
+        assert_eq!(
+            detect_message_format("- item"),
+            FeishuMessageFormat::Interactive
+        );
+        assert_eq!(
+            detect_message_format("1. item"),
+            FeishuMessageFormat::Interactive
+        );
+        assert_eq!(
+            detect_message_format("**bold**"),
+            FeishuMessageFormat::Interactive
+        );
+        assert_eq!(
+            detect_message_format("*italic*"),
+            FeishuMessageFormat::Interactive
+        );
+        assert_eq!(
+            detect_message_format("~~strike~~"),
+            FeishuMessageFormat::Interactive
+        );
     }
 
     #[test]
     fn feishu_detects_tables_and_splits_multiple_tables() {
         let table = "| a | b |\n|---|---|\n| 1 | 2 |";
-        assert_eq!(detect_message_format(table), FeishuMessageFormat::Interactive);
-        assert_eq!(render_interactive_cards(&format!("{table}\n\n{table}")).len(), 2);
+        assert_eq!(
+            detect_message_format(table),
+            FeishuMessageFormat::Interactive
+        );
+        assert_eq!(
+            render_interactive_cards(&format!("{table}\n\n{table}")).len(),
+            2
+        );
     }
 
     #[test]
@@ -888,7 +1163,12 @@ mod tests {
 
     #[test]
     fn feishu_open_group_policy_accepts_unmentioned_group_messages() {
-        assert!(is_group_message_for_bot("hello group", &[], Some("ou_bot_1"), "open"));
+        assert!(is_group_message_for_bot(
+            "hello group",
+            &[],
+            Some("ou_bot_1"),
+            "open"
+        ));
     }
 
     #[test]
