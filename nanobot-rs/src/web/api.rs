@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path as FsPath, PathBuf};
+
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -9,6 +13,7 @@ use crate::config::Config;
 use crate::control::AuthenticatedUser;
 use crate::cron::{CronJob, CronSchedule};
 use crate::mcp::{McpServerInfo, McpServerToolAction};
+use crate::skills::{ManagedSkillEntry, SkillSource, SkillsCatalog};
 
 use super::{
     AppState, WebSessionDetail, WebSessionGroup, WebSessionSummary, WebWeixinAccount,
@@ -819,6 +824,355 @@ pub async fn apply_mcp_server_action(
         Ok(Json(json!({ "ok": true })))
     } else {
         Err(ApiError::not_found(format!("server '{name}' not found")))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Skills API
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsListResponse {
+    pub workspace: Vec<SkillSummaryResponse>,
+    pub builtin: Vec<SkillSummaryResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSummaryResponse {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub source: String,
+    pub enabled: bool,
+    pub effective: bool,
+    pub available: bool,
+    pub missing_requirements: String,
+    pub overrides_builtin: bool,
+    pub shadowed_by_workspace: bool,
+    pub read_only: bool,
+    pub has_extra_files: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRequirementsResponse {
+    pub bins: Vec<String>,
+    pub env: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillMetadataResponse {
+    pub always: bool,
+    pub requires: SkillRequirementsResponse,
+    pub keywords: Vec<String>,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDetailResponse {
+    #[serde(flatten)]
+    pub summary: SkillSummaryResponse,
+    pub path: String,
+    pub raw_content: String,
+    pub body: String,
+    pub normalized_name: String,
+    pub metadata: SkillMetadataResponse,
+    pub parse_warnings: Vec<String>,
+    pub extra_files: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceSkillRequest {
+    pub id: String,
+    pub raw_content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateWorkspaceSkillRequest {
+    pub raw_content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateWorkspaceSkillStateRequest {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkspaceSkillStateRecord {
+    enabled: bool,
+}
+
+pub async fn list_skills(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<SkillsListResponse>, ApiError> {
+    let workspace = resolve_skills_workspace(&state, &headers).await?;
+    let managed = SkillsCatalog::new(workspace)
+        .discover_managed()
+        .map_err(ApiError::internal)?;
+    Ok(Json(SkillsListResponse {
+        workspace: managed
+            .workspace
+            .iter()
+            .map(skill_summary_response)
+            .collect(),
+        builtin: managed.builtin.iter().map(skill_summary_response).collect(),
+    }))
+}
+
+pub async fn get_skill(
+    Path((source, id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<SkillDetailResponse>, ApiError> {
+    let workspace = resolve_skills_workspace(&state, &headers).await?;
+    let source = parse_skill_source(&source)?;
+    let id = validate_skill_id(&id)?.to_string();
+    let managed = SkillsCatalog::new(workspace)
+        .discover_managed()
+        .map_err(ApiError::internal)?;
+    let skill = managed_skill_by_id(&managed, source, &id)
+        .ok_or_else(|| ApiError::not_found(format!("skill '{id}' not found")))?;
+    Ok(Json(skill_detail_response(&skill)?))
+}
+
+pub async fn create_workspace_skill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateWorkspaceSkillRequest>,
+) -> Result<Json<SkillDetailResponse>, ApiError> {
+    let workspace = resolve_skills_workspace(&state, &headers).await?;
+    let id = validate_skill_id(&request.id)?.to_string();
+    let skill_dir = workspace_skill_dir(&workspace, &id);
+    if skill_dir.exists() {
+        return Err(ApiError::conflict(format!(
+            "workspace skill '{id}' already exists"
+        )));
+    }
+    fs::create_dir_all(&skill_dir).map_err(|error| ApiError::internal(error.into()))?;
+    fs::write(skill_dir.join("SKILL.md"), request.raw_content)
+        .map_err(|error| ApiError::internal(error.into()))?;
+    let skill = load_workspace_skill(&workspace, &id)?;
+    Ok(Json(skill_detail_response(&skill)?))
+}
+
+pub async fn update_workspace_skill(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateWorkspaceSkillRequest>,
+) -> Result<Json<SkillDetailResponse>, ApiError> {
+    let workspace = resolve_skills_workspace(&state, &headers).await?;
+    let id = validate_skill_id(&id)?.to_string();
+    let skill_path = workspace_skill_dir(&workspace, &id).join("SKILL.md");
+    if !skill_path.exists() {
+        return Err(ApiError::not_found(format!("skill '{id}' not found")));
+    }
+    fs::write(&skill_path, request.raw_content)
+        .map_err(|error| ApiError::internal(error.into()))?;
+    let skill = load_workspace_skill(&workspace, &id)?;
+    Ok(Json(skill_detail_response(&skill)?))
+}
+
+pub async fn update_workspace_skill_state(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateWorkspaceSkillStateRequest>,
+) -> Result<Json<SkillDetailResponse>, ApiError> {
+    let workspace = resolve_skills_workspace(&state, &headers).await?;
+    let id = validate_skill_id(&id)?.to_string();
+    let skill_path = workspace_skill_dir(&workspace, &id).join("SKILL.md");
+    if !skill_path.exists() {
+        return Err(ApiError::not_found(format!("skill '{id}' not found")));
+    }
+    let state_path = workspace_skill_state_path(&workspace);
+    let mut states = load_workspace_skill_states(&state_path);
+    states.insert(
+        id.clone(),
+        WorkspaceSkillStateRecord {
+            enabled: request.enabled,
+        },
+    );
+    save_workspace_skill_states(&state_path, &states)?;
+    let skill = load_workspace_skill(&workspace, &id)?;
+    Ok(Json(skill_detail_response(&skill)?))
+}
+
+pub async fn delete_workspace_skill(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let workspace = resolve_skills_workspace(&state, &headers).await?;
+    let id = validate_skill_id(&id)?.to_string();
+    let skill_dir = workspace_skill_dir(&workspace, &id);
+    if !skill_dir.exists() {
+        return Err(ApiError::not_found(format!("skill '{id}' not found")));
+    }
+    fs::remove_dir_all(&skill_dir).map_err(|error| ApiError::internal(error.into()))?;
+    remove_workspace_skill_state(&workspace, &id)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn resolve_skills_workspace(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<PathBuf, ApiError> {
+    let user = authenticated_user(state, headers).await?;
+    state
+        .workspace_for_user(user.as_ref())
+        .map_err(ApiError::internal)
+}
+
+fn parse_skill_source(source: &str) -> Result<SkillSource, ApiError> {
+    match source.trim() {
+        "builtin" => Ok(SkillSource::Builtin),
+        "workspace" => Ok(SkillSource::Workspace),
+        _ => Err(ApiError::bad_request(
+            "skill source must be either 'builtin' or 'workspace'",
+        )),
+    }
+}
+
+fn validate_skill_id(skill_id: &str) -> Result<&str, ApiError> {
+    let trimmed = skill_id.trim();
+    if trimmed.is_empty()
+        || !trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_'))
+    {
+        return Err(ApiError::bad_request("invalid skill id"));
+    }
+    Ok(trimmed)
+}
+
+fn managed_skill_by_id(
+    managed: &crate::skills::ManagedSkills,
+    source: SkillSource,
+    id: &str,
+) -> Option<ManagedSkillEntry> {
+    let entries = match source {
+        SkillSource::Builtin => &managed.builtin,
+        SkillSource::Workspace => &managed.workspace,
+    };
+    entries.iter().find(|skill| skill.id == id).cloned()
+}
+
+fn load_workspace_skill(workspace: &FsPath, id: &str) -> Result<ManagedSkillEntry, ApiError> {
+    let managed = SkillsCatalog::new(workspace.to_path_buf())
+        .discover_managed()
+        .map_err(ApiError::internal)?;
+    managed_skill_by_id(&managed, SkillSource::Workspace, id)
+        .ok_or_else(|| ApiError::bad_request(format!("skill '{id}' could not be loaded")))
+}
+
+fn skill_summary_response(skill: &ManagedSkillEntry) -> SkillSummaryResponse {
+    SkillSummaryResponse {
+        id: skill.id.clone(),
+        name: skill.entry.name.clone(),
+        description: skill.entry.description.clone(),
+        source: match skill.source {
+            SkillSource::Builtin => "builtin".to_string(),
+            SkillSource::Workspace => "workspace".to_string(),
+        },
+        enabled: skill.enabled,
+        effective: skill.effective,
+        available: skill.entry.available,
+        missing_requirements: skill.entry.missing_requirements.clone(),
+        overrides_builtin: skill.overrides_builtin,
+        shadowed_by_workspace: skill.shadowed_by_workspace,
+        read_only: matches!(skill.source, SkillSource::Builtin),
+        has_extra_files: skill.has_extra_files,
+    }
+}
+
+fn skill_detail_response(skill: &ManagedSkillEntry) -> Result<SkillDetailResponse, ApiError> {
+    Ok(SkillDetailResponse {
+        summary: skill_summary_response(skill),
+        path: skill.entry.path.display().to_string(),
+        raw_content: skill.entry.raw_content.clone(),
+        body: skill.entry.body.clone(),
+        normalized_name: skill.entry.normalized_name.clone(),
+        metadata: SkillMetadataResponse {
+            always: skill.entry.metadata.always,
+            requires: SkillRequirementsResponse {
+                bins: skill.entry.metadata.requires.bins.clone(),
+                env: skill.entry.metadata.requires.env.clone(),
+            },
+            keywords: skill.entry.metadata.keywords.clone(),
+            tags: skill.entry.metadata.tags.clone(),
+        },
+        parse_warnings: Vec::new(),
+        extra_files: list_extra_files(
+            skill.entry.path.parent().unwrap_or_else(|| FsPath::new("")),
+        )?,
+    })
+}
+
+fn list_extra_files(skill_dir: &FsPath) -> Result<Vec<String>, ApiError> {
+    let Ok(entries) = fs::read_dir(skill_dir) else {
+        return Ok(Vec::new());
+    };
+    let mut files = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            (name != "SKILL.md").then_some(name)
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    Ok(files)
+}
+
+fn workspace_skill_dir(workspace: &FsPath, id: &str) -> PathBuf {
+    workspace.join("skills").join(id)
+}
+
+fn workspace_skill_state_path(workspace: &FsPath) -> PathBuf {
+    workspace.join(".nanobot").join("skills-state.json")
+}
+
+fn load_workspace_skill_states(path: &FsPath) -> BTreeMap<String, WorkspaceSkillStateRecord> {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return BTreeMap::new();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+fn save_workspace_skill_states(
+    path: &FsPath,
+    states: &BTreeMap<String, WorkspaceSkillStateRecord>,
+) -> Result<(), ApiError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| ApiError::internal(error.into()))?;
+    }
+    let raw =
+        serde_json::to_vec_pretty(states).map_err(|error| ApiError::internal(error.into()))?;
+    fs::write(path, raw).map_err(|error| ApiError::internal(error.into()))
+}
+
+fn remove_workspace_skill_state(workspace: &FsPath, id: &str) -> Result<(), ApiError> {
+    let path = workspace_skill_state_path(workspace);
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut states = load_workspace_skill_states(&path);
+    if states.remove(id).is_none() {
+        return Ok(());
+    }
+    if states.is_empty() {
+        fs::remove_file(path).map_err(|error| ApiError::internal(error.into()))
+    } else {
+        save_workspace_skill_states(&path, &states)
     }
 }
 

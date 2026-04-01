@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -95,6 +95,45 @@ async fn login_cookie(app: &Router, username: &str, password: &str) -> String {
         .and_then(|value| value.to_str().ok())
         .expect("set-cookie")
         .to_string()
+}
+
+fn write_skill(root: &Path, id: &str, content: &str) {
+    let skill_dir = root.join(id);
+    std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+    std::fs::write(skill_dir.join("SKILL.md"), content).expect("write skill");
+}
+
+fn unique_skill_id(prefix: &str) -> String {
+    format!(
+        "{prefix}-{}",
+        Utc::now()
+            .timestamp_nanos_opt()
+            .expect("timestamp nanos available")
+    )
+}
+
+struct TempBuiltinSkill {
+    path: PathBuf,
+}
+
+impl TempBuiltinSkill {
+    fn new(id: &str, content: &str) -> Self {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("skills")
+            .join(id);
+        if path.exists() {
+            std::fs::remove_dir_all(&path).expect("remove stale builtin skill");
+        }
+        std::fs::create_dir_all(&path).expect("create builtin skill dir");
+        std::fs::write(path.join("SKILL.md"), content).expect("write builtin skill");
+        Self { path }
+    }
+}
+
+impl Drop for TempBuiltinSkill {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }
 
 #[derive(Clone)]
@@ -463,11 +502,7 @@ async fn put_my_config_accepts_structured_json_and_persists_the_toml_backing_fil
         std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
     let users: serde_json::Value = serde_json::from_str(&users).expect("users json");
     let user_id = users["users"][0]["user_id"].as_str().expect("user id");
-    let config_path = dir
-        .path()
-        .join("users")
-        .join(user_id)
-        .join("config.toml");
+    let config_path = dir.path().join("users").join(user_id).join("config.toml");
 
     assert!(config_path.exists());
     let saved = std::fs::read_to_string(&config_path).expect("config toml");
@@ -763,6 +798,119 @@ async fn change_password_endpoint_rotates_credentials_for_the_authenticated_user
         .await
         .expect("new login");
     assert_eq!(new_login.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn skills_api_lists_builtin_and_workspace_entries_for_authenticated_user() {
+    let builtin_id = unique_skill_id("builtin-weather");
+    let workspace_id = unique_skill_id("alice-weather");
+    let other_workspace_id = unique_skill_id("bob-weather");
+    let builtin_name = format!("Builtin Weather {builtin_id}");
+    let workspace_name = format!("Alice Workspace Weather {workspace_id}");
+    let _builtin = TempBuiltinSkill::new(
+        &builtin_id,
+        &format!("---\nname: {builtin_name}\ndescription: builtin weather\n---\n\nBuiltin body\n"),
+    );
+
+    let (state, dir) = multiuser_state();
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let bob = store
+        .create_user("bob", "Bob", Role::User, "password456")
+        .expect("create bob");
+    let alice = store
+        .get_user_by_username("alice")
+        .expect("lookup alice")
+        .expect("alice");
+    write_skill(
+        &store.user_workspace_path(&alice.user_id).join("skills"),
+        &workspace_id,
+        &format!(
+            "---\nname: {workspace_name}\ndescription: alice workspace weather\n---\n\nAlice body\n"
+        ),
+    );
+    write_skill(
+        &store.user_workspace_path(&bob.user_id).join("skills"),
+        &other_workspace_id,
+        &format!(
+            "---\nname: Bob Workspace Weather {other_workspace_id}\ndescription: bob workspace weather\n---\n\nBob body\n"
+        ),
+    );
+
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/skills")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("skills list");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("skills list body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("skills list json");
+    let workspace = payload["workspace"]
+        .as_array()
+        .expect("workspace skills array");
+    let builtin = payload["builtin"].as_array().expect("builtin skills array");
+
+    assert!(workspace.iter().any(|skill| {
+        skill["id"] == json!(workspace_id) && skill["name"] == json!(workspace_name)
+    }));
+    assert!(
+        !workspace
+            .iter()
+            .any(|skill| skill["id"] == json!(other_workspace_id))
+    );
+    assert!(
+        builtin
+            .iter()
+            .any(|skill| skill["id"] == json!(builtin_id) && skill["readOnly"] == json!(true))
+    );
+}
+
+#[tokio::test]
+async fn skills_api_toggles_workspace_state_in_single_user_mode_without_rewriting_skill_body() {
+    let dir = tempdir().expect("tempdir");
+    let raw_content = "---\nname: local weather\ndescription: workspace weather\n---\n\nBody line 1\nBody line 2\n";
+    let skill_path = dir
+        .path()
+        .join("skills")
+        .join("local-weather")
+        .join("SKILL.md");
+    write_skill(
+        dir.path().join("skills").as_path(),
+        "local-weather",
+        raw_content,
+    );
+    let app = agent_app(&dir, Vec::new()).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/skills/workspace/local-weather/state")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"enabled":false}"#))
+                .unwrap(),
+        )
+        .await
+        .expect("toggle workspace state");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let state_path = dir.path().join(".nanobot").join("skills-state.json");
+    let state_raw = std::fs::read_to_string(&state_path).expect("state file");
+    let state_json: serde_json::Value = serde_json::from_str(&state_raw).expect("state json");
+    assert_eq!(state_json["local-weather"]["enabled"], json!(false));
+    assert_eq!(
+        std::fs::read_to_string(&skill_path).expect("workspace skill after toggle"),
+        raw_content
+    );
 }
 
 #[tokio::test]
