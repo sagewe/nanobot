@@ -140,6 +140,7 @@ function readCssBlock(selectorPattern) {
 
 describe("tool trace output", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     document.body.innerHTML = BASE_MARKUP;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -323,6 +324,7 @@ describe("tool trace output", () => {
     expect(html).toContain('data-i18n="settings_channels_telegram"');
     expect(html).toContain('data-i18n="settings_channels_weixin"');
     expect(html).toContain('data-i18n="settings_channels_wecom"');
+    expect(html).toContain('data-i18n="settings_channels_feishu"');
     expect(html).toContain('data-i18n="settings_workspace_title"');
     expect(html).toContain('data-i18n="settings_advanced_title"');
     expect(html).toContain('data-i18n="settings_password_title"');
@@ -336,6 +338,8 @@ describe("tool trace output", () => {
     expect(TRANSLATIONS.zh.settings_workspace_title).toBeTruthy();
     expect(TRANSLATIONS.en.settings_advanced_title).toBe("Advanced TOML");
     expect(TRANSLATIONS.zh.settings_advanced_title).toContain("TOML");
+    expect(TRANSLATIONS.en.settings_channels_feishu).toBe("Feishu");
+    expect(TRANSLATIONS.zh.settings_channels_feishu).toBeTruthy();
     expect(TRANSLATIONS.en.users_action_reset_password).toBeTruthy();
     expect(TRANSLATIONS.zh.users_action_reset_password).toBeTruthy();
     expect(js).toContain('t("users_empty")');
@@ -350,8 +354,26 @@ describe("tool trace output", () => {
     expect(packageJson).toContain('"@iarna/toml"');
   });
 
+  it("surfaces Feishu structured settings in the workspace form", () => {
+    const html = readHtml();
+    const js = readJs();
+
+    expect(html).toContain('id="settings-feishu-enabled"');
+    expect(html).toContain('id="settings-feishu-app-id"');
+    expect(html).toContain('id="settings-feishu-app-secret"');
+    expect(html).toContain('id="settings-feishu-api-base"');
+    expect(html).toContain('id="settings-feishu-ws-base"');
+    expect(js).toContain('const settingsFeishuEnabled = document.getElementById("settings-feishu-enabled")');
+    expect(js).toContain('const settingsFeishuAppId = document.getElementById("settings-feishu-app-id")');
+    expect(js).toContain('const settingsFeishuAppSecret = document.getElementById("settings-feishu-app-secret")');
+    expect(js).toContain('const settingsFeishuApiBase = document.getElementById("settings-feishu-api-base")');
+    expect(js).toContain('const settingsFeishuWsBase = document.getElementById("settings-feishu-ws-base")');
+    expect(js).toContain("next.channels.feishu ??= {}");
+  });
+
   it("submits parsed TOML editor text as a structured config object", async () => {
     document.body.innerHTML = readHtmlBody();
+    vi.resetModules();
     apiMocks.fetchCurrentUser.mockRejectedValueOnce(new Error("login required"));
     apiMocks.updateMyConfig.mockResolvedValueOnce({ ok: true });
 
@@ -391,6 +413,54 @@ describe("tool trace output", () => {
     expect(payload.channels.telegram.enabled).toBe(true);
     expect(payload.agents.defaults.defaultProfile).toBe("openai:gpt-4.1-mini");
     expect(payload).not.toBe(configEditor.value);
+  });
+
+  it("merges Feishu structured settings into the submitted config", async () => {
+    document.body.innerHTML = readHtmlBody();
+    vi.resetModules();
+    apiMocks.fetchCurrentUser.mockRejectedValueOnce(new Error("login required"));
+    apiMocks.updateMyConfig.mockResolvedValueOnce({ ok: true });
+
+    const { default: TOML } = await import("@iarna/toml");
+    await import("../src/main.js");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const configEditor = document.getElementById("config-editor");
+    const settingsForm = document.getElementById("settings-form");
+    const settingsFeishuEnabled = document.getElementById("settings-feishu-enabled");
+    const settingsFeishuAppId = document.getElementById("settings-feishu-app-id");
+    const settingsFeishuAppSecret = document.getElementById("settings-feishu-app-secret");
+    const settingsFeishuApiBase = document.getElementById("settings-feishu-api-base");
+    const settingsFeishuWsBase = document.getElementById("settings-feishu-ws-base");
+
+    settingsFeishuEnabled.checked = true;
+    settingsFeishuAppId.value = "cli_test_app";
+    settingsFeishuAppSecret.value = "secret-value";
+    settingsFeishuApiBase.value = "https://open.feishu.cn/open-apis";
+    settingsFeishuWsBase.value = "wss://open.feishu.cn/ws";
+    configEditor.value = TOML.stringify({
+      channels: {
+        feishu: {
+          enabled: false,
+          appId: "",
+          appSecret: "",
+          apiBase: "",
+          wsBase: "",
+        },
+      },
+    });
+
+    settingsForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(apiMocks.updateMyConfig).toHaveBeenCalledTimes(1);
+    const [payload] = apiMocks.updateMyConfig.mock.calls[0];
+
+    expect(payload.channels.feishu.enabled).toBe(true);
+    expect(payload.channels.feishu.appId).toBe("cli_test_app");
+    expect(payload.channels.feishu.appSecret).toBe("secret-value");
+    expect(payload.channels.feishu.apiBase).toBe("https://open.feishu.cn/open-apis");
+    expect(payload.channels.feishu.wsBase).toBe("wss://open.feishu.cn/ws");
   });
 
   it("separates the users page into a create card and a directory card", () => {

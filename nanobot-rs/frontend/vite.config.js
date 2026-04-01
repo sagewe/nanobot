@@ -2,8 +2,9 @@ import { defineConfig } from 'vite'
 
 export default defineConfig({
   server: {
+    host: '127.0.0.1',
     proxy: {
-      '/api': 'http://localhost:3456',
+      '/api': 'http://127.0.0.1:3456',
     }
   },
   build: {

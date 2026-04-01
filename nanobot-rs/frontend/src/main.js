@@ -118,6 +118,11 @@ const settingsWeixinApiBase = document.getElementById("settings-weixin-api-base"
 const settingsWecomEnabled = document.getElementById("settings-wecom-enabled");
 const settingsWecomBotId = document.getElementById("settings-wecom-bot-id");
 const settingsWecomSecret = document.getElementById("settings-wecom-secret");
+const settingsFeishuEnabled = document.getElementById("settings-feishu-enabled");
+const settingsFeishuAppId = document.getElementById("settings-feishu-app-id");
+const settingsFeishuAppSecret = document.getElementById("settings-feishu-app-secret");
+const settingsFeishuApiBase = document.getElementById("settings-feishu-api-base");
+const settingsFeishuWsBase = document.getElementById("settings-feishu-ws-base");
 const configEditor = document.getElementById("config-editor");
 const changePasswordForm = document.getElementById("change-password-form");
 const currentPasswordInput = document.getElementById("current-password-input");
@@ -256,6 +261,11 @@ function syncStructuredSettings(config) {
   settingsWecomEnabled.checked = Boolean(config?.channels?.wecom?.enabled);
   settingsWecomBotId.value = config?.channels?.wecom?.botId || "";
   settingsWecomSecret.value = config?.channels?.wecom?.secret || "";
+  settingsFeishuEnabled.checked = Boolean(config?.channels?.feishu?.enabled);
+  settingsFeishuAppId.value = config?.channels?.feishu?.appId || "";
+  settingsFeishuAppSecret.value = config?.channels?.feishu?.appSecret || "";
+  settingsFeishuApiBase.value = config?.channels?.feishu?.apiBase || "";
+  settingsFeishuWsBase.value = config?.channels?.feishu?.wsBase || "";
 }
 
 function applyStructuredSettings(config) {
@@ -266,6 +276,7 @@ function applyStructuredSettings(config) {
   next.channels.telegram ??= {};
   next.channels.weixin ??= {};
   next.channels.wecom ??= {};
+  next.channels.feishu ??= {};
 
   if (settingsDefaultProfile.value.trim()) {
     next.agents.defaults.defaultProfile = settingsDefaultProfile.value.trim();
@@ -277,6 +288,11 @@ function applyStructuredSettings(config) {
   next.channels.wecom.enabled = settingsWecomEnabled.checked;
   next.channels.wecom.botId = settingsWecomBotId.value.trim();
   next.channels.wecom.secret = settingsWecomSecret.value.trim();
+  next.channels.feishu.enabled = settingsFeishuEnabled.checked;
+  next.channels.feishu.appId = settingsFeishuAppId.value.trim();
+  next.channels.feishu.appSecret = settingsFeishuAppSecret.value.trim();
+  next.channels.feishu.apiBase = settingsFeishuApiBase.value.trim();
+  next.channels.feishu.wsBase = settingsFeishuWsBase.value.trim();
   return next;
 }
 
