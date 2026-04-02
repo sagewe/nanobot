@@ -222,6 +222,12 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
     return !state.dirty || confirmAction(text("skills_discard_confirm", "Discard unsaved skill changes?"));
   }
 
+  function discardDirtyDetail() {
+    if (!state.dirty) return;
+    state.dirty = false;
+    render();
+  }
+
   async function selectSkill(selected) {
     if (!selected) {
       state.selected = null;
@@ -318,20 +324,12 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
 
   async function load() {
     await refreshSummaries();
-    if (state.dirty && state.detail && state.selected) {
-      render(editor.value);
-      state.loaded = true;
-      return;
-    }
-    const existing = findSummary(state.summaries, state.selected);
-    if (existing) {
-      await loadSelectedDetail(existing);
-      state.loaded = true;
-      return;
-    }
     state.loaded = true;
     const firstWorkspace = state.summaries.workspace[0];
     if (firstWorkspace) {
+      state.selected = null;
+      state.detail = null;
+      state.dirty = false;
       await selectSkill(firstWorkspace);
       return;
     }
@@ -405,7 +403,11 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
       render(state.dirty ? editor.value : null);
     },
     confirmDiscardChanges() {
-      return canLeaveDirtyDetail();
+      const confirmed = canLeaveDirtyDetail();
+      if (confirmed) {
+        discardDirtyDetail();
+      }
+      return confirmed;
     },
   };
 }

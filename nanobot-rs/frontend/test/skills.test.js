@@ -208,6 +208,69 @@ describe("createSkillsController", () => {
     expect(document.getElementById("skill-enabled-toggle").disabled).toBe(true);
   });
 
+  it("reapplies the first workspace selection whenever load runs", async () => {
+    const firstWorkspace = buildSummary({
+      id: "workspace-alpha",
+      name: "Workspace Alpha",
+      description: "First workspace skill.",
+      source: "workspace",
+    });
+    const secondWorkspace = buildSummary({
+      id: "workspace-beta",
+      name: "Workspace Beta",
+      description: "Second workspace skill.",
+      source: "workspace",
+    });
+    const builtinSummary = buildSummary({
+      id: "builtin-weather",
+      name: "Builtin Weather",
+      description: "Builtin reference.",
+      source: "builtin",
+      readOnly: true,
+    });
+    const api = {
+      fetchSkillsList: vi.fn().mockResolvedValue({
+        workspace: [firstWorkspace, secondWorkspace],
+        builtin: [builtinSummary],
+      }),
+      fetchSkillDetail: vi.fn().mockImplementation(async (source, id) => {
+        if (source === "workspace" && id === firstWorkspace.id) {
+          return buildDetail(firstWorkspace);
+        }
+        if (source === "workspace" && id === secondWorkspace.id) {
+          return buildDetail(secondWorkspace);
+        }
+        if (source === "builtin" && id === builtinSummary.id) {
+          return buildDetail(builtinSummary);
+        }
+        throw new Error(`unexpected skill ${source}/${id}`);
+      }),
+      createWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkillState: vi.fn(),
+      deleteWorkspaceSkill: vi.fn(),
+    };
+
+    const { createSkillsController } = await import("../src/skills.js");
+    const controller = createSkillsController({
+      root: document.querySelector(".skills-pane"),
+      api,
+      setStatus: vi.fn(),
+      t: (key) => key,
+      confirmDelete: vi.fn(),
+    });
+
+    await controller.load();
+    document.querySelector('#skills-builtin-list button[data-id="builtin-weather"]').click();
+    await flush();
+    await controller.load();
+
+    expect(api.fetchSkillDetail).toHaveBeenLastCalledWith("workspace", "workspace-alpha");
+    expect(document.getElementById("skill-editor").value).toContain("Workspace Alpha");
+    expect(document.getElementById("skill-editor").value).not.toContain("Builtin Weather");
+    expect(document.getElementById("skill-editor").readOnly).toBe(false);
+  });
+
   it("keeps toggle-state updates separate from raw-content saves", async () => {
     const workspaceSummary = buildSummary({
       id: "workspace-weather",
@@ -310,5 +373,50 @@ describe("createSkillsController", () => {
     expect(api.fetchSkillDetail).not.toHaveBeenLastCalledWith("builtin", "builtin-weather");
     expect(document.getElementById("skill-editor").value).toContain("# dirty");
     expect(document.getElementById("skill-editor").value).toContain("Workspace Weather");
+  });
+
+  it("discards dirty draft state when tab-leave confirmation is accepted", async () => {
+    const workspaceSummary = buildSummary({
+      id: "workspace-weather",
+      name: "Workspace Weather",
+      source: "workspace",
+    });
+    const api = {
+      fetchSkillsList: vi.fn().mockResolvedValue({
+        workspace: [workspaceSummary],
+        builtin: [],
+      }),
+      fetchSkillDetail: vi.fn().mockResolvedValue(buildDetail(workspaceSummary)),
+      createWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkillState: vi.fn(),
+      deleteWorkspaceSkill: vi.fn(),
+    };
+    const confirmDelete = vi.fn().mockReturnValue(true);
+
+    const { createSkillsController } = await import("../src/skills.js");
+    const controller = createSkillsController({
+      root: document.querySelector(".skills-pane"),
+      api,
+      setStatus: vi.fn(),
+      t: (key) => key,
+      confirmDelete,
+    });
+
+    await controller.load();
+
+    const editor = document.getElementById("skill-editor");
+    editor.value = `${editor.value}\n# dirty`;
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(controller.confirmDiscardChanges()).toBe(true);
+    expect(confirmDelete).toHaveBeenCalledTimes(1);
+    expect(document.getElementById("skill-editor").value).not.toContain("# dirty");
+
+    await controller.load();
+
+    expect(api.fetchSkillDetail).toHaveBeenLastCalledWith("workspace", "workspace-weather");
+    expect(document.getElementById("skill-editor").value).toContain("Workspace Weather");
+    expect(document.getElementById("skill-editor").value).not.toContain("# dirty");
   });
 });
