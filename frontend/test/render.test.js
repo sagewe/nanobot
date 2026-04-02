@@ -427,13 +427,25 @@ describe("tool trace output", () => {
     expect(html).toContain('id="settings-form" class="control-form settings-layout"');
     expect(html).toContain('class="settings-main"');
     expect(html).toContain('class="settings-advanced"');
-    expect(html).toContain('class="settings-advanced-header"');
+    expect(html).toContain('class="settings-advanced-header section-header"');
     expect(settingsLayoutCss).toContain("grid-template-columns:");
     expect(settingsMainCss).toContain("display: grid;");
     expect(settingsAdvancedCss).toContain("grid-template-rows:");
     expect(css).toContain("@media (max-width: 1100px)");
     expect(css).toContain(".settings-layout");
     expect(css).toContain("grid-template-columns: 1fr;");
+  });
+
+  it("marks tab-adjacent panes with shared section semantics", () => {
+    const html = readHtml();
+
+    expect(html).toContain('class="jobs-header section-header"');
+    expect(html).toContain('id="jobs-refresh-btn" type="button" class="section-action"');
+    expect(html).toContain('class="control-panel control-panel--skills section-surface"');
+    expect(html).toContain('class="skills-group section-surface"');
+    expect(html).toContain('class="skills-detail section-surface"');
+    expect(html).toContain('class="users-pane-header section-title-group"');
+    expect(html).toContain('class="session-kicker section-eyebrow"');
   });
 
   it("adds a static skills shell with responsive master-detail scaffolding", async () => {
@@ -486,7 +498,7 @@ describe("tool trace output", () => {
     const { TRANSLATIONS } = await import("../src/i18n.js");
 
     expect(html).toContain('class="settings-channel-groups"');
-    expect(html).toContain('class="settings-channel-group"');
+    expect(html).toContain('class="settings-channel-group section-surface"');
     expect(html).toContain('data-i18n="settings_channels_telegram"');
     expect(html).toContain('data-i18n="settings_channels_weixin"');
     expect(html).toContain('data-i18n="settings_channels_wecom"');
@@ -687,10 +699,10 @@ describe("tool trace output", () => {
     const usersLayoutCss = readCssBlock("\\.users-layout");
     const usersCreateFormCss = readCssBlock("\\.users-create-form");
 
-    expect(html).toContain('class="users-pane-header"');
+    expect(html).toContain('class="users-pane-header section-title-group"');
     expect(html).toContain('class="users-layout"');
-    expect(html).toContain('class="control-panel users-create-card"');
-    expect(html).toContain('class="control-panel users-list-card"');
+    expect(html).toContain('class="control-panel users-create-card section-surface"');
+    expect(html).toContain('class="control-panel users-list-card section-surface"');
     expect(html).toContain('id="create-user-form" class="control-form compact-form users-create-form"');
     expect(usersLayoutCss).toContain("display: grid;");
     expect(usersCreateFormCss).toContain("max-width:");
