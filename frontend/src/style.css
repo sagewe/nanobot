@@ -444,7 +444,7 @@
       }
 
       .section-action {
-        border: 1px solid var(--section-surface-border);
+        border: 1px solid var(--line);
         border-radius: var(--nav-item-radius);
         background: var(--nav-quiet-bg);
         color: var(--dim);
