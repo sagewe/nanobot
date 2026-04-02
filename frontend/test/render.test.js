@@ -261,6 +261,28 @@ describe("tool trace output", () => {
     expect(fadeCss).not.toContain("-webkit-backdrop-filter:");
   });
 
+  it("defines shared navigation tokens and section primitives", () => {
+    const rootCss = readCssBlock(":root");
+    const tabBtnCss = readCssBlock("\\.tab-btn");
+    const sectionHeaderCss = readCssBlock("\\.section-header");
+    const sectionTitleGroupCss = readCssBlock("\\.section-title-group");
+    const sectionActionCss = readCssBlock("\\.section-action");
+
+    expect(rootCss).toContain("--nav-item-radius:");
+    expect(rootCss).toContain("--nav-item-pad-y:");
+    expect(rootCss).toContain("--nav-item-pad-x:");
+    expect(rootCss).toContain("--nav-hover-bg:");
+    expect(rootCss).toContain("--nav-active-bg:");
+    expect(rootCss).toContain("--section-surface-bg:");
+
+    expect(tabBtnCss).toContain("border-radius: var(--nav-item-radius);");
+    expect(tabBtnCss).toContain("padding: var(--nav-item-pad-y) var(--nav-item-pad-x);");
+    expect(sectionHeaderCss).toContain("display: flex;");
+    expect(sectionHeaderCss).toContain("justify-content: space-between;");
+    expect(sectionTitleGroupCss).toContain("display: grid;");
+    expect(sectionActionCss).toContain("border-radius: var(--nav-item-radius);");
+  });
+
   it("keeps message rows constrained to the transcript width instead of the viewport", () => {
     const groupCss = readCssBlock("\\.msg-group");
     const bodyCss = readCssBlock("\\.msg-body");

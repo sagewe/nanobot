@@ -18,6 +18,15 @@
         --danger: #c56b5d;
         --code-bg: #f1eee5;
         --error: #c56b5d;
+        --nav-item-radius: 0.72rem;
+        --nav-item-pad-y: 0.56rem;
+        --nav-item-pad-x: 0.7rem;
+        --nav-hover-bg: rgba(217, 119, 87, 0.08);
+        --nav-active-bg: #fdfcfb;
+        --nav-active-ink: var(--accent);
+        --nav-quiet-bg: transparent;
+        --section-surface-bg: rgba(255, 255, 255, 0.02);
+        --section-surface-border: var(--line);
       }
 
       * {
@@ -387,12 +396,12 @@
 
       .tab-btn {
         border: none;
-        border-radius: 0.5rem;
-        padding: 0.5rem 0.55rem;
+        border-radius: var(--nav-item-radius);
+        padding: var(--nav-item-pad-y) var(--nav-item-pad-x);
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.78rem;
         color: var(--muted);
-        background: transparent;
+        background: var(--nav-quiet-bg);
         cursor: pointer;
         text-align: left;
         white-space: nowrap;
@@ -404,12 +413,12 @@
 
       .tab-btn:hover {
         color: var(--ink);
-        background: rgba(193, 95, 60, 0.08);
+        background: var(--nav-hover-bg);
       }
 
       .tab-btn[data-active="true"] {
-        color: var(--accent);
-        background: #fdfcfb;
+        color: var(--nav-active-ink);
+        background: var(--nav-active-bg);
         font-weight: 600;
       }
 
@@ -420,6 +429,25 @@
 
       .tab-btn[data-active="true"] svg {
         stroke-width: 2.2;
+      }
+
+      .section-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+
+      .section-title-group {
+        display: grid;
+        gap: 0.15rem;
+      }
+
+      .section-action {
+        border: 1px solid var(--section-surface-border);
+        border-radius: var(--nav-item-radius);
+        background: var(--nav-quiet-bg);
+        color: var(--dim);
       }
 
       .sidebar-title {
