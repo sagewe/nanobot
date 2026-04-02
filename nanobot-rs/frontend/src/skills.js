@@ -56,6 +56,19 @@ function skillTemplate(id) {
   return `---\nname: ${title || "New Skill"}\ndescription: \n---\n\n`;
 }
 
+function requirementList(missingRequirements) {
+  if (Array.isArray(missingRequirements)) {
+    return missingRequirements.filter(Boolean);
+  }
+  if (typeof missingRequirements === "string") {
+    return missingRequirements
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 export function createSkillsController({ root, api, setStatus, t, confirmDelete }) {
   const text = (key, fallback) => {
     const translated = typeof t === "function" ? t(key) : key;
@@ -132,7 +145,35 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
         state.selected?.id === skill.id && state.selected?.source === skill.source
       );
       button.className = "skills-list-item";
-      button.textContent = [skill.name, skill.description].filter(Boolean).join(" ");
+
+      const title = document.createElement("div");
+      title.className = "skills-list-title";
+      title.textContent = skill.name;
+
+      const description = document.createElement("div");
+      description.className = "skills-list-description";
+      description.textContent = skill.description;
+
+      const badges = document.createElement("div");
+      badges.className = "skills-list-badges";
+      const badgeLabels = [
+        skill.readOnly ? text("skills_source_builtin", "Built-in") : text("skills_source_workspace", "Workspace"),
+        skill.overridesBuiltin
+          ? text("skills_overrides_builtin", "Overrides builtin")
+          : skill.shadowedByWorkspace
+            ? text("skills_shadowed", "Shadowed")
+            : null,
+        skill.enabled ? text("skills_enabled_state", "Enabled") : text("skills_disabled_state", "Disabled"),
+        skill.available ? text("skills_available", "Available") : text("skills_unavailable", "Unavailable"),
+      ].filter(Boolean);
+      for (const label of badgeLabels) {
+        const badge = document.createElement("span");
+        badge.className = "skills-list-badge";
+        badge.textContent = label;
+        badges.append(badge);
+      }
+
+      button.append(title, description, badges);
       container.append(button);
     }
   }
@@ -174,8 +215,13 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
       detail.readOnly ? text("skills_source_builtin", "Built-in") : text("skills_source_workspace", "Workspace"),
       detail.effective ? text("skills_effective", "Effective") : text("skills_not_effective", "Not effective"),
       detail.enabled ? text("skills_enabled_state", "Enabled") : text("skills_disabled_state", "Disabled"),
+      detail.available ? text("skills_available", "Available") : text("skills_unavailable", "Unavailable"),
       detail.path,
     ].filter(Boolean);
+    const missing = requirementList(detail.missingRequirements);
+    if (missing.length) {
+      details.push(`${text("skills_missing_requirements", "Missing requirements")}: ${missing.join(", ")}`);
+    }
     if (detail.hasExtraFiles || detail.extraFiles.length) {
       details.push(text("skills_has_extra_files", "Has extra files"));
     }
@@ -296,7 +342,15 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
 
   async function deleteCurrentSkill() {
     if (!state.detail || state.detail.readOnly) return;
-    if (!confirmAction(text("skills_delete_confirm", "Delete this workspace skill? This cannot be undone."))) {
+    const extraFiles = state.detail.extraFiles || [];
+    let message = text(
+      "skills_delete_confirm",
+      "Delete this workspace skill? This removes the entire skill directory and cannot be undone."
+    );
+    if (extraFiles.length) {
+      message += ` ${text("skills_delete_extra_files", "Extra files will also be deleted")}: ${extraFiles.join(", ")}.`;
+    }
+    if (!confirmAction(message)) {
       return;
     }
     await api.deleteWorkspaceSkill(state.detail.id);

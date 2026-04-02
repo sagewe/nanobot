@@ -56,6 +56,10 @@ function flush() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function findButtonByText(container, text) {
+  return [...container.querySelectorAll("button")].find((button) => button.textContent.includes(text));
+}
+
 function buildSummary(overrides = {}) {
   return {
     id: "weather",
@@ -105,6 +109,9 @@ describe("createSkillsController", () => {
       name: "Workspace Weather",
       description: "Workspace version.",
       source: "workspace",
+      overridesBuiltin: true,
+      enabled: false,
+      available: false,
     });
     const builtinSummary = buildSummary({
       id: "builtin-weather",
@@ -112,6 +119,7 @@ describe("createSkillsController", () => {
       description: "Builtin version.",
       source: "builtin",
       readOnly: true,
+      shadowedByWorkspace: true,
     });
     const api = {
       fetchSkillsList: vi.fn().mockResolvedValue({
@@ -151,6 +159,12 @@ describe("createSkillsController", () => {
     expect(builtinItems).toHaveLength(1);
     expect(workspaceItems[0].textContent).toContain("Workspace Weather");
     expect(builtinItems[0].textContent).toContain("Builtin Weather");
+    expect(
+      [...workspaceItems[0].querySelectorAll(".skills-list-badge")].map((node) => node.textContent)
+    ).toEqual(expect.arrayContaining(["Workspace", "Overrides builtin", "Disabled", "Unavailable"]));
+    expect(
+      [...builtinItems[0].querySelectorAll(".skills-list-badge")].map((node) => node.textContent)
+    ).toEqual(expect.arrayContaining(["Built-in", "Shadowed", "Enabled", "Available"]));
     expect(api.fetchSkillDetail).toHaveBeenCalledWith("workspace", "workspace-weather");
     expect(document.getElementById("skill-editor").value).toContain("Workspace Weather");
     expect(document.getElementById("skill-editor").readOnly).toBe(false);
@@ -206,6 +220,45 @@ describe("createSkillsController", () => {
     expect(document.getElementById("skill-editor").value).toContain("Builtin Weather");
     expect(document.getElementById("skill-editor").readOnly).toBe(true);
     expect(document.getElementById("skill-enabled-toggle").disabled).toBe(true);
+  });
+
+  it("shows availability and missing requirements in the detail summary strip", async () => {
+    const workspaceSummary = buildSummary({
+      id: "workspace-weather",
+      name: "Workspace Weather",
+      source: "workspace",
+      available: false,
+      missingRequirements: ["python3", "OPENAI_API_KEY"],
+    });
+    const api = {
+      fetchSkillsList: vi.fn().mockResolvedValue({
+        workspace: [workspaceSummary],
+        builtin: [],
+      }),
+      fetchSkillDetail: vi.fn().mockResolvedValue(buildDetail(workspaceSummary)),
+      createWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkillState: vi.fn(),
+      deleteWorkspaceSkill: vi.fn(),
+    };
+
+    const { createSkillsController } = await import("../src/skills.js");
+    const controller = createSkillsController({
+      root: document.querySelector(".skills-pane"),
+      api,
+      setStatus: vi.fn(),
+      t: (key) => key,
+      confirmDelete: vi.fn(),
+    });
+
+    await controller.load();
+
+    const meta = document.querySelector(".skills-detail-meta");
+
+    expect(meta.textContent).toContain("Unavailable");
+    expect(meta.textContent).toContain("Missing requirements");
+    expect(meta.textContent).toContain("python3");
+    expect(meta.textContent).toContain("OPENAI_API_KEY");
   });
 
   it("reapplies the first workspace selection whenever load runs", async () => {
@@ -418,5 +471,46 @@ describe("createSkillsController", () => {
     expect(api.fetchSkillDetail).toHaveBeenLastCalledWith("workspace", "workspace-weather");
     expect(document.getElementById("skill-editor").value).toContain("Workspace Weather");
     expect(document.getElementById("skill-editor").value).not.toContain("# dirty");
+  });
+
+  it("warns that delete removes the whole skill directory and extra files", async () => {
+    const workspaceSummary = buildSummary({
+      id: "workspace-weather",
+      name: "Workspace Weather",
+      source: "workspace",
+      hasExtraFiles: true,
+    });
+    const api = {
+      fetchSkillsList: vi.fn().mockResolvedValue({
+        workspace: [workspaceSummary],
+        builtin: [],
+      }),
+      fetchSkillDetail: vi.fn().mockResolvedValue(buildDetail(workspaceSummary, {
+        extraFiles: ["notes.txt", "examples.md"],
+      })),
+      createWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkillState: vi.fn(),
+      deleteWorkspaceSkill: vi.fn(),
+    };
+    const confirmDelete = vi.fn().mockReturnValue(false);
+
+    const { createSkillsController } = await import("../src/skills.js");
+    const controller = createSkillsController({
+      root: document.querySelector(".skills-pane"),
+      api,
+      setStatus: vi.fn(),
+      t: (key) => key,
+      confirmDelete,
+    });
+
+    await controller.load();
+
+    findButtonByText(document.querySelector(".skills-actions"), "Delete").click();
+
+    expect(confirmDelete).toHaveBeenCalledTimes(1);
+    expect(confirmDelete.mock.calls[0][0]).toContain("entire skill directory");
+    expect(confirmDelete.mock.calls[0][0]).toContain("notes.txt");
+    expect(api.deleteWorkspaceSkill).not.toHaveBeenCalled();
   });
 });
