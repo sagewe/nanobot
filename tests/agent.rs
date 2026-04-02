@@ -12,13 +12,13 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::{Json, Router};
+use serde_json::{Map, Value, json};
 use sidekick::agent::{AgentLoop, ContextBuilder, SubagentManager};
 use sidekick::bus::{InboundMessage, MessageBus};
 use sidekick::config::{AgentProfileConfig, Config, WebToolsConfig};
 use sidekick::providers::{
     LlmProvider, LlmResponse, ProviderPool, ProviderRequestDescriptor, ToolCall,
 };
-use serde_json::{Map, Value, json};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify};
@@ -86,7 +86,7 @@ Check rain forecasts carefully.
 const UNAVAILABLE_DEPLOY_SKILL: &str = r#"---
 name: deploy
 description: deployment helper
-metadata: '{"nanobot":{"requires":{"bins":["definitely_missing_binary_for_agent_prompt_test"]}}}'
+metadata: '{"sidekick":{"requires":{"bins":["definitely_missing_binary_for_agent_prompt_test"]}}}'
 ---
 
 # Deploy
@@ -1281,7 +1281,11 @@ fn context_builder_includes_active_skills_requested_status_and_summary() {
     let workspace = dir.path().join("workspace");
     write_skill(&workspace.join("skills"), "always-on", ALWAYS_SKILL);
     write_skill(&workspace.join("skills"), "weather", WEATHER_SKILL);
-    write_skill(&workspace.join("skills"), "deploy", UNAVAILABLE_DEPLOY_SKILL);
+    write_skill(
+        &workspace.join("skills"),
+        "deploy",
+        UNAVAILABLE_DEPLOY_SKILL,
+    );
 
     let context = ContextBuilder::new(workspace);
     let prompt = context.build_system_prompt("use $weather and $deploy to check conditions");
@@ -2015,7 +2019,11 @@ async fn help_command_bypasses_pending_debounce() {
         .await
         .expect("help should bypass debounce")
         .expect("first outbound");
-    assert!(first.content.contains("Sidekick commands:"), "{}", first.content);
+    assert!(
+        first.content.contains("Sidekick commands:"),
+        "{}",
+        first.content
+    );
 
     let second = tokio::time::timeout(Duration::from_secs(1), bus.consume_outbound())
         .await

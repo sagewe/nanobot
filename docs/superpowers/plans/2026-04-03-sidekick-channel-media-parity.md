@@ -1,4 +1,4 @@
-# Nanobot-rs Channel and Media Parity Implementation Plan
+# Sidekick Channel and Media Parity Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -13,37 +13,37 @@
 ## File Map
 
 **Read before changing**
-- `/Users/sage/nanobot/nanobot-rs/src/bus/mod.rs` - `InboundMessage` / `OutboundMessage` shape, especially the fact that `media` does not exist yet and must be added deliberately.
-- `/Users/sage/nanobot/nanobot-rs/src/config/mod.rs` - current channel config defaults and already-existing knobs like `replyToMessage`.
-- `/Users/sage/nanobot/nanobot/channels/telegram.py` - parity target for Telegram reply/thread/media handling.
-- `/Users/sage/nanobot/nanobot/channels/wecom.py` - parity target for WeCom non-text inbound handling.
-- `/Users/sage/nanobot/nanobot/channels/feishu.py` - parity target for Feishu inbound media download and outbound media upload.
-- `/Users/sage/nanobot/nanobot/agent/tools/message.py` - parity target for message tool `media` support.
-- `/Users/sage/nanobot/nanobot/channels/base.py` - parity target for how channel context is passed around in Python.
+- `<repo-root>/src/bus/mod.rs` - `InboundMessage` / `OutboundMessage` shape, especially the fact that `media` does not exist yet and must be added deliberately.
+- `<repo-root>/src/config/mod.rs` - current channel config defaults and already-existing knobs like `replyToMessage`.
+- `<repo-root>/channels/telegram.py` - parity target for Telegram reply/thread/media handling.
+- `<repo-root>/channels/wecom.py` - parity target for WeCom non-text inbound handling.
+- `<repo-root>/channels/feishu.py` - parity target for Feishu inbound media download and outbound media upload.
+- `<repo-root>/agent/tools/message.py` - parity target for message tool `media` support.
+- `<repo-root>/channels/base.py` - parity target for how channel context is passed around in Python.
 
 **Modify**
-- `/Users/sage/nanobot/nanobot-rs/src/bus/mod.rs`
-- `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
-- `/Users/sage/nanobot/nanobot-rs/src/tools/mod.rs`
-- `/Users/sage/nanobot/nanobot-rs/src/channels/mod.rs`
-- `/Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs`
-- `/Users/sage/nanobot/nanobot-rs/src/channels/feishu.rs`
-- `/Users/sage/nanobot/nanobot-rs/src/channels/weixin.rs`
-- `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
-- `/Users/sage/nanobot/nanobot-rs/tests/tools.rs`
-- `/Users/sage/nanobot/nanobot-rs/tests/channels.rs`
-- `/Users/sage/nanobot/nanobot-rs/tests/wecom.rs`
-- `/Users/sage/nanobot/nanobot-rs/tests/feishu.rs`
-- `/Users/sage/nanobot/nanobot-rs/tests/weixin.rs`
+- `<repo-root>/src/bus/mod.rs`
+- `<repo-root>/src/agent/mod.rs`
+- `<repo-root>/src/tools/mod.rs`
+- `<repo-root>/src/channels/mod.rs`
+- `<repo-root>/src/channels/wecom.rs`
+- `<repo-root>/src/channels/feishu.rs`
+- `<repo-root>/src/channels/weixin.rs`
+- `<repo-root>/tests/agent.rs`
+- `<repo-root>/tests/tools.rs`
+- `<repo-root>/tests/channels.rs`
+- `<repo-root>/tests/wecom.rs`
+- `<repo-root>/tests/feishu.rs`
+- `<repo-root>/tests/weixin.rs`
 
 ### Task 1: Preserve Media And Reply Context Through The Message Tool
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/bus/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/tools/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/tools.rs`
+- Modify: `<repo-root>/src/bus/mod.rs`
+- Modify: `<repo-root>/src/agent/mod.rs`
+- Modify: `<repo-root>/src/tools/mod.rs`
+- Modify: `<repo-root>/tests/agent.rs`
+- Modify: `<repo-root>/tests/tools.rs`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -68,8 +68,8 @@ The `tests/agent.rs` case should drive the full agent path so the test proves `A
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test tools message_tool_schema_includes_media
-cargo test --target-dir /tmp/nanobot-rs-target --test agent message_tool_forwards_media_and_context_metadata
+cargo test --target-dir /tmp/sidekick-target --test tools message_tool_schema_includes_media
+cargo test --target-dir /tmp/sidekick-target --test agent message_tool_forwards_media_and_context_metadata
 ```
 
 Expected: FAIL because the bus envelope does not carry `media` yet, `MessageTool` does not expose `media` as a first-class schema field, and `ToolContext` does not preserve inbound metadata end-to-end.
@@ -100,8 +100,8 @@ Do not add new tool types or another transport abstraction.
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test tools message_tool_schema_includes_media
-cargo test --target-dir /tmp/nanobot-rs-target --test agent message_tool_forwards_media_and_context_metadata
+cargo test --target-dir /tmp/sidekick-target --test tools message_tool_schema_includes_media
+cargo test --target-dir /tmp/sidekick-target --test agent message_tool_forwards_media_and_context_metadata
 ```
 
 Expected: PASS.
@@ -109,15 +109,15 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/bus/mod.rs /Users/sage/nanobot/nanobot-rs/src/agent/mod.rs /Users/sage/nanobot/nanobot-rs/src/tools/mod.rs /Users/sage/nanobot/nanobot-rs/tests/agent.rs /Users/sage/nanobot/nanobot-rs/tests/tools.rs
+git add <repo-root>/src/bus/mod.rs <repo-root>/src/agent/mod.rs <repo-root>/src/tools/mod.rs <repo-root>/tests/agent.rs <repo-root>/tests/tools.rs
 git commit -m "feat: preserve message tool media context"
 ```
 
 ### Task 2: Add Telegram Reply, Thread, And Media Parity
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/channels/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/channels.rs`
+- Modify: `<repo-root>/src/channels/mod.rs`
+- Modify: `<repo-root>/tests/channels.rs`
 
 - [ ] **Step 1: Write the failing Telegram tests**
 
@@ -142,8 +142,8 @@ The test fixture in `tests/channels.rs` will need extra Telegram Bot API routes 
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test channels telegram_channel_publishes_media_and_reply_context
-cargo test --target-dir /tmp/nanobot-rs-target --test channels telegram_channel_sends_attachments_and_thread_reply_metadata
+cargo test --target-dir /tmp/sidekick-target --test channels telegram_channel_publishes_media_and_reply_context
+cargo test --target-dir /tmp/sidekick-target --test channels telegram_channel_sends_attachments_and_thread_reply_metadata
 ```
 
 Expected: FAIL because the Rust Telegram channel currently only reads `text` on inbound messages and does not preserve the richer reply/thread context from the payload.
@@ -165,8 +165,8 @@ Do not add a new Telegram abstraction or switch to a different SDK.
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test channels telegram_channel_publishes_media_and_reply_context
-cargo test --target-dir /tmp/nanobot-rs-target --test channels telegram_channel_sends_attachments_and_thread_reply_metadata
+cargo test --target-dir /tmp/sidekick-target --test channels telegram_channel_publishes_media_and_reply_context
+cargo test --target-dir /tmp/sidekick-target --test channels telegram_channel_sends_attachments_and_thread_reply_metadata
 ```
 
 Expected: PASS.
@@ -174,15 +174,15 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/channels/mod.rs /Users/sage/nanobot/nanobot-rs/tests/channels.rs
+git add <repo-root>/src/channels/mod.rs <repo-root>/tests/channels.rs
 git commit -m "feat: add telegram media and reply parity"
 ```
 
 ### Task 3: Accept Non-Text WeCom Inbound Callbacks
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/wecom.rs`
+- Modify: `<repo-root>/src/channels/wecom.rs`
+- Modify: `<repo-root>/tests/wecom.rs`
 
 - [ ] **Step 1: Write the failing WeCom tests**
 
@@ -207,8 +207,8 @@ Keep the assertions focused on current behavior: the callback should be accepted
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test wecom parse_wecom_callback_accepts_non_text_message_types
-cargo test --target-dir /tmp/nanobot-rs-target --test wecom wecom_channel_publishes_non_text_inbound_messages
+cargo test --target-dir /tmp/sidekick-target --test wecom parse_wecom_callback_accepts_non_text_message_types
+cargo test --target-dir /tmp/sidekick-target --test wecom wecom_channel_publishes_non_text_inbound_messages
 ```
 
 Expected: FAIL because the current parser only admits `msgtype == "text"`.
@@ -228,8 +228,8 @@ If the payload shape for a specific non-text type is ambiguous, prefer a clear p
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test wecom parse_wecom_callback_accepts_non_text_message_types
-cargo test --target-dir /tmp/nanobot-rs-target --test wecom wecom_channel_publishes_non_text_inbound_messages
+cargo test --target-dir /tmp/sidekick-target --test wecom parse_wecom_callback_accepts_non_text_message_types
+cargo test --target-dir /tmp/sidekick-target --test wecom wecom_channel_publishes_non_text_inbound_messages
 ```
 
 Expected: PASS.
@@ -237,15 +237,15 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs /Users/sage/nanobot/nanobot-rs/tests/wecom.rs
+git add <repo-root>/src/channels/wecom.rs <repo-root>/tests/wecom.rs
 git commit -m "feat: accept wecom non-text inbound callbacks"
 ```
 
 ### Task 4: Split Feishu Into Inbound Media Handling
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/channels/feishu.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/feishu.rs`
+- Modify: `<repo-root>/src/channels/feishu.rs`
+- Modify: `<repo-root>/tests/feishu.rs`
 
 - [ ] **Step 1: Write the failing Feishu inbound tests**
 
@@ -270,8 +270,8 @@ The fixture will need extra Feishu API routes for the message resource download 
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test feishu feishu_channel_downloads_image_audio_file_and_post_media
-cargo test --target-dir /tmp/nanobot-rs-target --test feishu feishu_channel_keeps_reply_context_for_media_messages
+cargo test --target-dir /tmp/sidekick-target --test feishu feishu_channel_downloads_image_audio_file_and_post_media
+cargo test --target-dir /tmp/sidekick-target --test feishu feishu_channel_keeps_reply_context_for_media_messages
 ```
 
 Expected: FAIL because the Rust Feishu channel still collapses non-text message types to placeholders.
@@ -291,8 +291,8 @@ Do not introduce a new module unless the file becomes impossible to keep readabl
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test feishu feishu_channel_downloads_image_audio_file_and_post_media
-cargo test --target-dir /tmp/nanobot-rs-target --test feishu feishu_channel_keeps_reply_context_for_media_messages
+cargo test --target-dir /tmp/sidekick-target --test feishu feishu_channel_downloads_image_audio_file_and_post_media
+cargo test --target-dir /tmp/sidekick-target --test feishu feishu_channel_keeps_reply_context_for_media_messages
 ```
 
 Expected: PASS.
@@ -300,15 +300,15 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/channels/feishu.rs /Users/sage/nanobot/nanobot-rs/tests/feishu.rs
+git add <repo-root>/src/channels/feishu.rs <repo-root>/tests/feishu.rs
 git commit -m "feat: download feishu inbound media"
 ```
 
 ### Task 5: Add Feishu Outbound Media Uploads For Message Tool Attachments
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/channels/feishu.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/feishu.rs`
+- Modify: `<repo-root>/src/channels/feishu.rs`
+- Modify: `<repo-root>/tests/feishu.rs`
 
 - [ ] **Step 1: Write the failing outbound media tests**
 
@@ -333,8 +333,8 @@ This task should reuse the reply/create logic already present in `send()`, not r
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test feishu feishu_channel_uploads_media_before_sending_text
-cargo test --target-dir /tmp/nanobot-rs-target --test feishu message_tool_media_reaches_feishu_outbound_send
+cargo test --target-dir /tmp/sidekick-target --test feishu feishu_channel_uploads_media_before_sending_text
+cargo test --target-dir /tmp/sidekick-target --test feishu message_tool_media_reaches_feishu_outbound_send
 ```
 
 Expected: FAIL because the current Feishu `send()` implementation ignores `msg.media`.
@@ -354,8 +354,8 @@ Do not change the existing Feishu message-format heuristics in this batch.
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test feishu feishu_channel_uploads_media_before_sending_text
-cargo test --target-dir /tmp/nanobot-rs-target --test feishu message_tool_media_reaches_feishu_outbound_send
+cargo test --target-dir /tmp/sidekick-target --test feishu feishu_channel_uploads_media_before_sending_text
+cargo test --target-dir /tmp/sidekick-target --test feishu message_tool_media_reaches_feishu_outbound_send
 ```
 
 Expected: PASS.
@@ -363,15 +363,15 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/channels/feishu.rs /Users/sage/nanobot/nanobot-rs/tests/feishu.rs
+git add <repo-root>/src/channels/feishu.rs <repo-root>/tests/feishu.rs
 git commit -m "feat: upload feishu outbound media"
 ```
 
 ### Task 6: Expand Weixin Beyond Text-Only Where The Current Protocol Already Supports It
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/channels/weixin.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/weixin.rs`
+- Modify: `<repo-root>/src/channels/weixin.rs`
+- Modify: `<repo-root>/tests/weixin.rs`
 
 - [ ] **Step 1: Write the failing Weixin tests**
 
@@ -391,7 +391,7 @@ The test should stay conservative: it only needs to prove the Rust channel accep
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test weixin weixin_channel_accepts_non_text_getupdates_items
+cargo test --target-dir /tmp/sidekick-target --test weixin weixin_channel_accepts_non_text_getupdates_items
 ```
 
 Expected: FAIL because the current parser only admits `message_type == 1` text turns.
@@ -410,7 +410,7 @@ This is the place to be conservative. Do not turn this into a new Weixin archite
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test weixin weixin_channel_accepts_non_text_getupdates_items
+cargo test --target-dir /tmp/sidekick-target --test weixin weixin_channel_accepts_non_text_getupdates_items
 ```
 
 Expected: PASS.
@@ -418,7 +418,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/channels/weixin.rs /Users/sage/nanobot/nanobot-rs/tests/weixin.rs
+git add <repo-root>/src/channels/weixin.rs <repo-root>/tests/weixin.rs
 git commit -m "feat: broaden weixin inbound message parsing"
 ```
 
@@ -442,12 +442,12 @@ Expected: no diff after formatting.
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test tools
-cargo test --target-dir /tmp/nanobot-rs-target --test agent
-cargo test --target-dir /tmp/nanobot-rs-target --test channels
-cargo test --target-dir /tmp/nanobot-rs-target --test wecom
-cargo test --target-dir /tmp/nanobot-rs-target --test feishu
-cargo test --target-dir /tmp/nanobot-rs-target --test weixin
+cargo test --target-dir /tmp/sidekick-target --test tools
+cargo test --target-dir /tmp/sidekick-target --test agent
+cargo test --target-dir /tmp/sidekick-target --test channels
+cargo test --target-dir /tmp/sidekick-target --test wecom
+cargo test --target-dir /tmp/sidekick-target --test feishu
+cargo test --target-dir /tmp/sidekick-target --test weixin
 ```
 
 Expected: PASS.
@@ -457,10 +457,10 @@ Expected: PASS.
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target
+cargo test --target-dir /tmp/sidekick-target
 ```
 
-Expected: PASS for the full `nanobot-rs` suite, or a concrete failure that points to a batch-local regression rather than a pre-existing unrelated issue.
+Expected: PASS for the full `Sidekick` suite, or a concrete failure that points to a batch-local regression rather than a pre-existing unrelated issue.
 
 - [ ] **Step 4: Finalize the batch**
 

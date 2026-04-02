@@ -1,12 +1,12 @@
-# nanobot-rs Skills Management Page Design
+# Sidekick Skills Management Page Design
 
 Date: 2026-04-02
-Repo: `/Users/sage/nanobot/nanobot-rs`
+Repo: `<repo-root>`
 Status: Draft approved for spec write-up
 
 ## Summary
 
-Add a dedicated `Skills` management tab to the nanobot-rs web control plane. The page will show builtin skills as read-only reference items and allow full workspace-skill management for `SKILL.md` files under `<workspace>/skills/<id>/SKILL.md`. Runtime discovery, availability checks, and builtin/workspace merge behavior will continue to come from the Rust `skills` module. The web layer will add management APIs for listing, reading, creating, updating, deleting, and enabling or disabling workspace skills via a separate workspace state file.
+Add a dedicated `Skills` management tab to the Sidekick web control plane. The page will show builtin skills as read-only reference items and allow full workspace-skill management for `SKILL.md` files under `<workspace>/skills/<id>/SKILL.md`. Runtime discovery, availability checks, and builtin/workspace merge behavior will continue to come from the Rust `skills` module. The web layer will add management APIs for listing, reading, creating, updating, deleting, and enabling or disabling workspace skills via a separate workspace state file.
 
 ## Goals
 
@@ -30,7 +30,7 @@ Add a dedicated `Skills` management tab to the nanobot-rs web control plane. The
 
 ## Current State
 
-- `nanobot-rs` already has a runtime `skills` module that discovers builtin and workspace skills, parses core metadata, evaluates requirements, and selects active skills for prompt assembly.
+- `Sidekick` already has a runtime `skills` module that discovers builtin and workspace skills, parses core metadata, evaluates requirements, and selects active skills for prompt assembly.
 - The web control plane currently has no `Skills` tab, no skills management API, and no way to edit workspace skills from the UI.
 - The control plane layout is a sidebar-tab shell with large content panes for features like sessions, jobs, MCP, settings, and users.
 - The current settings page already uses a structure that mixes high-level controls with a raw editor, which is compatible with a raw `SKILL.md` workflow.
@@ -54,7 +54,7 @@ Add a dedicated `Skills` management tab to the nanobot-rs web control plane. The
 The management page must treat the directory slug as the stable identity of a skill.
 
 - Workspace skill identity is `<workspace>/skills/<id>/`.
-- Builtin skill identity is `nanobot-rs/skills/<id>/`.
+- Builtin skill identity is `skills/<id>/`.
 - Frontmatter `name` remains editable display metadata, not the storage key.
 - The API and UI should consistently use the directory slug as `id`.
 - If a user edits `name:` inside `SKILL.md`, the skill remains the same managed item.
@@ -65,7 +65,7 @@ This avoids path churn and keeps management behavior stable under raw text editi
 
 Enabled or disabled state should be stored separately from `SKILL.md`.
 
-- Use a workspace-local management file such as `<workspace>/.nanobot/skills-state.json`.
+- Use a workspace-local management file such as `<workspace>/.sidekick/skills-state.json`.
 - The state file maps workspace skill ids to management state, initially just:
   - `enabled: true|false`
 - Missing entries default to enabled.

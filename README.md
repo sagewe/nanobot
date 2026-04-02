@@ -37,8 +37,6 @@ This bootstraps a multi-user control plane under `~/.sidekick`:
 - `users/<user_id>/config.toml` is the per-user runtime config
 - `users/<user_id>/workspace/` is the per-user workspace
 
-If a legacy single-user install already exists under `~/.nanobot-rs/`, `onboard` will migrate that config and workspace into the first admin automatically.
-
 After bootstrapping, edit the generated user config, then start the main runtime:
 
 ```bash
@@ -113,6 +111,12 @@ But the main operational path is `gateway`, because it combines embedded web wit
 
 The browser UI can inspect grouped sessions across channels. `web` sessions are writable. Sessions from other channels are read-only in the browser until duplicated into a writable `web` session.
 
+Current web auth behavior:
+
+- The embedded web UI authenticates with the `sidekick_session` cookie only.
+- If the web UI loses auth during bootstrap, it returns to the sign-in screen instead of leaving a half-authenticated shell visible.
+- Empty sessions now render as an empty transcript until the first real message is sent.
+
 Feishu currently supports long-connection inbound messaging, sender allowlists, group `mention` and `open` policy handling, reply-to-message routing, reaction emoji acknowledgements, and outbound `text`, `post`, and `interactive` delivery.
 
 ## Provider Notes
@@ -166,4 +170,4 @@ cargo run --release -- gateway
 
 For smoke testing, expected logs, and channel/provider triage, use the runbook:
 
-- [Sidekick runtime smoke checklist](/Users/sage/nanobot/docs/runbooks/sidekick-runtime-smoke-checklist.md)
+- `docs/runbooks/sidekick-runtime-smoke-checklist.md`

@@ -1,7 +1,7 @@
 use std::fs;
 
-use sidekick::tools::{EditFileTool, ExecTool, ListDirTool, ReadFileTool, Tool};
 use serde_json::json;
+use sidekick::tools::{EditFileTool, ExecTool, ListDirTool, ReadFileTool, Tool};
 use tempfile::tempdir;
 
 fn write_skill(root: &std::path::Path, name: &str, content: &str) {
@@ -102,13 +102,12 @@ async fn read_file_allows_builtin_skill_root_when_workspace_is_restricted() {
     fs::create_dir_all(&workspace).expect("workspace");
     write_skill(&builtin_root, "weather", WEATHER_SKILL);
 
-    let tool = ReadFileTool::with_additional_roots(
-        workspace.clone(),
-        true,
-        vec![builtin_root.clone()],
-    );
+    let tool =
+        ReadFileTool::with_additional_roots(workspace.clone(), true, vec![builtin_root.clone()]);
     let result = tool
-        .execute(json!({"path": builtin_root.join("weather").join("SKILL.md").display().to_string()}))
+        .execute(
+            json!({"path": builtin_root.join("weather").join("SKILL.md").display().to_string()}),
+        )
         .await;
 
     assert!(result.contains("Weather"));
@@ -122,11 +121,8 @@ async fn list_dir_allows_builtin_skill_root_when_workspace_is_restricted() {
     fs::create_dir_all(&workspace).expect("workspace");
     write_skill(&builtin_root, "weather", WEATHER_SKILL);
 
-    let tool = ListDirTool::with_additional_roots(
-        workspace.clone(),
-        true,
-        vec![builtin_root.clone()],
-    );
+    let tool =
+        ListDirTool::with_additional_roots(workspace.clone(), true, vec![builtin_root.clone()]);
     let result = tool
         .execute(json!({"path": builtin_root.display().to_string(), "recursive": true}))
         .await;

@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use sidekick::bus::{MessageBus, OutboundMessage};
 use serde_json::json;
+use sidekick::bus::{MessageBus, OutboundMessage};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify, mpsc};
 use tokio_tungstenite::{accept_async, tungstenite::Message};

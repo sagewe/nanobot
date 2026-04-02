@@ -2,9 +2,9 @@ use std::net::SocketAddr;
 
 use axum::routing::get;
 use axum::{Json, Router, response::Html};
+use serde_json::{Value, json};
 use sidekick::config::{WebFetchToolConfig, WebSearchToolConfig};
 use sidekick::tools::{Tool, WebFetchTool, WebSearchTool};
-use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 async fn ddg_results() -> Html<&'static str> {

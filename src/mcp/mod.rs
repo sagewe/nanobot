@@ -1,8 +1,7 @@
 //! MCP client: connects to MCP servers and wraps their tools as native Sidekick tools.
 //!
-//! Mirrors `nanobot/agent/tools/mcp.py`.  Supports stdio and streamable-HTTP
-//! transports.  SSE (legacy) servers are also accessed via streamable-HTTP
-//! when the URL ends with `/sse`.
+//! Supports stdio and streamable-HTTP transports. SSE (legacy) servers are
+//! also accessed via streamable-HTTP when the URL ends with `/sse`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

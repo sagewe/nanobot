@@ -2,7 +2,7 @@
 
 ## Summary
 
-Add two focused capabilities to `nanobot-rs`:
+Add two focused capabilities to `Sidekick`:
 
 1. A faster browser composer flow where `Ctrl+Enter` sends the current message. On macOS, `Cmd+Enter` will do the same.
 2. A text-only WeCom smart bot channel, wired into `gateway` alongside Telegram, using the official long-connection model described in [智能机器人长连接](https://developer.work.weixin.qq.com/document/path/101463).
@@ -40,7 +40,7 @@ Why this is the right fit:
 
 - It matches the official smart bot long-connection product instead of the older webhook or internal-app flows.
 - It preserves the current architecture: channels publish inbound messages to the bus and send outbound agent replies.
-- It avoids introducing a Python or Node runtime into `nanobot-rs`.
+- It avoids introducing a Python or Node runtime into `Sidekick`.
 
 ### Rejected Alternatives
 
@@ -218,13 +218,13 @@ Use protocol mocks and local WebSocket test servers. Do not depend on the live W
 
 - Prefer text-only semantics throughout the first WeCom slice
 - Preserve the existing `gateway` command shape
-- Keep the feature independent from Python nanobot config compatibility
+- Keep the feature independent from Python Sidekick config compatibility
 - Keep the implementation small enough to plan and ship as one focused slice
 
 ## Acceptance Criteria
 
-- `nanobot-rs web` accepts `Ctrl+Enter` and `Cmd+Enter` as send shortcuts without breaking newline input
-- `nanobot-rs gateway` can start with `channels.wecom.enabled=true`
+- `Sidekick web` accepts `Ctrl+Enter` and `Cmd+Enter` as send shortcuts without breaking newline input
+- `Sidekick gateway` can start with `channels.wecom.enabled=true`
 - a WeCom text message can enter the existing agent loop and receive a text reply
 - reconnect and heartbeat failures do not crash the process
 - default generated config includes the new WeCom block

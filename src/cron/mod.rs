@@ -1,8 +1,7 @@
 //! Cron service — schedule recurring or one-shot agent tasks.
 //!
-//! Mirrors the Python `nanobot.cron` module.  Jobs are persisted as JSON at
-//! `<workspace>/cron/jobs.json` and hot-reloaded whenever the file is modified
-//! externally (same behaviour as the Python version).
+//! Maintains JSON-compatible cron jobs at `<workspace>/cron/jobs.json` and
+//! hot-reloads them whenever the file is modified externally.
 
 use std::future::Future;
 use std::path::PathBuf;

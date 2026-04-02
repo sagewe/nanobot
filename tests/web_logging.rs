@@ -5,12 +5,12 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde_json::{Map, json};
 use sidekick::agent::AgentLoop;
 use sidekick::bus::MessageBus;
 use sidekick::config::WebToolsConfig;
 use sidekick::providers::{LlmProvider, LlmResponse, ToolCall};
 use sidekick::web::{AgentChatService, ChatService};
-use serde_json::{Map, json};
 use tempfile::tempdir;
 use tokio::sync::Mutex as AsyncMutex;
 

@@ -1,12 +1,12 @@
 # Config TOML Migration Design
 
 Date: 2026-04-01
-Repo: `/Users/sage/nanobot/nanobot-rs`
+Repo: `<repo-root>`
 Status: Draft approved for spec write-up
 
 ## Summary
 
-Unify all human-edited configuration in `nanobot-rs` under `config.toml` while leaving machine-managed runtime state in its current JSON or JSONL formats. This keeps editable configuration consistent for operators and users without expanding the migration into session, audit, cron, MCP, or connector state.
+Unify all human-edited configuration in `Sidekick` under `config.toml` while leaving machine-managed runtime state in its current JSON or JSONL formats. This keeps editable configuration consistent for operators and users without expanding the migration into session, audit, cron, MCP, or connector state.
 
 ## Goals
 
@@ -41,8 +41,8 @@ Unify all human-edited configuration in `nanobot-rs` under `config.toml` while l
 
 ### Canonical File Paths
 
-- Legacy single-user config becomes `~/.nanobot-rs/config.toml`
-- Per-user config becomes `~/.nanobot-rs/users/<user_id>/config.toml`
+- Legacy single-user config becomes `~/.config.toml`
+- Per-user config becomes `~/.users/<user_id>/config.toml`
 
 ### Read Behavior
 

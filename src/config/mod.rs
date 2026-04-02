@@ -2,14 +2,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
 use serde::de::Error as _;
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
 use serde_json::{Map, Value};
 
 use crate::providers::ProviderRegistry;
 
 const DEFAULT_APP_DIR: &str = ".sidekick";
-const LEGACY_APP_DIR: &str = ".nanobot-rs";
 
 #[derive(Debug, Clone)]
 pub struct AgentDefaults {
@@ -698,10 +697,6 @@ pub fn default_workspace_path() -> PathBuf {
     default_app_root().join("workspace")
 }
 
-pub fn legacy_config_root() -> PathBuf {
-    home_dir().join(LEGACY_APP_DIR)
-}
-
 pub fn expand_tilde(path: &Path) -> PathBuf {
     let raw = path.to_string_lossy();
     if raw == "~" {
@@ -738,15 +733,14 @@ fn resolve_config_path(path: Option<&Path>) -> PathBuf {
     if path.is_some() {
         return Config::config_path(path);
     }
-    for base in [default_app_root(), legacy_config_root()] {
-        let toml_path = base.join("config.toml");
-        if toml_path.exists() {
-            return toml_path;
-        }
-        let json_path = base.join("config.json");
-        if json_path.exists() {
-            return json_path;
-        }
+    let base = default_app_root();
+    let toml_path = base.join("config.toml");
+    if toml_path.exists() {
+        return toml_path;
+    }
+    let json_path = base.join("config.json");
+    if json_path.exists() {
+        return json_path;
     }
     default_config_path()
 }

@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
+use serde_json::{Map, Value, json};
 use sidekick::providers::{LlmProvider, OpenAICompatibleProvider, ProviderRequestDescriptor};
 use sidekick::session::SessionMessage;
-use serde_json::{Map, Value, json};
 use tokio::net::TcpListener;
 
 #[derive(Clone)]

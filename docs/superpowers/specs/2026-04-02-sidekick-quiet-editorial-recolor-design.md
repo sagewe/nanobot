@@ -1,12 +1,12 @@
-# nanobot-rs Quiet Editorial Recolor Design
+# Sidekick Quiet Editorial Recolor Design
 
 Date: 2026-04-02
-Repo: `/Users/sage/nanobot/nanobot-rs`
+Repo: `<repo-root>`
 Status: Draft approved for spec write-up
 
 ## Summary
 
-Recolor the `nanobot-rs` frontend to follow an Anthropic-inspired "Quiet Editorial" direction. The UI should shift from its current warm-orange product styling toward a restrained neutral system built on Anthropic's dark ink, light paper, and soft gray surfaces, with orange reserved for primary emphasis and blue/green used only for semantic support. The change applies across the login page, main app shell, light theme, dark theme, syntax highlighting, and hard-coded accent usages, while preserving the existing layout, information architecture, and interactions.
+Recolor the `Sidekick` frontend to follow an Anthropic-inspired "Quiet Editorial" direction. The UI should shift from its current warm-orange product styling toward a restrained neutral system built on Anthropic's dark ink, light paper, and soft gray surfaces, with orange reserved for primary emphasis and blue/green used only for semantic support. The change applies across the login page, main app shell, light theme, dark theme, syntax highlighting, and hard-coded accent usages, while preserving the existing layout, information architecture, and interactions.
 
 ## Goals
 
@@ -30,7 +30,7 @@ Recolor the `nanobot-rs` frontend to follow an Anthropic-inspired "Quiet Editori
 
 ## Current State
 
-- The frontend styling lives primarily in `/Users/sage/nanobot/nanobot-rs/frontend/src/style.css`.
+- The frontend styling lives primarily in `<repo-root>/frontend/src/style.css`.
 - The current palette is already warm and editorial-adjacent, but it mixes:
   - custom warm neutrals
   - orange emphasis values
@@ -154,11 +154,11 @@ These colors should be applied only to true semantic states such as status dots,
 
 Primary files:
 
-- `/Users/sage/nanobot/nanobot-rs/frontend/src/style.css`
+- `<repo-root>/frontend/src/style.css`
 
 Possible secondary file:
 
-- `/Users/sage/nanobot/nanobot-rs/frontend/index.html`
+- `<repo-root>/frontend/index.html`
 
 Expected change areas inside the stylesheet:
 
@@ -202,8 +202,8 @@ The recolor is complete when all of the following are true:
 
 ## Verification Plan
 
-- Run the frontend tests for `nanobot-rs/frontend`.
-- Run the frontend production build for `nanobot-rs/frontend`.
+- Run the frontend tests for `frontend`.
+- Run the frontend production build for `frontend`.
 - Manually inspect the main screens in both light and dark theme if the local preview path is available.
 
 ## Open Questions

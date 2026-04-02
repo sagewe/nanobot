@@ -618,7 +618,8 @@ impl SubagentManager {
         tools
             .register(WebFetchTool::new(self.web_tools.fetch.clone()))
             .await;
-        let system_prompt = ContextBuilder::new(self.workspace.clone()).build_subagent_system_prompt();
+        let system_prompt =
+            ContextBuilder::new(self.workspace.clone()).build_subagent_system_prompt();
         let mut messages = vec![
             system_message(&system_prompt),
             json!({"role": "user", "content": task}),

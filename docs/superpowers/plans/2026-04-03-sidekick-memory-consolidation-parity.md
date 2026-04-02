@@ -1,8 +1,8 @@
-# nanobot-rs Memory and Consolidation Parity Implementation Plan
+# Sidekick Memory and Consolidation Parity Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Bring `nanobot-rs` closer to the Python memory model by adding durable `MEMORY.md` and `HISTORY.md` storage, a `save_memory`-driven consolidation flow, token-budget-based compaction, and session-boundary handling that survives persistence and restarts.
+**Goal:** Bring `Sidekick` closer to the Python memory model by adding durable `MEMORY.md` and `HISTORY.md` storage, a `save_memory`-driven consolidation flow, token-budget-based compaction, and session-boundary handling that survives persistence and restarts.
 
 **Architecture:** Keep the session log as the source of truth in `src/session/mod.rs`, and keep consolidation orchestration in a dedicated agent-side memory module instead of spreading it across the CLI or control plane. The new memory layer should own the `save_memory` prompt/tool contract, append-only history writes, and the compaction watermark, while `AgentLoop` remains responsible for deciding when to invoke it and for persisting the updated session state. Do not mirror Python literally: Rust should use the existing session/session-store layout, a deterministic token approximation, and a narrow internal consolidation tool definition rather than a global runtime tool.
 
@@ -13,14 +13,14 @@
 ### Task 1: Add storage primitives and workspace templates for long-term memory
 
 **Files:**
-- Create: `/Users/sage/nanobot/nanobot-rs/src/agent/memory.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/session/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/control/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/session.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/control.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/cli.rs`
+- Create: `<repo-root>/src/agent/memory.rs`
+- Modify: `<repo-root>/src/agent/mod.rs`
+- Modify: `<repo-root>/src/session/mod.rs`
+- Modify: `<repo-root>/src/control/mod.rs`
+- Modify: `<repo-root>/src/cli/mod.rs`
+- Test: `<repo-root>/tests/session.rs`
+- Test: `<repo-root>/tests/control.rs`
+- Test: `<repo-root>/tests/cli.rs`
 
 - [ ] **Step 1: Write the failing storage-template tests**
 
@@ -44,8 +44,8 @@ assert_eq!(cleared.last_consolidated, 0);
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-memory-storage --test session --test control --test cli
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-memory-storage --test session --test control --test cli
 ```
 
 Expected:
@@ -54,22 +54,22 @@ Expected:
 
 - [ ] **Step 3: Implement the storage primitives**
 
-In `/Users/sage/nanobot/nanobot-rs/src/agent/memory.rs`:
+In `<repo-root>/src/agent/memory.rs`:
 - add a `MemoryStore` that creates `memory/`, reads `MEMORY.md`, writes `MEMORY.md`, appends to `HISTORY.md`, and creates both files lazily if they do not exist
 - keep `HISTORY.md` append-only and formatted for grep search, not JSONL
 - include a small raw-archive helper for the fallback path used when consolidation fails repeatedly
 
-In `/Users/sage/nanobot/nanobot-rs/src/session/mod.rs`:
+In `<repo-root>/src/session/mod.rs`:
 - keep `last_consolidated` as the persisted compaction watermark
 - add small helper methods that make the unconsolidated tail and safe reset behavior explicit, so the consolidator does not have to reach into private slicing logic
 - keep `get_history()` as the read path for LLM prompts; do not change its semantics unless the helper extraction forces it
 
-In `/Users/sage/nanobot/nanobot-rs/src/control/mod.rs` and `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`:
+In `<repo-root>/src/control/mod.rs` and `<repo-root>/src/cli/mod.rs`:
 - extend workspace bootstrapping so the default templates include `memory/HISTORY.md`
 - preserve existing user content when those files already exist
 - keep the workspace template text short and intentionally generic
 
-In `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`:
+In `<repo-root>/src/agent/mod.rs`:
 - add the new memory module declaration so the consolidator can be wired in later
 
 - [ ] **Step 4: Re-run the focused tests**
@@ -77,8 +77,8 @@ In `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-memory-storage --test session --test control --test cli
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-memory-storage --test session --test control --test cli
 ```
 
 Expected:
@@ -88,25 +88,25 @@ Expected:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/agent/memory.rs \
-        /Users/sage/nanobot/nanobot-rs/src/agent/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/session/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/control/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/session.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/control.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/cli.rs
+git add <repo-root>/src/agent/memory.rs \
+        <repo-root>/src/agent/mod.rs \
+        <repo-root>/src/session/mod.rs \
+        <repo-root>/src/control/mod.rs \
+        <repo-root>/src/cli/mod.rs \
+        <repo-root>/tests/session.rs \
+        <repo-root>/tests/control.rs \
+        <repo-root>/tests/cli.rs
 git commit -m "feat: add memory storage primitives"
 ```
 
 ### Task 2: Add save_memory-driven consolidation orchestration in the agent layer
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/agent/memory.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/session/mod.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/session.rs`
+- Modify: `<repo-root>/src/agent/memory.rs`
+- Modify: `<repo-root>/src/agent/mod.rs`
+- Modify: `<repo-root>/src/session/mod.rs`
+- Test: `<repo-root>/tests/agent.rs`
+- Test: `<repo-root>/tests/session.rs`
 
 - [ ] **Step 1: Write the failing consolidation-orchestration tests**
 
@@ -131,8 +131,8 @@ assert_eq!(session.last_consolidated, expected_boundary);
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-memory-consolidation --test agent --test session
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-memory-consolidation --test agent --test session
 ```
 
 Expected:
@@ -141,7 +141,7 @@ Expected:
 
 - [ ] **Step 3: Implement the consolidation orchestrator**
 
-In `/Users/sage/nanobot/nanobot-rs/src/agent/memory.rs`:
+In `<repo-root>/src/agent/memory.rs`:
 - add a `MemoryConsolidator` that owns the memory store, the provider/model handle, a per-session lock table, and the compaction policy
 - define a narrow internal `save_memory` tool schema with only `history_entry` and `memory_update`
 - ask the model for a `save_memory` call using a dedicated consolidation prompt that includes the current `MEMORY.md` and the selected conversation slice
@@ -149,12 +149,12 @@ In `/Users/sage/nanobot/nanobot-rs/src/agent/memory.rs`:
 - append to `HISTORY.md` first, then rewrite `MEMORY.md` if the model produced an updated document, and only then advance `last_consolidated`
 - keep a small failure counter so repeated consolidation failures eventually raw-archive the chunk instead of dropping it
 
-In `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`:
+In `<repo-root>/src/agent/mod.rs`:
 - instantiate the consolidator from `AgentLoop`
 - expose a single entry point that the loop can call after turn completion or before a prompt build
 - keep the orchestration in the agent layer; do not move this into `SessionStore`
 
-In `/Users/sage/nanobot/nanobot-rs/src/session/mod.rs`:
+In `<repo-root>/src/session/mod.rs`:
 - expose the minimum boundary helpers the consolidator needs to compute a safe consolidation slice without reimplementing the session read logic
 
 Design note:
@@ -165,8 +165,8 @@ Design note:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-memory-consolidation --test agent --test session
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-memory-consolidation --test agent --test session
 ```
 
 Expected:
@@ -177,21 +177,21 @@ Expected:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/agent/memory.rs \
-        /Users/sage/nanobot/nanobot-rs/src/agent/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/session/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/agent.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/session.rs
+git add <repo-root>/src/agent/memory.rs \
+        <repo-root>/src/agent/mod.rs \
+        <repo-root>/src/session/mod.rs \
+        <repo-root>/tests/agent.rs \
+        <repo-root>/tests/session.rs
 git commit -m "feat: add save_memory consolidation orchestration"
 ```
 
 ### Task 3: Add token-budget trigger policy and safe consolidation boundaries
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/agent/memory.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/session/mod.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/session.rs`
+- Modify: `<repo-root>/src/agent/memory.rs`
+- Modify: `<repo-root>/src/session/mod.rs`
+- Test: `<repo-root>/tests/agent.rs`
+- Test: `<repo-root>/tests/session.rs`
 
 - [ ] **Step 1: Write the failing policy tests**
 
@@ -216,8 +216,8 @@ assert!(!history.iter().any(|m| m.excluded_from_context()));
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-memory-policy --test session --test agent
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-memory-policy --test session --test agent
 ```
 
 Expected:
@@ -226,13 +226,13 @@ Expected:
 
 - [ ] **Step 3: Implement the policy layer**
 
-In `/Users/sage/nanobot/nanobot-rs/src/agent/memory.rs`:
+In `<repo-root>/src/agent/memory.rs`:
 - add a deterministic token estimator suitable for Rust, such as a weighted word/punctuation approximation
 - keep it isolated behind a helper so a later pass can swap in a model-specific tokenizer without rewriting the consolidation flow
 - compute the compaction target from `context_window_tokens`, then select the oldest safe chunk that removes enough estimated tokens to move the session back under budget
 - stop after a bounded number of consolidation rounds if the session still cannot be compacted safely
 
-In `/Users/sage/nanobot/nanobot-rs/src/session/mod.rs`:
+In `<repo-root>/src/session/mod.rs`:
 - extract or expose the legal-start logic so both `get_history()` and the consolidator can agree on what counts as a valid turn boundary
 - make sure timeline-only or otherwise excluded messages never become consolidation anchors
 
@@ -246,8 +246,8 @@ Policy intent:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-memory-policy --test session --test agent
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-memory-policy --test session --test agent
 ```
 
 Expected:
@@ -258,20 +258,20 @@ Expected:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/agent/memory.rs \
-        /Users/sage/nanobot/nanobot-rs/src/session/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/agent.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/session.rs
+git add <repo-root>/src/agent/memory.rs \
+        <repo-root>/src/session/mod.rs \
+        <repo-root>/tests/agent.rs \
+        <repo-root>/tests/session.rs
 git commit -m "feat: add token-based memory consolidation policy"
 ```
 
 ### Task 4: Wire consolidation into AgentLoop and session persistence boundaries
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/session/mod.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/session.rs`
+- Modify: `<repo-root>/src/agent/mod.rs`
+- Modify: `<repo-root>/src/session/mod.rs`
+- Test: `<repo-root>/tests/agent.rs`
+- Test: `<repo-root>/tests/session.rs`
 
 - [ ] **Step 1: Write the failing integration tests**
 
@@ -294,8 +294,8 @@ assert!(session.messages.is_empty());
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-memory-integration --test agent --test session
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-memory-integration --test agent --test session
 ```
 
 Expected:
@@ -304,14 +304,14 @@ Expected:
 
 - [ ] **Step 3: Implement the session-boundary wiring**
 
-In `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`:
+In `<repo-root>/src/agent/mod.rs`:
 - call the consolidator after `SessionStore.save()` for a completed turn, not before the session write
 - schedule the compaction work in the existing background-task path so the main loop stays responsive
 - keep a per-session lock around consolidation work so the background compactor and the next inbound turn cannot race on the same session
 - on `/new`, archive any remaining unconsolidated messages, reset the session, persist the blank session, and then clear the in-memory cache entry
 - keep the session save as the persistence synchronization point: only save `last_consolidated` after the memory files have been updated successfully
 
-In `/Users/sage/nanobot/nanobot-rs/src/session/mod.rs`:
+In `<repo-root>/src/session/mod.rs`:
 - preserve `last_consolidated` on load/save/duplicate flows
 - keep `clear()` resetting the watermark to zero because a brand-new session must not inherit the previous compaction state
 
@@ -325,8 +325,8 @@ Boundary intent:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-memory-integration --test agent --test session
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-memory-integration --test agent --test session
 ```
 
 Expected:
@@ -337,33 +337,33 @@ Expected:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/agent/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/session/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/agent.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/session.rs
+git add <repo-root>/src/agent/mod.rs \
+        <repo-root>/src/session/mod.rs \
+        <repo-root>/tests/agent.rs \
+        <repo-root>/tests/session.rs
 git commit -m "feat: wire memory consolidation into session persistence"
 ```
 
 ### Task 5: Full verification and regression sweep
 
 **Files:**
-- Verify: `/Users/sage/nanobot/nanobot-rs/src/agent/memory.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/src/session/mod.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/src/control/mod.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/tests/session.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/tests/control.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/tests/cli.rs`
+- Verify: `<repo-root>/src/agent/memory.rs`
+- Verify: `<repo-root>/src/agent/mod.rs`
+- Verify: `<repo-root>/src/session/mod.rs`
+- Verify: `<repo-root>/src/control/mod.rs`
+- Verify: `<repo-root>/src/cli/mod.rs`
+- Verify: `<repo-root>/tests/agent.rs`
+- Verify: `<repo-root>/tests/session.rs`
+- Verify: `<repo-root>/tests/control.rs`
+- Verify: `<repo-root>/tests/cli.rs`
 
 - [ ] **Step 1: Run the focused suites together**
 
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-memory-parity --test agent --test session --test control --test cli
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-memory-parity --test agent --test session --test control --test cli
 ```
 
 Expected:
@@ -375,9 +375,9 @@ Expected:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
+cd <repo-root>
 cargo fmt --all --check
-cargo test --target-dir /tmp/nanobot-rs-target-memory-parity
+cargo test --target-dir /tmp/sidekick-target-memory-parity
 ```
 
 Expected:
@@ -389,7 +389,7 @@ Expected:
 If a manual check is useful, run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
+cd <repo-root>
 cargo run -- gateway
 ```
 
@@ -403,15 +403,15 @@ Check:
 If verification found follow-up changes, stage and commit the whole parity set:
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/agent/memory.rs \
-        /Users/sage/nanobot/nanobot-rs/src/agent/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/session/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/control/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/agent.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/session.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/control.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/cli.rs
+git add <repo-root>/src/agent/memory.rs \
+        <repo-root>/src/agent/mod.rs \
+        <repo-root>/src/session/mod.rs \
+        <repo-root>/src/control/mod.rs \
+        <repo-root>/src/cli/mod.rs \
+        <repo-root>/tests/agent.rs \
+        <repo-root>/tests/session.rs \
+        <repo-root>/tests/control.rs \
+        <repo-root>/tests/cli.rs
 git commit -m "feat: complete memory and consolidation parity"
 ```
 

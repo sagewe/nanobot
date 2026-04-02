@@ -1021,7 +1021,7 @@ pub async fn update_workspace_skill_state(
     let workspace = resolve_skills_workspace(&state, &headers).await?;
     let id = validate_existing_skill_id(&id)?;
     let _skill_path = require_mutable_workspace_skill(&state, &workspace, &id)?;
-    let state_read_path = workspace_skill_state_read_path(&workspace);
+    let state_read_path = workspace_skill_state_path(&workspace);
     let state_write_path = workspace_skill_state_path(&workspace);
     let mut states = load_workspace_skill_state_document(&state_read_path)?;
     set_workspace_skill_enabled(&mut states, &id, request.enabled)?;
@@ -1039,16 +1039,12 @@ pub async fn delete_workspace_skill(
     let workspace = resolve_skills_workspace(&state, &headers).await?;
     let id = validate_existing_skill_id(&id)?;
     let skill_dir = require_mutable_workspace_skill_dir(&state, &workspace, &id)?;
-    let state_read_path = workspace_skill_state_read_path(&workspace);
+    let state_read_path = workspace_skill_state_path(&workspace);
     let state_write_path = workspace_skill_state_path(&workspace);
     fs::remove_dir_all(&skill_dir).map_err(|error| ApiError::internal(error.into()))?;
     if let Some(mut states) = load_workspace_skill_state_document_for_delete(&state_read_path)? {
         states.remove(id);
         save_or_remove_workspace_skill_state_document(&state_write_path, &states)?;
-        let legacy_state_path = legacy_workspace_skill_state_path(&workspace);
-        if legacy_state_path != state_write_path {
-            save_or_remove_workspace_skill_state_document(&legacy_state_path, &states)?;
-        }
     }
     Ok(Json(json!({ "ok": true })))
 }
@@ -1259,21 +1255,8 @@ fn workspace_skill_state_path(workspace: &FsPath) -> PathBuf {
     workspace.join(".sidekick").join("skills-state.json")
 }
 
-fn legacy_workspace_skill_state_path(workspace: &FsPath) -> PathBuf {
-    workspace.join(".nanobot").join("skills-state.json")
-}
-
-fn workspace_skill_state_read_path(workspace: &FsPath) -> PathBuf {
-    let primary = workspace_skill_state_path(workspace);
-    if primary.exists() {
-        primary
-    } else {
-        legacy_workspace_skill_state_path(workspace)
-    }
-}
-
 fn workspace_skill_enabled_lenient(workspace: &FsPath, id: &str) -> bool {
-    let path = workspace_skill_state_read_path(workspace);
+    let path = workspace_skill_state_path(workspace);
     let Ok(raw) = fs::read_to_string(path) else {
         return true;
     };

@@ -13,9 +13,9 @@
 ### Task 1: Add configuration coverage for message debounce
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/config/mod.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/providers.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/model_profiles.rs`
+- Modify: `<repo-root>/src/config/mod.rs`
+- Test: `<repo-root>/tests/providers.rs`
+- Test: `<repo-root>/tests/model_profiles.rs`
 
 - [x] **Step 1: Write the failing config test**
 
@@ -40,8 +40,8 @@ assert_eq!(config.agents.defaults.message_debounce_ms, 1500);
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-session-debounce --test providers --test model_profiles
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-session-debounce --test providers --test model_profiles
 ```
 
 Expected:
@@ -49,7 +49,7 @@ Expected:
 
 - [x] **Step 3: Implement the minimal config change**
 
-In `/Users/sage/nanobot/nanobot-rs/src/config/mod.rs`:
+In `<repo-root>/src/config/mod.rs`:
 - add `message_debounce_ms: u64` to `AgentDefaults`
 - set default to `0`
 - include it in raw config deserialization
@@ -60,8 +60,8 @@ In `/Users/sage/nanobot/nanobot-rs/src/config/mod.rs`:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-session-debounce --test providers --test model_profiles
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-session-debounce --test providers --test model_profiles
 ```
 
 Expected:
@@ -70,17 +70,17 @@ Expected:
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/config/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/providers.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/model_profiles.rs
+git add <repo-root>/src/config/mod.rs \
+        <repo-root>/tests/providers.rs \
+        <repo-root>/tests/model_profiles.rs
 git commit -m "feat: add session debounce config"
 ```
 
 ### Task 2: Replace the global processing lock with session-scoped locking
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
+- Modify: `<repo-root>/src/agent/mod.rs`
+- Test: `<repo-root>/tests/agent.rs`
 
 - [x] **Step 1: Write the failing concurrency test**
 
@@ -90,7 +90,7 @@ Add a test that:
 - uses a provider double that blocks the first session mid-flight
 - asserts the second session can still complete before the first is released
 
-Use a provider pattern similar to the existing concurrency helpers in `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`.
+Use a provider pattern similar to the existing concurrency helpers in `<repo-root>/tests/agent.rs`.
 
 - [x] **Step 2: Write the failing same-session serialization test**
 
@@ -124,8 +124,8 @@ Add a test that:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-session-lock --test agent
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-session-lock --test agent
 ```
 
 Expected:
@@ -135,7 +135,7 @@ Expected:
 
 - [x] **Step 6: Implement session lock lookup**
 
-In `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`:
+In `<repo-root>/src/agent/mod.rs`:
 - replace `processing_lock: Arc<Mutex<()>>` with a session lock table
 - add a helper like `session_lock(&self, session_key: &str) -> Arc<Mutex<()>>`
 - acquire only the lock for `msg.session_key()` inside `dispatch()`
@@ -146,8 +146,8 @@ In `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-session-lock --test agent
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-session-lock --test agent
 ```
 
 Expected:
@@ -157,16 +157,16 @@ Expected:
 - [x] **Step 8: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/agent/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/agent.rs
+git add <repo-root>/src/agent/mod.rs \
+        <repo-root>/tests/agent.rs
 git commit -m "refactor: use session-scoped agent locks"
 ```
 
 ### Task 3: Add session ingress debounce with command bypass
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
+- Modify: `<repo-root>/src/agent/mod.rs`
+- Test: `<repo-root>/tests/agent.rs`
 
 - [x] **Step 1: Write the failing burst merge test**
 
@@ -213,8 +213,8 @@ Add tests that:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-ingress --test agent
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-ingress --test agent
 ```
 
 Expected:
@@ -222,7 +222,7 @@ Expected:
 
 - [x] **Step 6: Implement `SessionIngressBuffer`**
 
-In `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`:
+In `<repo-root>/src/agent/mod.rs`:
 - add a session-scoped pending-burst structure
 - collect ordinary user messages by `session_key`
 - arm a debounce timer only when `messageDebounceMs > 0`
@@ -247,8 +247,8 @@ Implement the agreed rules:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-ingress --test agent
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-ingress --test agent
 ```
 
 Expected:
@@ -258,16 +258,16 @@ Expected:
 - [x] **Step 8: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/agent/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/agent.rs
+git add <repo-root>/src/agent/mod.rs \
+        <repo-root>/tests/agent.rs
 git commit -m "feat: add session ingress debounce"
 ```
 
 ### Task 4: Replace global outbound serialization with delivery-key workers
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/channels/mod.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/channels.rs`
+- Modify: `<repo-root>/src/channels/mod.rs`
+- Test: `<repo-root>/tests/channels.rs`
 
 - [x] **Step 1: Write the failing outbound concurrency test**
 
@@ -295,8 +295,8 @@ Add a test that:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-outbound --test channels
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-outbound --test channels
 ```
 
 Expected:
@@ -304,7 +304,7 @@ Expected:
 
 - [x] **Step 5: Implement delivery-key workers**
 
-In `/Users/sage/nanobot/nanobot-rs/src/channels/mod.rs`:
+In `<repo-root>/src/channels/mod.rs`:
 - derive `delivery_key = "{channel}:{chat_id}"`
 - keep a tracked worker table
 - give each worker a bounded queue
@@ -324,8 +324,8 @@ Add tests that:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-outbound --test channels
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-outbound --test channels
 ```
 
 Expected:
@@ -335,27 +335,27 @@ Expected:
 - [x] **Step 8: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/channels/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/channels.rs
+git add <repo-root>/src/channels/mod.rs \
+        <repo-root>/tests/channels.rs
 git commit -m "feat: parallelize outbound delivery by destination"
 ```
 
 ### Task 5: Full verification and integration check
 
 **Files:**
-- Verify: `/Users/sage/nanobot/nanobot-rs/src/config/mod.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/src/channels/mod.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/tests/channels.rs`
+- Verify: `<repo-root>/src/config/mod.rs`
+- Verify: `<repo-root>/src/agent/mod.rs`
+- Verify: `<repo-root>/src/channels/mod.rs`
+- Verify: `<repo-root>/tests/agent.rs`
+- Verify: `<repo-root>/tests/channels.rs`
 
 - [x] **Step 1: Run the focused suites together**
 
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-session-parallelism --test agent --test channels --test providers --test model_profiles
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-session-parallelism --test agent --test channels --test providers --test model_profiles
 ```
 
 Expected:
@@ -366,8 +366,8 @@ Expected:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-session-parallelism
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-session-parallelism
 ```
 
 Expected:
@@ -378,7 +378,7 @@ Expected:
 Optional manual smoke:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
+cd <repo-root>
 cargo run --release -- gateway
 ```
 
@@ -392,13 +392,13 @@ Check:
 If verification required fixes:
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/config/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/agent/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/channels/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/agent.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/channels.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/providers.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/model_profiles.rs
+git add <repo-root>/src/config/mod.rs \
+        <repo-root>/src/agent/mod.rs \
+        <repo-root>/src/channels/mod.rs \
+        <repo-root>/tests/agent.rs \
+        <repo-root>/tests/channels.rs \
+        <repo-root>/tests/providers.rs \
+        <repo-root>/tests/model_profiles.rs
 git commit -m "fix: tighten session parallelism behavior"
 ```
 

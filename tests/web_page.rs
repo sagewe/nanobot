@@ -238,9 +238,15 @@ fn page_shell_supports_persisted_cross_channel_selection_and_legacy_migration() 
 
     assert!(html.contains("const SELECTED_CHANNEL_KEY = \"sidekick.selectedChannel\";"));
     assert!(html.contains("const SELECTED_SESSION_KEY = \"sidekick.selectedSessionId\";"));
-    assert!(html.contains("const legacyStoredSessionId = localStorage.getItem(LEGACY_SESSION_KEY);"));
-    assert!(html.contains("const storedChannel = readStored(SELECTED_CHANNEL_KEY, LEGACY_SELECTED_CHANNEL_KEY);"));
-    assert!(html.contains("const storedSessionId = readStored(SELECTED_SESSION_KEY, LEGACY_SELECTED_SESSION_KEY);"));
+    assert!(
+        html.contains("const legacyStoredSessionId = localStorage.getItem(LEGACY_SESSION_KEY);")
+    );
+    assert!(html.contains(
+        "const storedChannel = readStored(SELECTED_CHANNEL_KEY, LEGACY_SELECTED_CHANNEL_KEY);"
+    ));
+    assert!(html.contains(
+        "const storedSessionId = readStored(SELECTED_SESSION_KEY, LEGACY_SELECTED_SESSION_KEY);"
+    ));
     assert!(html.contains("const restoredSessionId = storedSessionId || legacyStoredSessionId;"));
     assert!(html.contains("storedChannel || \"web\""));
 }

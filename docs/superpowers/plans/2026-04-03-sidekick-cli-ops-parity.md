@@ -1,4 +1,4 @@
-# nanobot-rs CLI and Operations Parity Implementation Plan
+# Sidekick CLI and Operations Parity Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,11 +12,11 @@
 
 ### Task 1: Add a top-level `status` command for operator visibility
 
-**Files:** Create `/Users/sage/nanobot/nanobot-rs/src/cli/status.rs`; modify `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`; modify `/Users/sage/nanobot/nanobot-rs/tests/cli.rs`; modify `/Users/sage/nanobot/nanobot-rs/tests/cli_web.rs`
+**Files:** Create `<repo-root>/src/cli/status.rs`; modify `<repo-root>/src/cli/mod.rs`; modify `<repo-root>/tests/cli.rs`; modify `<repo-root>/tests/cli_web.rs`
 
 - [ ] **Step 1: Write the failing status tests**
 
-Add integration tests that run `nanobot-rs status` against a temporary root and assert the output includes the current config path, workspace path, default profile, and control-plane bootstrap state. Add a help test that proves `status` appears in the CLI surface.
+Add integration tests that run `Sidekick status` against a temporary root and assert the output includes the current config path, workspace path, default profile, and control-plane bootstrap state. Add a help test that proves `status` appears in the CLI surface.
 
 Use assertions shaped like:
 
@@ -32,8 +32,8 @@ assert!(stdout.contains("Control plane:"));
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-cli-status --test cli --test cli_web
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-cli-status --test cli --test cli_web
 ```
 
 Expected: compile or assertion failures because `status` does not exist yet, and the help output still lacks the new operator summary command.
@@ -49,8 +49,8 @@ Keep this first pass generic. Do not add Weixin or Codex auth reporting yet; tho
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-cli-status --test cli --test cli_web
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-cli-status --test cli --test cli_web
 ```
 
 Expected: the new `status` command tests pass, and the help output includes the new top-level command.
@@ -58,20 +58,20 @@ Expected: the new `status` command tests pass, and the help output includes the 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/cli/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/status.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/cli.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/cli_web.rs
-git commit -m "feat: add nanobot-rs status command"
+git add <repo-root>/src/cli/mod.rs \
+        <repo-root>/src/cli/status.rs \
+        <repo-root>/tests/cli.rs \
+        <repo-root>/tests/cli_web.rs
+git commit -m "feat: add Sidekick status command"
 ```
 
 ### Task 2: Add a Rust onboarding wizard that stays narrower than the Python version
 
-**Files:** Create `/Users/sage/nanobot/nanobot-rs/src/cli/onboard.rs`; modify `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`; modify `/Users/sage/nanobot/nanobot-rs/tests/cli.rs`
+**Files:** Create `<repo-root>/src/cli/onboard.rs`; modify `<repo-root>/src/cli/mod.rs`; modify `<repo-root>/tests/cli.rs`
 
 - [ ] **Step 1: Write the failing wizard tests**
 
-Add an integration test that pipes scripted answers into `nanobot-rs onboard --wizard` and verifies it creates the workspace, bootstraps the first admin, and persists the config. Add a second test that proves the existing non-wizard flow still behaves the same when `--wizard` is absent.
+Add an integration test that pipes scripted answers into `Sidekick onboard --wizard` and verifies it creates the workspace, bootstraps the first admin, and persists the config. Add a second test that proves the existing non-wizard flow still behaves the same when `--wizard` is absent.
 
 Keep the test fixture scripted so it can run in CI without a human TTY.
 
@@ -80,8 +80,8 @@ Keep the test fixture scripted so it can run in CI without a human TTY.
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-cli-onboard --test cli
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-cli-onboard --test cli
 ```
 
 Expected: compile or assertion failures because the wizard path is not implemented yet, and the current onboarding command still requires the old direct flags.
@@ -99,8 +99,8 @@ Factor the pure config assembly and summary rendering so the wizard can be teste
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-cli-onboard --test cli
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-cli-onboard --test cli
 ```
 
 Expected: the wizard test passes with scripted stdin, and the existing non-wizard onboarding path still passes.
@@ -108,15 +108,15 @@ Expected: the wizard test passes with scripted stdin, and the existing non-wizar
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/cli/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/onboard.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/cli.rs
-git commit -m "feat: add nanobot-rs onboarding wizard"
+git add <repo-root>/src/cli/mod.rs \
+        <repo-root>/src/cli/onboard.rs \
+        <repo-root>/tests/cli.rs
+git commit -m "feat: add Sidekick onboarding wizard"
 ```
 
 ### Task 3: Add `channels status` plus Weixin login parity
 
-**Files:** Create `/Users/sage/nanobot/nanobot-rs/src/cli/auth.rs`; modify `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`; modify `/Users/sage/nanobot/nanobot-rs/src/cli/status.rs`; modify `/Users/sage/nanobot/nanobot-rs/src/channels/weixin.rs`; modify `/Users/sage/nanobot/nanobot-rs/tests/cli.rs`; modify `/Users/sage/nanobot/nanobot-rs/tests/weixin.rs`
+**Files:** Create `<repo-root>/src/cli/auth.rs`; modify `<repo-root>/src/cli/mod.rs`; modify `<repo-root>/src/cli/status.rs`; modify `<repo-root>/src/channels/weixin.rs`; modify `<repo-root>/tests/cli.rs`; modify `<repo-root>/tests/weixin.rs`
 
 - [ ] **Step 1: Write the failing channel auth tests**
 
@@ -127,8 +127,8 @@ Add tests that prove `channels status` prints the built-in Rust channel set and 
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-weixin-auth --test cli --test weixin
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-weixin-auth --test cli --test weixin
 ```
 
 Expected: compile or assertion failures because the `channels` subcommand and Weixin CLI flow do not exist yet.
@@ -148,8 +148,8 @@ Extend the shared status renderer from Task 1 so Weixin login state is visible i
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-weixin-auth --test cli --test weixin
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-weixin-auth --test cli --test weixin
 ```
 
 Expected: `channels status` reflects the current Weixin state, and the mocked QR login flow persists a confirmed account.
@@ -157,18 +157,18 @@ Expected: `channels status` reflects the current Weixin state, and the mocked QR
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/cli/auth.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/status.rs \
-        /Users/sage/nanobot/nanobot-rs/src/channels/weixin.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/cli.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/weixin.rs
-git commit -m "feat: add nanobot-rs weixin channel auth workflow"
+git add <repo-root>/src/cli/auth.rs \
+        <repo-root>/src/cli/mod.rs \
+        <repo-root>/src/cli/status.rs \
+        <repo-root>/src/channels/weixin.rs \
+        <repo-root>/tests/cli.rs \
+        <repo-root>/tests/weixin.rs
+git commit -m "feat: add Sidekick weixin channel auth workflow"
 ```
 
 ### Task 4: Add Codex provider login/status parity without expanding provider scope
 
-**Files:** modify `/Users/sage/nanobot/nanobot-rs/src/cli/auth.rs`; modify `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`; modify `/Users/sage/nanobot/nanobot-rs/src/cli/status.rs`; modify `/Users/sage/nanobot/nanobot-rs/src/providers/codex.rs`; modify `/Users/sage/nanobot/nanobot-rs/tests/cli.rs`; modify `/Users/sage/nanobot/nanobot-rs/tests/providers.rs`
+**Files:** modify `<repo-root>/src/cli/auth.rs`; modify `<repo-root>/src/cli/mod.rs`; modify `<repo-root>/src/cli/status.rs`; modify `<repo-root>/src/providers/codex.rs`; modify `<repo-root>/tests/cli.rs`; modify `<repo-root>/tests/providers.rs`
 
 - [ ] **Step 1: Write the failing Codex auth tests**
 
@@ -179,8 +179,8 @@ Add tests that prove `provider login codex` validates the configured auth file, 
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-codex-auth --test cli --test providers
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-codex-auth --test cli --test providers
 ```
 
 Expected: compile or assertion failures because the Codex auth summary/login command is not wired up yet.
@@ -194,8 +194,8 @@ Extend `CodexProvider` with a small public summary helper that can report the re
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-codex-auth --test cli --test providers
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-codex-auth --test cli --test providers
 ```
 
 Expected: `provider login codex` reports valid auth state for a good fixture, missing auth files fail with a clear and actionable message, and the status summary shows the same Codex readiness data.
@@ -203,18 +203,18 @@ Expected: `provider login codex` reports valid auth state for a good fixture, mi
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/cli/auth.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/status.rs \
-        /Users/sage/nanobot/nanobot-rs/src/providers/codex.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/cli.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/providers.rs
-git commit -m "feat: add nanobot-rs codex provider auth workflow"
+git add <repo-root>/src/cli/auth.rs \
+        <repo-root>/src/cli/mod.rs \
+        <repo-root>/src/cli/status.rs \
+        <repo-root>/src/providers/codex.rs \
+        <repo-root>/tests/cli.rs \
+        <repo-root>/tests/providers.rs
+git commit -m "feat: add Sidekick codex provider auth workflow"
 ```
 
 ### Task 5: Add agent `/restart` command parity
 
-**Files:** modify `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`; modify `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
+**Files:** modify `<repo-root>/src/agent/mod.rs`; modify `<repo-root>/tests/agent.rs`
 
 - [ ] **Step 1: Write the failing restart test**
 
@@ -225,8 +225,8 @@ Add a test that sends `/restart` through the agent path and asserts the user get
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-agent-restart --test agent restart_command_publishes_restart_notice_and_invokes_restart_hook -- --exact
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-agent-restart --test agent restart_command_publishes_restart_notice_and_invokes_restart_hook -- --exact
 ```
 
 Expected: failure because `/restart` is not yet handled in the Rust agent loop.
@@ -242,8 +242,8 @@ Make `/restart` match the Python user experience as closely as Rust allows: surf
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-agent-restart --test agent
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-agent-restart --test agent
 ```
 
 Expected: the new restart test passes, and the existing agent suite stays green.
@@ -251,22 +251,22 @@ Expected: the new restart test passes, and the existing agent suite stays green.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/agent/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/agent.rs
-git commit -m "feat: add nanobot-rs restart command"
+git add <repo-root>/src/agent/mod.rs \
+        <repo-root>/tests/agent.rs
+git commit -m "feat: add Sidekick restart command"
 ```
 
 ### Task 6: Run the CLI and operations verification sweep
 
-**Files:** Verify `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`; verify `/Users/sage/nanobot/nanobot-rs/src/cli/status.rs`; verify `/Users/sage/nanobot/nanobot-rs/src/cli/onboard.rs`; verify `/Users/sage/nanobot/nanobot-rs/src/cli/auth.rs`; verify `/Users/sage/nanobot/nanobot-rs/src/providers/codex.rs`; verify `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`; verify `/Users/sage/nanobot/nanobot-rs/tests/cli.rs`; verify `/Users/sage/nanobot/nanobot-rs/tests/cli_web.rs`; verify `/Users/sage/nanobot/nanobot-rs/tests/weixin.rs`; verify `/Users/sage/nanobot/nanobot-rs/tests/providers.rs`; verify `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
+**Files:** Verify `<repo-root>/src/cli/mod.rs`; verify `<repo-root>/src/cli/status.rs`; verify `<repo-root>/src/cli/onboard.rs`; verify `<repo-root>/src/cli/auth.rs`; verify `<repo-root>/src/providers/codex.rs`; verify `<repo-root>/src/agent/mod.rs`; verify `<repo-root>/tests/cli.rs`; verify `<repo-root>/tests/cli_web.rs`; verify `<repo-root>/tests/weixin.rs`; verify `<repo-root>/tests/providers.rs`; verify `<repo-root>/tests/agent.rs`
 
 - [ ] **Step 1: Run the touched CLI and auth suites together**
 
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-cli-ops --test cli --test cli_web --test weixin --test providers --test agent
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-cli-ops --test cli --test cli_web --test weixin --test providers --test agent
 ```
 
 Expected:
@@ -278,9 +278,9 @@ Expected:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
+cd <repo-root>
 cargo fmt --all --check
-cargo test --target-dir /tmp/nanobot-rs-target-cli-ops
+cargo test --target-dir /tmp/sidekick-target-cli-ops
 ```
 
 Expected:
@@ -292,7 +292,7 @@ Expected:
 If a manual pass is useful, run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
+cd <repo-root>
 cargo run -- onboard --wizard
 cargo run -- status
 ```
@@ -307,18 +307,18 @@ Check:
 If verification exposed follow-up changes, stage and commit them in the same area that introduced the regression:
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/cli/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/status.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/onboard.rs \
-        /Users/sage/nanobot/nanobot-rs/src/cli/auth.rs \
-        /Users/sage/nanobot/nanobot-rs/src/providers/codex.rs \
-        /Users/sage/nanobot/nanobot-rs/src/agent/mod.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/cli.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/cli_web.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/weixin.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/providers.rs \
-        /Users/sage/nanobot/nanobot-rs/tests/agent.rs
-git commit -m "feat: complete nanobot-rs cli ops parity"
+git add <repo-root>/src/cli/mod.rs \
+        <repo-root>/src/cli/status.rs \
+        <repo-root>/src/cli/onboard.rs \
+        <repo-root>/src/cli/auth.rs \
+        <repo-root>/src/providers/codex.rs \
+        <repo-root>/src/agent/mod.rs \
+        <repo-root>/tests/cli.rs \
+        <repo-root>/tests/cli_web.rs \
+        <repo-root>/tests/weixin.rs \
+        <repo-root>/tests/providers.rs \
+        <repo-root>/tests/agent.rs
+git commit -m "feat: complete Sidekick cli ops parity"
 ```
 
 Otherwise, stop after the verification pass and do not create an extra commit.

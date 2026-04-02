@@ -1,12 +1,12 @@
-# nanobot-rs Skills Management Page Implementation Plan
+# Sidekick Skills Management Page Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a first-class `Skills` management tab to the nanobot-rs web control plane that shows builtin skills read-only and lets users create, edit, delete, enable, and disable workspace `SKILL.md` files with runtime-correct builtin fallback behavior.
+**Goal:** Add a first-class `Skills` management tab to the Sidekick web control plane that shows builtin skills read-only and lets users create, edit, delete, enable, and disable workspace `SKILL.md` files with runtime-correct builtin fallback behavior.
 
 **Architecture:** Extend the existing Rust `skills` module with a workspace state overlay and management-oriented catalog view, then expose that through authenticated web APIs that resolve the correct workspace in both single-user and multi-user modes. Keep the frontend aligned with the current control plane shell by adding a new `Skills` tab, a focused `frontend/src/skills.js` controller, and a master-detail editor that talks to the new API while preserving raw file editing semantics.
 
-**Tech Stack:** Rust (`axum`, `serde`, `serde_json`, `tempfile`), existing `nanobot-rs` `skills` and `web` modules, frontend JavaScript with Vite/Vitest, generated `frontend/dist` assets.
+**Tech Stack:** Rust (`axum`, `serde`, `serde_json`, `tempfile`), existing `Sidekick` `skills` and `web` modules, frontend JavaScript with Vite/Vitest, generated `frontend/dist` assets.
 
 ---
 
@@ -14,56 +14,56 @@
 
 ### Rust Runtime and API
 
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/skills/mod.rs`
+- Modify: `<repo-root>/src/skills/mod.rs`
   - Add workspace skill state persistence, management catalog data, effective-source evaluation, and raw-detail helpers.
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/skills.rs`
+- Modify: `<repo-root>/tests/skills.rs`
   - Cover disabled workspace skills, builtin fallback, slug identity, and extra-file detection.
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/web/mod.rs`
+- Modify: `<repo-root>/src/web/mod.rs`
   - Add workspace resolution for single-user and multi-user web requests and register new skills routes.
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/web/api.rs`
+- Modify: `<repo-root>/src/web/api.rs`
   - Add skills list, detail, create, update, toggle-state, and delete handlers plus DTOs.
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/web_server.rs`
+- Modify: `<repo-root>/tests/web_server.rs`
   - Exercise the new API against temporary workspaces and authenticated user runtimes.
 
 ### Frontend
 
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/index.html`
+- Modify: `<repo-root>/frontend/index.html`
   - Add the new `Skills` tab button and pane shell markup.
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/main.js`
+- Modify: `<repo-root>/frontend/src/main.js`
   - Register the tab, instantiate the skills controller, and connect tab lifecycle events.
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/api.js`
+- Modify: `<repo-root>/frontend/src/api.js`
   - Add fetch helpers for the skills API namespace.
-- Create: `/Users/sage/nanobot/nanobot-rs/frontend/src/skills.js`
+- Create: `<repo-root>/frontend/src/skills.js`
   - Own rendering and interaction logic for the skills pane so `main.js` does not absorb all editor behavior.
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/i18n.js`
+- Modify: `<repo-root>/frontend/src/i18n.js`
   - Add English and Chinese labels, actions, warnings, and confirmations for the skills UI.
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/style.css`
+- Modify: `<repo-root>/frontend/src/style.css`
   - Add master-detail layout, badges, editor, empty states, and responsive rules for the skills pane.
-- Create: `/Users/sage/nanobot/nanobot-rs/frontend/test/skills.test.js`
+- Create: `<repo-root>/frontend/test/skills.test.js`
   - JSDOM tests for skills-pane rendering, dirty-state handling, and interaction callbacks.
 
 ### Shell and Regression Tests
 
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/web_page.rs`
+- Modify: `<repo-root>/tests/web_page.rs`
   - Assert the page shell exposes the `Skills` tab and editor surface.
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/test/render.test.js`
+- Modify: `<repo-root>/frontend/test/render.test.js`
   - Keep file-based shell assertions aligned with the new tab and any added source imports if needed.
 
 ### Generated Assets
 
-- Regenerate: `/Users/sage/nanobot/nanobot-rs/frontend/dist/**`
+- Regenerate: `<repo-root>/frontend/dist/**`
   - Rebuild Vite output after frontend source changes so the embedded web app serves the new page in production.
 
 ### Reference Docs
 
-- Read: `/Users/sage/nanobot/nanobot-rs/docs/superpowers/specs/2026-04-02-nanobot-rs-skills-management-design.md`
-- Reuse context from: `/Users/sage/nanobot/nanobot-rs/docs/superpowers/specs/2026-04-02-nanobot-rs-skills-design.md`
+- Read: `<repo-root>/docs/superpowers/specs/2026-04-02-sidekick-skills-management-design.md`
+- Reuse context from: `<repo-root>/docs/superpowers/specs/2026-04-02-sidekick-skills-design.md`
 
 ## Task 1: Extend the Skills Runtime with Management State and Effective View
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/skills/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/skills.rs`
+- Modify: `<repo-root>/src/skills/mod.rs`
+- Modify: `<repo-root>/tests/skills.rs`
 
 - [ ] **Step 1: Write the failing runtime tests**
 
@@ -95,9 +95,9 @@ description: workspace weather
 Workspace weather body
 "#,
     );
-    fs::create_dir_all(workspace.join(".nanobot")).expect("state dir");
+    fs::create_dir_all(workspace.join(".Sidekick")).expect("state dir");
     fs::write(
-        workspace.join(".nanobot/skills-state.json"),
+        workspace.join(".sidekick/skills-state.json"),
         r#"{"weather":{"enabled":false}}"#,
     )
     .expect("state file");
@@ -171,7 +171,7 @@ pub struct ManagedSkills {
 
 impl SkillsCatalog {
     pub fn discover_managed(&self) -> Result<ManagedSkills> {
-        // Load workspace state from .nanobot/skills-state.json, keep slug identity,
+        // Load workspace state from .sidekick/skills-state.json, keep slug identity,
         // compute effective rows after enabled/disabled overlay, and preserve both groups.
     }
 }
@@ -179,7 +179,7 @@ impl SkillsCatalog {
 
 Implementation notes:
 - Keep directory slug as the stable `id`, independent of frontmatter `name`.
-- Load and save state from `<workspace>/.nanobot/skills-state.json`.
+- Load and save state from `<workspace>/.sidekick/skills-state.json`.
 - Default missing state entries to enabled.
 - Treat disabled workspace skills as non-effective so builtin skills with the same normalized name can become effective again.
 - Detect `has_extra_files` by checking for files other than `SKILL.md` under the skill directory.
@@ -193,16 +193,16 @@ Expected: PASS with management-state, builtin fallback, and slug-identity covera
 - [ ] **Step 5: Commit the runtime management layer**
 
 ```bash
-git add nanobot-rs/src/skills/mod.rs nanobot-rs/tests/skills.rs
+git add src/skills/mod.rs tests/skills.rs
 git commit -m "feat: add managed skills catalog state overlay"
 ```
 
 ## Task 2: Add Skills Management Web APIs and Workspace Resolution
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/web/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/web/api.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/web_server.rs`
+- Modify: `<repo-root>/src/web/mod.rs`
+- Modify: `<repo-root>/src/web/api.rs`
+- Modify: `<repo-root>/tests/web_server.rs`
 
 - [ ] **Step 1: Write the failing API tests**
 
@@ -256,7 +256,7 @@ async fn skills_api_toggles_state_without_rewriting_skill_body() {
         .expect("toggle state");
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(workspace_path().join(".nanobot/skills-state.json").exists());
+    assert!(workspace_path().join(".sidekick/skills-state.json").exists());
     let raw = fs::read_to_string(workspace_path().join("skills/weather/SKILL.md")).unwrap();
     assert!(raw.contains("description: workspace weather"));
 }
@@ -302,7 +302,7 @@ Implementation notes:
   - `DELETE /api/skills/workspace/{id}`
 - Keep builtin writes rejected with a clear client error.
 - Ensure create and update preserve raw `SKILL.md` text exactly as submitted.
-- Create parent directories like `.nanobot/` on demand instead of changing workspace template bootstrap logic.
+- Create parent directories like `.sidekick/` on demand instead of changing workspace template bootstrap logic.
 
 - [ ] **Step 4: Re-run the web API tests**
 
@@ -312,25 +312,25 @@ Expected: PASS for skills list/detail/create/update/toggle/delete coverage, incl
 - [ ] **Step 5: Commit the API layer**
 
 ```bash
-git add nanobot-rs/src/web/mod.rs nanobot-rs/src/web/api.rs nanobot-rs/tests/web_server.rs
+git add src/web/mod.rs src/web/api.rs tests/web_server.rs
 git commit -m "feat: add skills management api"
 ```
 
 ## Task 3: Add the Skills Tab Shell, Styles, and Translation Keys
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/index.html`
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/i18n.js`
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/style.css`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/web_page.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/test/render.test.js`
+- Modify: `<repo-root>/frontend/index.html`
+- Modify: `<repo-root>/frontend/src/i18n.js`
+- Modify: `<repo-root>/frontend/src/style.css`
+- Modify: `<repo-root>/tests/web_page.rs`
+- Modify: `<repo-root>/frontend/test/render.test.js`
 
 - [ ] **Step 1: Write the failing shell tests**
 
 ```rust
 #[test]
 fn page_shell_includes_skills_tab_and_editor_regions() {
-    let html = nanobot_rs::web::page::render_index_html();
+    let html = sidekick::web::page::render_index_html();
 
     assert!(html.contains("data-tab=\"skills\""));
     assert!(html.contains("class=\"skills-pane\""));
@@ -361,7 +361,7 @@ it("adds translated labels and shell markup for the skills pane", async () => {
 Run: `cargo test --test web_page page_shell_includes_skills_tab_and_editor_regions -- --exact`
 Expected: FAIL because the page shell does not yet define a `Skills` tab or any skills-pane DOM hooks.
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test -- --run test/render.test.js`
+Run: `cd <repo-root>/frontend && npm test -- --run test/render.test.js`
 Expected: FAIL because the tab markup, styles, and translation keys are missing.
 
 - [ ] **Step 3: Implement the shell and styling**
@@ -398,23 +398,23 @@ Implementation notes:
 Run: `cargo test --test web_page`
 Expected: PASS with the new tab and editor shell present.
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test -- --run test/render.test.js`
+Run: `cd <repo-root>/frontend && npm test -- --run test/render.test.js`
 Expected: PASS with updated markup, CSS, and translations.
 
 - [ ] **Step 5: Commit the shell layer**
 
 ```bash
-git add nanobot-rs/frontend/index.html nanobot-rs/frontend/src/i18n.js nanobot-rs/frontend/src/style.css nanobot-rs/tests/web_page.rs nanobot-rs/frontend/test/render.test.js
+git add frontend/index.html frontend/src/i18n.js frontend/src/style.css tests/web_page.rs frontend/test/render.test.js
 git commit -m "feat: add skills tab shell"
 ```
 
 ## Task 4: Implement the Skills Pane Controller and Frontend API Wiring
 
 **Files:**
-- Create: `/Users/sage/nanobot/nanobot-rs/frontend/src/skills.js`
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/api.js`
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/main.js`
-- Create: `/Users/sage/nanobot/nanobot-rs/frontend/test/skills.test.js`
+- Create: `<repo-root>/frontend/src/skills.js`
+- Modify: `<repo-root>/frontend/src/api.js`
+- Modify: `<repo-root>/frontend/src/main.js`
+- Create: `<repo-root>/frontend/test/skills.test.js`
 
 - [ ] **Step 1: Write the failing frontend interaction tests**
 
@@ -465,7 +465,7 @@ describe("skills pane", () => {
 
 - [ ] **Step 2: Run the frontend interaction tests and confirm they fail**
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test -- --run test/skills.test.js`
+Run: `cd <repo-root>/frontend && npm test -- --run test/skills.test.js`
 Expected: FAIL because there is no dedicated skills controller, no API helpers, and no tab lifecycle wiring.
 
 - [ ] **Step 3: Implement the controller and API helpers**
@@ -510,37 +510,37 @@ Implementation notes:
 
 - [ ] **Step 4: Re-run the frontend tests**
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test -- --run test/skills.test.js test/render.test.js`
+Run: `cd <repo-root>/frontend && npm test -- --run test/skills.test.js test/render.test.js`
 Expected: PASS with grouped rendering, toggle/save separation, and tab shell coverage.
 
 - [ ] **Step 5: Commit the frontend behavior**
 
 ```bash
-git add nanobot-rs/frontend/src/skills.js nanobot-rs/frontend/src/api.js nanobot-rs/frontend/src/main.js nanobot-rs/frontend/test/skills.test.js
+git add frontend/src/skills.js frontend/src/api.js frontend/src/main.js frontend/test/skills.test.js
 git commit -m "feat: wire skills management tab"
 ```
 
 ## Task 5: Rebuild the Frontend Bundle and Run Full Verification
 
 **Files:**
-- Regenerate: `/Users/sage/nanobot/nanobot-rs/frontend/dist/**`
-- Verify: `/Users/sage/nanobot/nanobot-rs/tests/skills.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/tests/web_server.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/tests/web_page.rs`
-- Verify: `/Users/sage/nanobot/nanobot-rs/frontend/test/render.test.js`
-- Verify: `/Users/sage/nanobot/nanobot-rs/frontend/test/skills.test.js`
+- Regenerate: `<repo-root>/frontend/dist/**`
+- Verify: `<repo-root>/tests/skills.rs`
+- Verify: `<repo-root>/tests/web_server.rs`
+- Verify: `<repo-root>/tests/web_page.rs`
+- Verify: `<repo-root>/frontend/test/render.test.js`
+- Verify: `<repo-root>/frontend/test/skills.test.js`
 
 - [ ] **Step 1: Run the targeted Rust and frontend test suites**
 
 Run: `cargo test --test skills --test web_server --test web_page`
 Expected: PASS with runtime, API, and page-shell coverage.
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test -- --run test/render.test.js test/skills.test.js`
+Run: `cd <repo-root>/frontend && npm test -- --run test/render.test.js test/skills.test.js`
 Expected: PASS with shell and controller behavior covered in Vitest.
 
 - [ ] **Step 2: Rebuild the Vite bundle**
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm run build`
+Run: `cd <repo-root>/frontend && npm run build`
 Expected: PASS and refreshed files under `frontend/dist/`.
 
 - [ ] **Step 3: Run the full Rust regression suite**
@@ -550,13 +550,13 @@ Expected: PASS so the new skills management page does not regress existing agent
 
 - [ ] **Step 4: Inspect generated artifacts and git status**
 
-Run: `git -C /Users/sage/nanobot status --short`
+Run: `git -C <repo-root> status --short`
 Expected: only the intended source, test, and regenerated `frontend/dist` files are modified.
 
 - [ ] **Step 5: Commit the final integrated feature**
 
 ```bash
-git add nanobot-rs/frontend/dist nanobot-rs/frontend/index.html nanobot-rs/frontend/src/main.js nanobot-rs/frontend/src/api.js nanobot-rs/frontend/src/skills.js nanobot-rs/frontend/src/i18n.js nanobot-rs/frontend/src/style.css nanobot-rs/frontend/test/skills.test.js nanobot-rs/frontend/test/render.test.js nanobot-rs/src/skills/mod.rs nanobot-rs/src/web/mod.rs nanobot-rs/src/web/api.rs nanobot-rs/tests/skills.rs nanobot-rs/tests/web_server.rs nanobot-rs/tests/web_page.rs
+git add frontend/dist frontend/index.html frontend/src/main.js frontend/src/api.js frontend/src/skills.js frontend/src/i18n.js frontend/src/style.css frontend/test/skills.test.js frontend/test/render.test.js src/skills/mod.rs src/web/mod.rs src/web/api.rs tests/skills.rs tests/web_server.rs tests/web_page.rs
 git commit -m "feat: add skills management page"
 ```
 

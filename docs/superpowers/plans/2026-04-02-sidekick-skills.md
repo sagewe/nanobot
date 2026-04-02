@@ -1,12 +1,12 @@
-# nanobot-rs Skills Module Implementation Plan
+# Sidekick Skills Module Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a first-class `nanobot-rs` skills module that discovers builtin and workspace skills, selects active skills locally, injects them into main-agent prompts, and keeps builtin skill files readable even when workspace path restrictions are enabled.
+**Goal:** Add a first-class `Sidekick` skills module that discovers builtin and workspace skills, selects active skills locally, injects them into main-agent prompts, and keeps builtin skill files readable even when workspace path restrictions are enabled.
 
 **Architecture:** Build a standalone Rust `skills` module that owns catalog discovery, tolerant frontmatter parsing, requirement checks, explicit and semantic selection, and prompt section rendering. Integrate that module into `ContextBuilder` for main-agent prompt assembly, keep subagents summary-only, and extend read-only file browsing so builtin `SKILL.md` files remain inspectable without relaxing write restrictions outside the workspace.
 
-**Tech Stack:** Rust (`std`, `anyhow`, `regex`, `serde_json`), existing `nanobot-rs` agent/tools stack, `tempfile` integration tests.
+**Tech Stack:** Rust (`std`, `anyhow`, `regex`, `serde_json`), existing `Sidekick` agent/tools stack, `tempfile` integration tests.
 
 ---
 
@@ -14,41 +14,41 @@
 
 ### Rust Modules
 
-- Create: `/Users/sage/nanobot/nanobot-rs/src/skills/mod.rs`
+- Create: `<repo-root>/src/skills/mod.rs`
   - Skill discovery, metadata parsing, availability checks, local selection, and prompt rendering.
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/lib.rs`
+- Modify: `<repo-root>/src/lib.rs`
   - Export the new `skills` module.
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
+- Modify: `<repo-root>/src/agent/mod.rs`
   - Replace ad hoc workspace skill scanning with the new catalog and selector.
   - Add a summary-only subagent prompt helper.
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/tools/mod.rs`
+- Modify: `<repo-root>/src/tools/mod.rs`
   - Let `read_file` and `list_dir` allow a read-only builtin skills root even when workspace restriction is enabled.
 
 ### Builtin Skills Tree
 
-- Create: `/Users/sage/nanobot/nanobot-rs/skills/README.md`
+- Create: `<repo-root>/skills/README.md`
   - Document the Rust builtin skills directory contract and naming conventions.
 
 ### Tests
 
-- Create: `/Users/sage/nanobot/nanobot-rs/tests/skills.rs`
+- Create: `<repo-root>/tests/skills.rs`
   - Discovery, parsing, selection, and prompt-section rendering tests.
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
+- Modify: `<repo-root>/tests/agent.rs`
   - Main-agent and subagent prompt integration tests.
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/tools.rs`
+- Modify: `<repo-root>/tests/tools.rs`
   - Builtin skill root readability tests under `restrict_to_workspace=true`.
 
 ### Reference Spec
 
-- Read: `/Users/sage/nanobot/nanobot-rs/docs/superpowers/specs/2026-04-02-nanobot-rs-skills-design.md`
+- Read: `<repo-root>/docs/superpowers/specs/2026-04-02-sidekick-skills-design.md`
 
 ## Task 1: Add the Skills Catalog, Parsing, and Availability Model
 
 **Files:**
-- Create: `/Users/sage/nanobot/nanobot-rs/src/skills/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/lib.rs`
-- Create: `/Users/sage/nanobot/nanobot-rs/tests/skills.rs`
-- Create: `/Users/sage/nanobot/nanobot-rs/skills/README.md`
+- Create: `<repo-root>/src/skills/mod.rs`
+- Modify: `<repo-root>/src/lib.rs`
+- Create: `<repo-root>/tests/skills.rs`
+- Create: `<repo-root>/skills/README.md`
 
 - [ ] **Step 1: Write the failing catalog tests**
 
@@ -101,7 +101,7 @@ fn catalog_parses_frontmatter_and_requirement_state() {
 name: shell-check
 description: verify shell commands
 always: true
-metadata: '{"nanobot":{"requires":{"bins":["definitely_missing_binary"],"env":["SKILL_TOKEN"]}}}'
+metadata: '{"Sidekick":{"requires":{"bins":["definitely_missing_binary"],"env":["SKILL_TOKEN"]}}}'
 ---
 
 # Shell Check
@@ -126,7 +126,7 @@ Inspect shell commands carefully.
 - [ ] **Step 2: Run the new skills tests and confirm they fail**
 
 Run: `cargo test --test skills`
-Expected: FAIL because `nanobot-rs` does not yet expose a `skills` module, catalog type, or tolerant frontmatter parsing.
+Expected: FAIL because `Sidekick` does not yet expose a `skills` module, catalog type, or tolerant frontmatter parsing.
 
 - [ ] **Step 3: Implement the catalog and metadata model**
 
@@ -178,8 +178,8 @@ git commit -m "feat: add skills catalog foundation"
 ## Task 2: Implement Local Skill Selection and Prompt Section Rendering
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/skills/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/skills.rs`
+- Modify: `<repo-root>/src/skills/mod.rs`
+- Modify: `<repo-root>/tests/skills.rs`
 
 - [ ] **Step 1: Write the failing selector tests**
 
@@ -284,8 +284,8 @@ git commit -m "feat: add local skill selection"
 ## Task 3: Inject Active Skills into Main-Agent Prompts and Keep Subagents Summary-Only
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
+- Modify: `<repo-root>/src/agent/mod.rs`
+- Modify: `<repo-root>/tests/agent.rs`
 
 - [ ] **Step 1: Write the failing prompt integration tests**
 
@@ -390,9 +390,9 @@ git commit -m "feat: inject skills into agent prompts"
 ## Task 4: Keep Builtin Skill Files Readable When Workspace Restriction Is Enabled
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/tools/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/skills/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/tools.rs`
+- Modify: `<repo-root>/src/tools/mod.rs`
+- Modify: `<repo-root>/src/skills/mod.rs`
+- Modify: `<repo-root>/tests/tools.rs`
 
 - [ ] **Step 1: Write the failing tool restriction tests**
 
@@ -484,9 +484,9 @@ git commit -m "fix: allow reading builtin skills outside workspace root"
 ## Task 5: Run Focused Verification and Close the Loop
 
 **Files:**
-- Modify if needed: `/Users/sage/nanobot/nanobot-rs/tests/skills.rs`
-- Modify if needed: `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
-- Modify if needed: `/Users/sage/nanobot/nanobot-rs/tests/tools.rs`
+- Modify if needed: `<repo-root>/tests/skills.rs`
+- Modify if needed: `<repo-root>/tests/agent.rs`
+- Modify if needed: `<repo-root>/tests/tools.rs`
 
 - [ ] **Step 1: Run the focused Rust test suite**
 
@@ -516,5 +516,5 @@ Expected: PASS cleanly after any fallout fixes.
 
 ```bash
 git add tests/skills.rs tests/agent.rs tests/tools.rs src/agent/mod.rs src/tools/mod.rs src/skills/mod.rs
-git commit -m "test: cover nanobot-rs skills integration"
+git commit -m "test: cover Sidekick skills integration"
 ```

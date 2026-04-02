@@ -10,6 +10,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use chrono::{Duration, Utc};
+use serde_json::{Map, json};
 use sidekick::agent::AgentLoop;
 use sidekick::bus::MessageBus;
 use sidekick::channels::weixin::{WeixinAccountState, WeixinAccountStore};
@@ -21,7 +22,6 @@ use sidekick::session::{Session, SessionMessage, SessionStore};
 use sidekick::web::{
     self, AgentChatService, AppState, ChatService, WebChatReply, WebSessionDetail,
 };
-use serde_json::{Map, json};
 use std::collections::{HashMap, VecDeque};
 use tempfile::{TempDir, tempdir};
 use tokio::net::TcpListener;
@@ -399,7 +399,7 @@ async fn login_sets_cookie_and_me_returns_authenticated_user() {
 }
 
 #[tokio::test]
-async fn auth_rejects_legacy_nanobot_cookie_name() {
+async fn auth_rejects_unknown_cookie_name() {
     let (state, _dir) = multiuser_state();
     let app = web::build_router(state);
 
@@ -415,7 +415,7 @@ async fn auth_rejects_legacy_nanobot_cookie_name() {
         .oneshot(
             Request::builder()
                 .uri("/api/auth/me")
-                .header("cookie", format!("nanobot_session={session_value}"))
+                .header("cookie", format!("stale_session={session_value}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1978,6 +1978,23 @@ async fn weixin_get_bot_qrcode_page_url(
     }))
 }
 
+async fn weixin_get_qrcode_status_wait(
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+    axum::extract::State(state): axum::extract::State<WeixinApiState>,
+) -> axum::Json<serde_json::Value> {
+    let qrcode = params.get("qrcode").cloned().unwrap_or_default();
+    state
+        .requests
+        .lock()
+        .await
+        .push(format!("/ilink/bot/get_qrcode_status?qrcode={qrcode}"));
+    axum::Json(json!({
+        "data": {
+            "status": "wait"
+        }
+    }))
+}
+
 async fn spawn_weixin_api_server() -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
     let state = WeixinApiState::default();
     let requests = state.requests.clone();
@@ -2002,6 +2019,27 @@ async fn spawn_weixin_page_qr_api_server() -> (SocketAddr, Arc<Mutex<Vec<String>
         .route(
             "/ilink/bot/get_bot_qrcode",
             axum::routing::get(weixin_get_bot_qrcode_page_url),
+        )
+        .with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    (addr, requests)
+}
+
+async fn spawn_weixin_pollable_api_server() -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
+    let state = WeixinApiState::default();
+    let requests = state.requests.clone();
+    let app = Router::new()
+        .route(
+            "/ilink/bot/get_bot_qrcode",
+            axum::routing::get(weixin_get_bot_qrcode),
+        )
+        .route(
+            "/ilink/bot/get_qrcode_status",
+            axum::routing::get(weixin_get_qrcode_status_wait),
         )
         .with_state(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -2753,6 +2791,72 @@ async fn real_agentchatservice_uses_configured_weixin_api_base() {
     assert_eq!(response["qrcodeImgContent"], "data:image/png;base64,abc");
     assert_eq!(requests.lock().await.len(), 1);
     assert_eq!(requests.lock().await[0], "/ilink/bot/get_bot_qrcode");
+}
+
+#[tokio::test]
+async fn authenticated_weixin_login_status_survives_across_requests() {
+    let (state, dir) = multiuser_state();
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let alice = store
+        .get_user_by_username("alice")
+        .expect("lookup alice")
+        .expect("alice user");
+    let (api_addr, requests) = spawn_weixin_pollable_api_server().await;
+    let mut config = store.load_user_config(&alice.user_id).expect("load config");
+    config.channels.weixin = WeixinConfig {
+        enabled: true,
+        api_base: format!("http://{api_addr}"),
+        cdn_base: "https://novac2c.cdn.weixin.qq.com/c2c".to_string(),
+    };
+    store
+        .write_user_config(&alice.user_id, &config)
+        .expect("write config");
+
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/weixin/login/start")
+                .header("cookie", cookie.clone())
+                .body(Body::empty())
+                .expect("start request"),
+        )
+        .await
+        .expect("start response");
+    assert_eq!(start.status(), StatusCode::OK);
+
+    let status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/weixin/login/status")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .expect("status request"),
+        )
+        .await
+        .expect("status response");
+    let status_code = status.status();
+    let body = to_bytes(status.into_body(), usize::MAX)
+        .await
+        .expect("status body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("status json");
+
+    assert_eq!(status_code, StatusCode::OK);
+    assert_eq!(payload["status"], "wait");
+    assert_eq!(payload["loggedIn"], false);
+    assert_eq!(payload["expired"], false);
+    assert_eq!(
+        requests.lock().await.as_slice(),
+        [
+            "/ilink/bot/get_bot_qrcode",
+            "/ilink/bot/get_qrcode_status?qrcode=qr-token"
+        ]
+    );
 }
 
 #[tokio::test]

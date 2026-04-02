@@ -24,7 +24,7 @@ The design keeps model switching explicit and controlled. Users switch profiles 
 - No global default mutation when a user switches models inside a session.
 - No new Web-only model picker in this slice; Web uses the same slash commands as other channels.
 - No changes to the provider registry surface beyond what is needed for profile resolution and request parameter injection.
-- No required schema or behavior changes to the existing Python reference implementation in this slice; the authoritative runtime for this work is `nanobot-rs`.
+- No required schema or behavior changes to the existing Python reference implementation in this slice; the authoritative runtime for this work is `Sidekick`.
 
 ## Chosen Approach
 
@@ -38,7 +38,7 @@ Example shape:
 {
   "agents": {
     "defaults": {
-      "workspace": "/Users/sage/.nanobot-rs/workspace",
+      "workspace": "/Users/sage/.workspace",
       "defaultProfile": "openai:gpt-4.1-mini",
       "maxToolIterations": 20
     },
@@ -180,7 +180,7 @@ This is the protocol-preservation mechanism for fields such as `reasoning_conten
 Rust runtime scope rule:
 
 - this feature set applies to the Rust runtime only
-- the authoritative session schema for this slice is the Rust `nanobot-rs` session store
+- the authoritative session schema for this slice is the Rust `Sidekick` session store
 - CLI, Web, Telegram, and WeCom requirements in this spec refer to the Rust channel implementations only
 
 ### Agent runtime changes

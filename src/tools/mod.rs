@@ -233,12 +233,8 @@ impl Tool for ReadFileTool {
         let path = args.get("path").and_then(Value::as_str).unwrap_or_default();
         let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(1) as usize;
         let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(2000) as usize;
-        match resolve_path_with_roots(
-            path,
-            &self.workspace,
-            self.restrict,
-            &self.extra_read_roots,
-        ) {
+        match resolve_path_with_roots(path, &self.workspace, self.restrict, &self.extra_read_roots)
+        {
             Ok(path) => match std::fs::read_to_string(&path) {
                 Ok(content) => {
                     let lines = content.lines().collect::<Vec<_>>();

@@ -70,7 +70,7 @@ pub struct WeixinLoginStatus {
     pub status: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct WeixinLoginSessionState {
     qrcode: String,
     _qrcode_img_content: String,
@@ -180,32 +180,34 @@ impl WeixinLoginManager {
 
     pub async fn start_login(&self) -> Result<WeixinQrLoginResponse> {
         let login = self.client.fetch_qr_code().await?;
+        let session = WeixinLoginSessionState {
+            qrcode: login.qrcode.clone(),
+            _qrcode_img_content: login.qrcode_img_content.clone(),
+            status: "wait".to_string(),
+        };
         *self
             .session
             .lock()
-            .map_err(|_| anyhow!("weixin login session lock poisoned"))? =
-            Some(WeixinLoginSessionState {
-                qrcode: login.qrcode.clone(),
-                _qrcode_img_content: login.qrcode_img_content.clone(),
-                status: "wait".to_string(),
-            });
+            .map_err(|_| anyhow!("weixin login session lock poisoned"))? = Some(session.clone());
+        self.store.save_login_session(&session)?;
         Ok(login)
     }
 
     pub async fn poll_login_status(&self) -> Result<WeixinLoginStatus> {
-        let qrcode = {
-            let session = self
+        let login_session = {
+            let mut session = self
                 .session
                 .lock()
                 .map_err(|_| anyhow!("weixin login session lock poisoned"))?;
+            if session.is_none() {
+                *session = self.store.load_login_session()?;
+            }
             session
-                .as_ref()
-                .context("weixin login has not been started")?
-                .qrcode
                 .clone()
+                .context("weixin login has not been started")?
         };
 
-        let payload = self.client.poll_qr_status(&qrcode).await?;
+        let payload = self.client.poll_qr_status(&login_session.qrcode).await?;
         {
             let mut session = self
                 .session
@@ -213,6 +215,7 @@ impl WeixinLoginManager {
                 .map_err(|_| anyhow!("weixin login session lock poisoned"))?;
             if let Some(session) = session.as_mut() {
                 session.status = payload.status.clone();
+                self.store.save_login_session(session)?;
             }
         }
 
@@ -251,7 +254,7 @@ impl WeixinLoginManager {
             .session
             .lock()
             .map_err(|_| anyhow!("weixin login session lock poisoned"))? = None;
-        Ok(())
+        self.store.clear_login_session()
     }
 }
 
@@ -858,6 +861,10 @@ impl WeixinAccountStore {
         self.dir.join("context_tokens.json")
     }
 
+    fn login_session_path(&self) -> PathBuf {
+        self.dir.join("login_session.json")
+    }
+
     pub fn load_account(&self) -> Result<Option<WeixinAccountState>> {
         let path = self.account_path();
         if !path.exists() {
@@ -881,6 +888,31 @@ impl WeixinAccountStore {
             .lock()
             .map_err(|_| anyhow!("weixin workspace lock poisoned"))?;
         remove_if_exists(&self.account_path())
+    }
+
+    fn load_login_session(&self) -> Result<Option<WeixinLoginSessionState>> {
+        let path = self.login_session_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let session = read_json::<WeixinLoginSessionState>(&path)?;
+        Ok(Some(session))
+    }
+
+    fn save_login_session(&self, session: &WeixinLoginSessionState) -> Result<()> {
+        let _guard = self
+            .workspace_lock
+            .lock()
+            .map_err(|_| anyhow!("weixin workspace lock poisoned"))?;
+        write_json(&self.login_session_path(), session)
+    }
+
+    fn clear_login_session(&self) -> Result<()> {
+        let _guard = self
+            .workspace_lock
+            .lock()
+            .map_err(|_| anyhow!("weixin workspace lock poisoned"))?;
+        remove_if_exists(&self.login_session_path())
     }
 
     pub fn load_context_token(&self, peer_user_id: &str) -> Result<Option<String>> {
@@ -912,7 +944,8 @@ impl WeixinAccountStore {
             .lock()
             .map_err(|_| anyhow!("weixin workspace lock poisoned"))?;
         remove_if_exists(&self.account_path())?;
-        remove_if_exists(&self.context_tokens_path())
+        remove_if_exists(&self.context_tokens_path())?;
+        remove_if_exists(&self.login_session_path())
     }
 }
 

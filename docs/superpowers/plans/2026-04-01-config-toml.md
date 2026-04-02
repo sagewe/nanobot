@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make all human-edited `nanobot-rs` configuration use `config.toml` while keeping machine-managed runtime state unchanged.
+**Goal:** Make all human-edited `Sidekick` configuration use `config.toml` while keeping machine-managed runtime state unchanged.
 
 **Architecture:** Keep the Rust `Config` type as the only config schema, but make TOML the canonical on-disk format for root and per-user config. Preserve JSON read compatibility long enough to migrate existing installs, then route the web settings editor through TOML text on the client side while the server continues to operate on structured `Config` values.
 
@@ -14,50 +14,50 @@
 
 ### Rust
 
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/config/mod.rs`
+- Modify: `<repo-root>/src/config/mod.rs`
   - Canonical TOML path resolution, JSON fallback, atomic TOML writes, stale JSON cleanup.
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/control/mod.rs`
+- Modify: `<repo-root>/src/control/mod.rs`
   - Per-user config paths, user config migration, legacy compatibility.
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`
+- Modify: `<repo-root>/src/cli/mod.rs`
   - `onboard`, `migrate-legacy`, `show-config`, and user-facing path/help output.
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/web/api.rs`
+- Modify: `<repo-root>/src/web/api.rs`
   - Accept structured config JSON for saves instead of raw JSON/TOML text, leaving parsing to the browser editor bridge.
 
 ### Frontend
 
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/package.json`
+- Modify: `<repo-root>/frontend/package.json`
   - Add TOML parser/stringifier dependency.
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/api.js`
+- Modify: `<repo-root>/frontend/src/api.js`
   - Send structured config JSON on save.
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/main.js`
+- Modify: `<repo-root>/frontend/src/main.js`
   - Render advanced config as TOML text and parse TOML before save.
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/index.html`
+- Modify: `<repo-root>/frontend/index.html`
   - Update editor label from JSON to TOML.
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/i18n.js`
+- Modify: `<repo-root>/frontend/src/i18n.js`
   - Update strings mentioning JSON.
 
 ### Tests
 
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/providers.rs`
+- Modify: `<repo-root>/tests/providers.rs`
   - Config path precedence and TOML save behavior.
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/control.rs`
+- Modify: `<repo-root>/tests/control.rs`
   - Per-user `config.toml` migration and control-store behavior.
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/cli.rs`
+- Modify: `<repo-root>/tests/cli.rs`
   - CLI bootstrap, legacy migration, and `show-config` TOML output.
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/web_server.rs`
+- Modify: `<repo-root>/tests/web_server.rs`
   - Web config save path uses structured config payloads and persists TOML-backed config.
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/test/render.test.js`
+- Modify: `<repo-root>/frontend/test/render.test.js`
   - UI labels and source wiring for TOML editor behavior.
 
 ### Reference Spec
 
-- Read: `/Users/sage/nanobot/nanobot-rs/docs/superpowers/specs/2026-04-01-config-toml-design.md`
+- Read: `<repo-root>/docs/superpowers/specs/2026-04-01-config-toml-design.md`
 
 ## Task 1: Canonicalize Config File Resolution and TOML Persistence
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/config/mod.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/providers.rs`
+- Modify: `<repo-root>/src/config/mod.rs`
+- Test: `<repo-root>/tests/providers.rs`
 
 - [ ] **Step 1: Write the failing config-path tests**
 
@@ -98,7 +98,7 @@ Expected: FAIL because `default_config_path()` still points at `config.json` and
 pub fn default_config_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".nanobot-rs")
+        .join(".Sidekick")
         .join("config.toml")
 }
 
@@ -129,10 +129,10 @@ git commit -m "refactor: make toml the canonical config format"
 ## Task 2: Move Control-Plane and CLI User Config Paths to `config.toml`
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/control/mod.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/control.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/cli.rs`
+- Modify: `<repo-root>/src/control/mod.rs`
+- Modify: `<repo-root>/src/cli/mod.rs`
+- Test: `<repo-root>/tests/control.rs`
+- Test: `<repo-root>/tests/cli.rs`
 
 - [ ] **Step 1: Write failing control and CLI tests for TOML paths**
 
@@ -149,7 +149,7 @@ fn bootstrap_first_admin_creates_user_config_toml() {
 
 #[test]
 fn users_show_config_prints_toml() {
-    let output = Command::new(env!("CARGO_BIN_EXE_nanobot-rs"))
+    let output = Command::new(env!("CARGO_BIN_EXE_sidekick"))
         .args(["--root", dir.path().to_str().unwrap(), "users", "show-config", "--username", "bob"])
         .output()
         .expect("show config");
@@ -199,14 +199,14 @@ git commit -m "feat: migrate user config paths to toml"
 ## Task 3: Switch the Settings Editor from JSON Text to TOML Text
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/web/api.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/package.json`
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/api.js`
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/main.js`
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/index.html`
-- Modify: `/Users/sage/nanobot/nanobot-rs/frontend/src/i18n.js`
-- Test: `/Users/sage/nanobot/nanobot-rs/tests/web_server.rs`
-- Test: `/Users/sage/nanobot/nanobot-rs/frontend/test/render.test.js`
+- Modify: `<repo-root>/src/web/api.rs`
+- Modify: `<repo-root>/frontend/package.json`
+- Modify: `<repo-root>/frontend/src/api.js`
+- Modify: `<repo-root>/frontend/src/main.js`
+- Modify: `<repo-root>/frontend/index.html`
+- Modify: `<repo-root>/frontend/src/i18n.js`
+- Test: `<repo-root>/tests/web_server.rs`
+- Test: `<repo-root>/frontend/test/render.test.js`
 
 - [ ] **Step 1: Write the failing web and frontend tests**
 
@@ -298,11 +298,11 @@ git commit -m "feat: switch settings editor to toml"
 ## Task 4: Run Full Regression and Close the Migration Loop
 
 **Files:**
-- Modify as needed: `/Users/sage/nanobot/nanobot-rs/tests/control.rs`
-- Modify as needed: `/Users/sage/nanobot/nanobot-rs/tests/cli.rs`
-- Modify as needed: `/Users/sage/nanobot/nanobot-rs/tests/providers.rs`
-- Modify as needed: `/Users/sage/nanobot/nanobot-rs/tests/web_server.rs`
-- Modify as needed: `/Users/sage/nanobot/nanobot-rs/frontend/test/render.test.js`
+- Modify as needed: `<repo-root>/tests/control.rs`
+- Modify as needed: `<repo-root>/tests/cli.rs`
+- Modify as needed: `<repo-root>/tests/providers.rs`
+- Modify as needed: `<repo-root>/tests/web_server.rs`
+- Modify as needed: `<repo-root>/frontend/test/render.test.js`
 
 - [ ] **Step 1: Add any missing regression assertions discovered during implementation**
 

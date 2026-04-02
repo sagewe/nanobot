@@ -1,5 +1,5 @@
-use sidekick::session::{Session, SessionMessage, SessionStore};
 use serde_json::json;
+use sidekick::session::{Session, SessionMessage, SessionStore};
 use tempfile::tempdir;
 use tracing::subscriber::with_default;
 

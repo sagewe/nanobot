@@ -6,14 +6,14 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use sidekick::config::{Config, FeishuConfig};
+use serde_json::{Map, Value};
 use sidekick::config::load_config;
 use sidekick::config::save_config;
+use sidekick::config::{Config, FeishuConfig};
 use sidekick::providers::{
     LlmProvider, LlmResponse, ProviderError, ProviderKind, ProviderPool, ProviderRegistry,
     ProviderRequestDescriptor,
 };
-use serde_json::{Map, Value};
 use tempfile::tempdir;
 
 fn env_lock() -> &'static Mutex<()> {
@@ -207,7 +207,7 @@ request = {}
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "defaultProfile": "codex:gpt-5.4",
       "maxToolIterations": 20
     },
@@ -232,40 +232,6 @@ request = {}
         assert_eq!(config.agents.defaults.provider, "openrouter");
         assert_eq!(config.agents.defaults.model, "anthropic/claude-sonnet-4");
         assert_eq!(config.agents.defaults.workspace, "/tmp/sidekick-home");
-    });
-}
-
-#[test]
-fn load_config_falls_back_to_legacy_nanobot_rs_dir_when_sidekick_dir_is_missing() {
-    let home_dir = tempdir().expect("tempdir");
-    let config_dir = home_dir.path().join(".nanobot-rs");
-    fs::create_dir_all(&config_dir).expect("create config dir");
-    fs::write(
-        config_dir.join("config.toml"),
-        r#"[agents.defaults]
-workspace = "/tmp/legacy-nanobot"
-defaultProfile = "openai:gpt-4.1-mini"
-maxToolIterations = 20
-messageDebounceMs = 0
-
-[agents.profiles."openai:gpt-4.1-mini"]
-provider = "openai"
-model = "gpt-4.1-mini"
-request = {}
-"#,
-    )
-    .expect("write toml config");
-
-    with_home_dir(home_dir.path(), || {
-        let config = load_config(None).expect("load config");
-        assert_eq!(
-            config.agents.defaults.workspace,
-            "/tmp/legacy-nanobot".to_string()
-        );
-        assert_eq!(
-            config.agents.defaults.default_profile,
-            "openai:gpt-4.1-mini"
-        );
     });
 }
 
@@ -363,7 +329,7 @@ fn provider_registry_builds_provider_configs_with_defaults() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "defaultProfile": "openai:gpt-4.1-mini",
       "maxToolIterations": 20
     },
@@ -415,7 +381,7 @@ async fn provider_pool_routes_codex_profiles_to_codex_provider() {
             r#"{{
   "agents": {{
     "defaults": {{
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "defaultProfile": "codex:gpt-5.4",
       "maxToolIterations": 20
     }},
@@ -462,7 +428,7 @@ async fn provider_pool_default_chat_routes_codex_default_profile_to_codex_provid
             r#"{{
   "agents": {{
     "defaults": {{
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "defaultProfile": "codex:gpt-5.4",
       "maxToolIterations": 20
     }},
@@ -570,7 +536,7 @@ fn config_rejects_default_profile_keys_that_are_missing_from_profiles() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "defaultProfile": "openai:missing",
       "maxToolIterations": 20
     },
@@ -598,7 +564,7 @@ fn provider_registry_preserves_custom_extra_headers() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "defaultProfile": "custom:demo",
       "maxToolIterations": 20
     },
@@ -645,7 +611,7 @@ fn provider_registry_uses_the_selected_default_profile_from_the_new_shape() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "defaultProfile": "ollama:llama3.2",
       "maxToolIterations": 20
     },

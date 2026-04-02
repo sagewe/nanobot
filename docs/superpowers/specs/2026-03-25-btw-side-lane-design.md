@@ -315,12 +315,12 @@ This slice does not implement:
 
 ## Files to Modify
 
-- `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
+- `<repo-root>/src/agent/mod.rs`
   - recognize `/btw ...`
   - track main-lane activity by session
   - track btw tasks by session
   - add a `process_btw(...)` path
-- `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
+- `<repo-root>/tests/agent.rs`
   - add btw-lane coverage
 
 No channel-specific protocol changes are required for the first version because channels only need to deliver the side reply as a normal outbound message.

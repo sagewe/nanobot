@@ -1,7 +1,7 @@
 use std::fs;
 
-use sidekick::config::load_config;
 use serde_json::Value;
+use sidekick::config::load_config;
 use tempfile::tempdir;
 
 fn load_config_from_json(raw: &str) -> anyhow::Result<Value> {
@@ -18,7 +18,7 @@ fn new_shape_deserializes_profiles_and_default_profile() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "maxToolIterations": 20,
       "defaultProfile": "openai:gpt-4.1-mini"
     },
@@ -68,7 +68,7 @@ fn request_defaults_to_an_empty_object_when_omitted() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "maxToolIterations": 20,
       "defaultProfile": "openai:gpt-4.1-mini"
     },
@@ -101,7 +101,7 @@ fn message_debounce_ms_loads_from_camel_case_config() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "maxToolIterations": 20,
       "messageDebounceMs": 1500,
       "defaultProfile": "openai:gpt-4.1-mini"
@@ -184,7 +184,7 @@ fn non_object_request_is_rejected() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "maxToolIterations": 20,
       "defaultProfile": "openai:gpt-4.1-mini"
     },
@@ -209,7 +209,7 @@ fn unknown_provider_is_rejected_during_load() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "maxToolIterations": 20,
       "defaultProfile": "custom:demo"
     },
@@ -233,7 +233,7 @@ fn missing_default_profile_is_rejected() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "maxToolIterations": 20
     },
     "profiles": {
@@ -256,7 +256,7 @@ fn legacy_provider_and_model_synthesize_one_default_profile() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "provider": "ollama",
       "model": "llama3.2",
       "maxToolIterations": 20
@@ -292,7 +292,7 @@ fn legacy_provider_and_model_synthesize_default_profile_even_with_other_profiles
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "provider": "ollama",
       "model": "llama3.2",
       "maxToolIterations": 20
@@ -343,7 +343,7 @@ fn legacy_synthesis_preserves_existing_profile_at_the_same_key() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "provider": "ollama",
       "model": "llama3.2",
       "maxToolIterations": 20
@@ -395,7 +395,7 @@ fn legacy_synthesis_rejects_colliding_profile_with_mismatched_identity() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "provider": "ollama",
       "model": "llama3.2",
       "maxToolIterations": 20
@@ -423,7 +423,7 @@ fn legacy_synthesis_accepts_case_insensitive_matching_provider_identity() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "provider": "openai",
       "model": "gpt-4.1-mini",
       "maxToolIterations": 20
@@ -489,7 +489,7 @@ fn codex_profiles_are_accepted_when_the_raw_codex_provider_block_is_present() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "maxToolIterations": 20,
       "defaultProfile": "codex:gpt-5-codex"
     },
@@ -543,7 +543,7 @@ fn codex_default_profile_fails_when_the_raw_codex_provider_block_is_missing() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "maxToolIterations": 20,
       "defaultProfile": "codex:gpt-5-codex"
     },
@@ -568,7 +568,7 @@ fn codex_profile_elsewhere_still_requires_the_raw_codex_provider_block() {
         r#"{
   "agents": {
     "defaults": {
-      "workspace": "/tmp/nanobot",
+      "workspace": "/tmp/sidekick",
       "maxToolIterations": 20,
       "defaultProfile": "openai:gpt-4.1-mini"
     },

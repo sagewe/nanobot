@@ -229,16 +229,16 @@ Nothing in this design should require future `btw` replies to reuse the main ses
 
 ## Files to Modify
 
-- `/Users/sage/nanobot/nanobot-rs/src/config/mod.rs`
+- `<repo-root>/src/config/mod.rs`
   - add `message_debounce_ms`
-- `/Users/sage/nanobot/nanobot-rs/src/agent/mod.rs`
+- `<repo-root>/src/agent/mod.rs`
   - replace global processing lock with session lock table
   - add session ingress buffering/debounce
-- `/Users/sage/nanobot/nanobot-rs/src/channels/mod.rs`
+- `<repo-root>/src/channels/mod.rs`
   - change outbound dispatch to concurrent fan-out
-- `/Users/sage/nanobot/nanobot-rs/tests/agent.rs`
+- `<repo-root>/tests/agent.rs`
   - add session concurrency and debounce tests
-- `/Users/sage/nanobot/nanobot-rs/tests/channels.rs`
+- `<repo-root>/tests/channels.rs`
   - add outbound concurrency tests
 
 ## Test Requirements

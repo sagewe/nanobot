@@ -1,6 +1,6 @@
 //! Heartbeat service — periodic agent wake-up to check for pending tasks.
 //!
-//! Mirrors `nanobot.heartbeat.service`.
+//! Keeps the workspace heartbeat loop behavior aligned with the previous service.
 //!
 //! **Phase 1 (decision):** reads `HEARTBEAT.md` from the workspace and asks
 //! the LLM — via a structured tool call — whether there are active tasks.

@@ -6,14 +6,14 @@ Branch: `main`
 
 ## Summary
 
-Add a first-class `codex` provider to `nanobot-rs` that uses the local Codex/ChatGPT login state from `~/.codex/auth.json` and speaks the Codex runtime protocol directly.
+Add a first-class `codex` provider to `Sidekick` that uses the local Codex/ChatGPT login state from `~/.codex/auth.json` and speaks the Codex runtime protocol directly.
 
 This provider is intentionally separate from the existing `openai` provider:
 
 - it does not read `OPENAI_API_KEY`
 - it does not fall back to `providers.openai.apiKey`
 - it does not reuse the OpenAI-compatible `/chat/completions` transport
-- it does not add browser login, callback handling, or auth UI to `nanobot-rs`
+- it does not add browser login, callback handling, or auth UI to `Sidekick`
 
 The first version is runtime-only:
 
@@ -32,7 +32,7 @@ The first version is runtime-only:
 
 ## Non-Goals
 
-- Browser-based OAuth login inside `nanobot-rs`
+- Browser-based OAuth login inside `Sidekick`
 - Web or CLI auth-status dashboards
 - Automatic fallback to API-key auth
 - Automatic migration from `openai` profiles to `codex`
@@ -60,7 +60,7 @@ The first version is runtime-only:
 "agents": {
   "defaults": {
     "defaultProfile": "codex:gpt-5.4",
-    "workspace": "/Users/sage/.nanobot-rs/workspace",
+    "workspace": "/Users/sage/.workspace",
     "maxToolIterations": 20
   },
   "profiles": {
@@ -79,7 +79,7 @@ The first version is runtime-only:
 
 When a session uses a `codex:*` profile:
 
-- `nanobot-rs` reads the configured Codex auth file
+- `Sidekick` reads the configured Codex auth file
 - validates that the auth file represents a ChatGPT/Codex login
 - constructs a Codex runtime client
 - sends the turn through the Codex backend protocol
@@ -111,7 +111,7 @@ This is sufficient to conclude that the Codex runtime path is distinct from the 
 
 ### Configuration Layer
 
-Extend [config/mod.rs](/Users/sage/nanobot/nanobot-rs/src/config/mod.rs) with:
+Extend [config/mod.rs](<repo-root>/src/config/mod.rs) with:
 
 - `CodexProviderConfig`
 - `ProvidersConfig.codex`
@@ -129,17 +129,17 @@ Defaults:
 
 ### Provider Registry
 
-Extend [providers/registry.rs](/Users/sage/nanobot/nanobot-rs/src/providers/registry.rs) to:
+Extend [providers/registry.rs](<repo-root>/src/providers/registry.rs) to:
 
 - resolve `provider = "codex"`
 - validate that a `codex` config block exists when referenced
 - build a `CodexProvider`
 
-Keep [providers/mod.rs](/Users/sage/nanobot/nanobot-rs/src/providers/mod.rs) as re-export/factory glue.
+Keep [providers/mod.rs](<repo-root>/src/providers/mod.rs) as re-export/factory glue.
 
 ### New Provider Module
 
-Add [providers/codex.rs](/Users/sage/nanobot/nanobot-rs/src/providers/codex.rs) with:
+Add [providers/codex.rs](<repo-root>/src/providers/codex.rs) with:
 
 - auth-file parsing and validation
 - Codex runtime request client
@@ -181,7 +181,7 @@ The `codex` provider should target the same backend family the local Codex CLI u
 
 Implementation constraint:
 
-- the rest of `nanobot-rs` still expects a non-streaming `LlmProvider::chat(...) -> LlmResponse`
+- the rest of `Sidekick` still expects a non-streaming `LlmProvider::chat(...) -> LlmResponse`
 - therefore the provider may internally use Codex SSE or websocket transport, but it must collapse the interaction into one final `LlmResponse`
 
 Internal transport details are provider-private. The important contract is:

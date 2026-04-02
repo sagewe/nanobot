@@ -302,7 +302,7 @@ impl SkillsCatalog {
     }
 
     pub fn discover_managed(&self) -> Result<ManagedSkills> {
-        let state = load_managed_state(&self.managed_state_read_path())?;
+        let state = load_managed_state(&self.managed_state_path())?;
         let mut builtin = self.collect_root_managed(&self.builtin_root, SkillSource::Builtin)?;
         let mut workspace =
             self.collect_root_managed(&self.workspace.join("skills"), SkillSource::Workspace)?;
@@ -428,19 +428,6 @@ impl SkillsCatalog {
 
     fn managed_state_path(&self) -> PathBuf {
         self.workspace.join(".sidekick").join("skills-state.json")
-    }
-
-    fn legacy_managed_state_path(&self) -> PathBuf {
-        self.workspace.join(".nanobot").join("skills-state.json")
-    }
-
-    fn managed_state_read_path(&self) -> PathBuf {
-        let primary = self.managed_state_path();
-        if primary.exists() {
-            primary
-        } else {
-            self.legacy_managed_state_path()
-        }
     }
 }
 
@@ -593,7 +580,6 @@ fn parse_skill_metadata(always: Option<&String>, metadata_json: Option<&String>)
     };
     let Some(root) = value
         .get("sidekick")
-        .or_else(|| value.get("nanobot"))
         .or_else(|| value.get("openclaw"))
         .and_then(Value::as_object)
     else {

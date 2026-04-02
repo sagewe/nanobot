@@ -13,46 +13,46 @@
 ## File Map
 
 **Create**
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/mod.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/src/presentation/mod.rs`  
   Re-export presentation helpers.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/filters.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/src/presentation/filters.rs`  
   Central policy for whether an outbound message should be shown on a channel.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/markdown.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/src/presentation/markdown.rs`  
   CommonMark renderers for Web HTML, Telegram HTML, and WeCom markdown.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/tests/presentation.rs`  
   Focused unit tests for filtering and renderer behavior.
 
 **Modify**
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/Cargo.toml`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/Cargo.toml`  
   Add Markdown/sanitization dependencies.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/Cargo.lock`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/Cargo.lock`  
   Dependency lockfile update.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/lib.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/src/lib.rs`  
   Export `presentation`.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/channels/mod.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/src/channels/mod.rs`  
   Apply visibility filter and Telegram HTML rendering/chunking.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/channels/wecom.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/src/channels/wecom.rs`  
   Apply visibility filter and send final replies as WeCom markdown messages.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/web/api.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/src/web/api.rs`  
   Preserve `reply`, add rendered HTML field.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/web/page.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/src/web/page.rs`  
   Render assistant HTML safely and keep user text plain.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/channels.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/tests/channels.rs`  
   Telegram filtering/rendering integration tests.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/wecom.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/tests/wecom.rs`  
   WeCom filtering and markdown reply integration tests.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/web_server.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/tests/web_server.rs`  
   API contract tests for `reply` + `replyHtml`.
-- `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/web_page.rs`  
+- `<repo-root>/.worktrees/channel-markdown-visibility/tests/web_page.rs`  
   Page-shell expectations for assistant HTML rendering.
 
 ### Task 1: Add Presentation Filter Scaffolding
 
 **Files:**
-- Create: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/mod.rs`
-- Create: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/filters.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/lib.rs`
-- Create: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs`
+- Create: `<repo-root>/.worktrees/channel-markdown-visibility/src/presentation/mod.rs`
+- Create: `<repo-root>/.worktrees/channel-markdown-visibility/src/presentation/filters.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/src/lib.rs`
+- Create: `<repo-root>/.worktrees/channel-markdown-visibility/tests/presentation.rs`
 
 - [x] **Step 1: Write the failing filter tests**
 
@@ -79,7 +79,7 @@ fn normal_messages_remain_visible_everywhere() {
 
 - [x] **Step 2: Run the targeted tests to verify RED**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test presentation`
+Run: `cargo test --target-dir /tmp/sidekick-target --test presentation`
 
 Expected: FAIL because `presentation` module and `should_deliver_to_channel` do not exist yet.
 
@@ -104,25 +104,25 @@ Export the module from `lib.rs`.
 
 - [x] **Step 4: Run the targeted tests to verify GREEN**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test presentation`
+Run: `cargo test --target-dir /tmp/sidekick-target --test presentation`
 
 Expected: PASS
 
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/mod.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/filters.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/lib.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs
+git add <repo-root>/.worktrees/channel-markdown-visibility/src/presentation/mod.rs <repo-root>/.worktrees/channel-markdown-visibility/src/presentation/filters.rs <repo-root>/.worktrees/channel-markdown-visibility/src/lib.rs <repo-root>/.worktrees/channel-markdown-visibility/tests/presentation.rs
 git commit -m "feat: add channel delivery filter"
 ```
 
 ### Task 2: Add Shared Markdown Rendering Helpers
 
 **Files:**
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/Cargo.toml`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/Cargo.lock`
-- Create: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/markdown.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/mod.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/Cargo.toml`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/Cargo.lock`
+- Create: `<repo-root>/.worktrees/channel-markdown-visibility/src/presentation/markdown.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/src/presentation/mod.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/tests/presentation.rs`
 
 - [x] **Step 1: Write the failing renderer tests**
 
@@ -153,7 +153,7 @@ fn wecom_renderer_returns_markdown_and_enforces_limit() {
 
 - [x] **Step 2: Run the targeted tests to verify RED**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test presentation`
+Run: `cargo test --target-dir /tmp/sidekick-target --test presentation`
 
 Expected: FAIL because renderer helpers and dependencies are missing.
 
@@ -177,24 +177,24 @@ Keep unsupported constructs readable rather than perfect.
 
 - [x] **Step 4: Run the targeted tests to verify GREEN**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test presentation`
+Run: `cargo test --target-dir /tmp/sidekick-target --test presentation`
 
 Expected: PASS
 
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/Cargo.toml /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/Cargo.lock /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/mod.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/presentation/markdown.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs
+git add <repo-root>/.worktrees/channel-markdown-visibility/Cargo.toml <repo-root>/.worktrees/channel-markdown-visibility/Cargo.lock <repo-root>/.worktrees/channel-markdown-visibility/src/presentation/mod.rs <repo-root>/.worktrees/channel-markdown-visibility/src/presentation/markdown.rs <repo-root>/.worktrees/channel-markdown-visibility/tests/presentation.rs
 git commit -m "feat: add shared markdown renderers"
 ```
 
 ### Task 3: Wire Web Assistant HTML Rendering
 
 **Files:**
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/web/api.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/web/page.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/web_server.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/web_page.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/src/web/api.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/src/web/page.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/tests/web_server.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/tests/web_page.rs`
 
 - [x] **Step 1: Write the failing Web API and page tests**
 
@@ -217,8 +217,8 @@ assert!(html.contains("payload.replyHtml"));
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test web_server
-cargo test --target-dir /tmp/nanobot-rs-target --test web_page
+cargo test --target-dir /tmp/sidekick-target --test web_server
+cargo test --target-dir /tmp/sidekick-target --test web_page
 ```
 
 Expected: FAIL because the API does not yet return `replyHtml` and the page still uses plain-text assistant insertion.
@@ -242,8 +242,8 @@ In `web/page.rs`:
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test web_server
-cargo test --target-dir /tmp/nanobot-rs-target --test web_page
+cargo test --target-dir /tmp/sidekick-target --test web_server
+cargo test --target-dir /tmp/sidekick-target --test web_page
 ```
 
 Expected: PASS
@@ -251,16 +251,16 @@ Expected: PASS
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/web/api.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/web/page.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/web_server.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/web_page.rs
+git add <repo-root>/.worktrees/channel-markdown-visibility/src/web/api.rs <repo-root>/.worktrees/channel-markdown-visibility/src/web/page.rs <repo-root>/.worktrees/channel-markdown-visibility/tests/web_server.rs <repo-root>/.worktrees/channel-markdown-visibility/tests/web_page.rs
 git commit -m "feat: render markdown replies in web ui"
 ```
 
 ### Task 4: Filter And Render Telegram Output
 
 **Files:**
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/channels/mod.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/channels.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/src/channels/mod.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/tests/channels.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/tests/presentation.rs`
 
 - [x] **Step 1: Write the failing Telegram tests**
 
@@ -288,9 +288,9 @@ Also add a focused renderer/chunking test in `tests/presentation.rs` for long Te
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test channels telegram_channel_drops_runtime_messages
-cargo test --target-dir /tmp/nanobot-rs-target --test channels telegram_channel_sends_rendered_html
-cargo test --target-dir /tmp/nanobot-rs-target --test presentation telegram_html_chunks_preserve_tags
+cargo test --target-dir /tmp/sidekick-target --test channels telegram_channel_drops_runtime_messages
+cargo test --target-dir /tmp/sidekick-target --test channels telegram_channel_sends_rendered_html
+cargo test --target-dir /tmp/sidekick-target --test presentation telegram_html_chunks_preserve_tags
 ```
 
 Expected: FAIL because filtering, render conversion, and safe chunking are not wired yet.
@@ -309,9 +309,9 @@ In `src/channels/mod.rs`:
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test channels telegram_channel_drops_runtime_messages
-cargo test --target-dir /tmp/nanobot-rs-target --test channels telegram_channel_sends_rendered_html
-cargo test --target-dir /tmp/nanobot-rs-target --test presentation telegram_html_chunks_preserve_tags
+cargo test --target-dir /tmp/sidekick-target --test channels telegram_channel_drops_runtime_messages
+cargo test --target-dir /tmp/sidekick-target --test channels telegram_channel_sends_rendered_html
+cargo test --target-dir /tmp/sidekick-target --test presentation telegram_html_chunks_preserve_tags
 ```
 
 Expected: PASS
@@ -319,16 +319,16 @@ Expected: PASS
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/channels/mod.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/channels.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs
+git add <repo-root>/.worktrees/channel-markdown-visibility/src/channels/mod.rs <repo-root>/.worktrees/channel-markdown-visibility/tests/channels.rs <repo-root>/.worktrees/channel-markdown-visibility/tests/presentation.rs
 git commit -m "feat: render telegram markdown replies"
 ```
 
 ### Task 5: Filter And Render WeCom Output
 
 **Files:**
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/channels/wecom.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/wecom.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/src/channels/wecom.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/tests/wecom.rs`
+- Modify: `<repo-root>/.worktrees/channel-markdown-visibility/tests/presentation.rs`
 
 - [x] **Step 1: Write the failing WeCom tests**
 
@@ -357,9 +357,9 @@ Add a renderer test that verifies 20480-byte truncation/fallback remains valid U
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test wecom wecom_channel_drops_runtime_messages
-cargo test --target-dir /tmp/nanobot-rs-target --test wecom wecom_channel_sends_markdown_replies
-cargo test --target-dir /tmp/nanobot-rs-target --test presentation wecom_markdown_respects_size_limit
+cargo test --target-dir /tmp/sidekick-target --test wecom wecom_channel_drops_runtime_messages
+cargo test --target-dir /tmp/sidekick-target --test wecom wecom_channel_sends_markdown_replies
+cargo test --target-dir /tmp/sidekick-target --test presentation wecom_markdown_respects_size_limit
 ```
 
 Expected: FAIL because WeCom still uses text stream replies and does not filter runtime messages.
@@ -392,9 +392,9 @@ pub fn build_wecom_markdown_reply_request(req_id: &str, content: &str) -> Value 
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test wecom wecom_channel_drops_runtime_messages
-cargo test --target-dir /tmp/nanobot-rs-target --test wecom wecom_channel_sends_markdown_replies
-cargo test --target-dir /tmp/nanobot-rs-target --test presentation wecom_markdown_respects_size_limit
+cargo test --target-dir /tmp/sidekick-target --test wecom wecom_channel_drops_runtime_messages
+cargo test --target-dir /tmp/sidekick-target --test wecom wecom_channel_sends_markdown_replies
+cargo test --target-dir /tmp/sidekick-target --test presentation wecom_markdown_respects_size_limit
 ```
 
 Expected: PASS
@@ -405,7 +405,7 @@ Run:
 
 ```bash
 cargo fmt
-cargo test --target-dir /tmp/nanobot-rs-target
+cargo test --target-dir /tmp/sidekick-target
 ```
 
 Expected: PASS for the full Rust suite
@@ -413,6 +413,6 @@ Expected: PASS for the full Rust suite
 - [x] **Step 6: Commit**
 
 ```bash
-git add /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/src/channels/wecom.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/wecom.rs /Users/sage/nanobot/.worktrees/channel-markdown-visibility/nanobot-rs/tests/presentation.rs
+git add <repo-root>/.worktrees/channel-markdown-visibility/src/channels/wecom.rs <repo-root>/.worktrees/channel-markdown-visibility/tests/wecom.rs <repo-root>/.worktrees/channel-markdown-visibility/tests/presentation.rs
 git commit -m "feat: render wecom markdown replies"
 ```

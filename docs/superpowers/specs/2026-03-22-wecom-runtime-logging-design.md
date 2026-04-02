@@ -2,7 +2,7 @@
 
 ## Summary
 
-Add operator-facing runtime logs to the existing WeCom smart-bot channel so a human running `nanobot-rs gateway` can tell whether the bot is connecting, subscribed, receiving callbacks, sending replies, and reconnecting.
+Add operator-facing runtime logs to the existing WeCom smart-bot channel so a human running `Sidekick gateway` can tell whether the bot is connecting, subscribed, receiving callbacks, sending replies, and reconnecting.
 
 This is a logging-only slice. It must not change the WeCom protocol behavior, channel lifecycle, message routing, heartbeat cadence, reconnect strategy, or reply semantics.
 
@@ -73,8 +73,8 @@ These should appear only when debug logging is enabled:
 
 ## File Changes
 
-- Modify `nanobot-rs/src/channels/wecom.rs`
-- Modify or add tests under `nanobot-rs/tests/wecom.rs`
+- Modify `src/channels/wecom.rs`
+- Modify or add tests under `tests/wecom.rs`
 
 No other files should need behavioral changes.
 

@@ -1,25 +1,25 @@
-# nanobot-rs Skills Module Design
+# Sidekick Skills Module Design
 
 Date: 2026-04-02
-Repo: `/Users/sage/nanobot/nanobot-rs`
+Repo: `<repo-root>`
 Status: Draft approved for spec write-up
 
 ## Summary
 
-Add a first-class `skills` module to `nanobot-rs` that discovers builtin and workspace skills, parses skill metadata, checks availability requirements, and selects active skills for each main-agent turn using a local priority order of `always > explicit > semantic`. The selected skill bodies are injected into the main agent system prompt as active skills, while the full skill catalog remains available as a summary for additional on-demand reading. `nanobot-rs` will maintain its own builtin skills directory rather than reusing the Python runtime's skill tree.
+Add a first-class `skills` module to `Sidekick` that discovers builtin and workspace skills, parses skill metadata, checks availability requirements, and selects active skills for each main-agent turn using a local priority order of `always > explicit > semantic`. The selected skill bodies are injected into the main agent system prompt as active skills, while the full skill catalog remains available as a summary for additional on-demand reading. `Sidekick` will maintain its own builtin skills directory rather than reusing the Python runtime's skill tree.
 
 ## Goals
 
 - Add a dedicated Rust `skills` module instead of embedding skills logic inside `agent::ContextBuilder`.
-- Support builtin skills under `nanobot-rs/skills/<name>/SKILL.md`.
+- Support builtin skills under `skills/<name>/SKILL.md`.
 - Support workspace skills under `<workspace>/skills/<name>/SKILL.md`.
 - Make workspace skills override builtin skills with the same normalized name.
-- Parse core frontmatter fields compatible with current nanobot skills usage:
+- Parse core frontmatter fields compatible with current Sidekick skills usage:
   - `name`
   - `description`
   - `always`
   - `metadata`
-- Parse `metadata` JSON for `nanobot` and `openclaw` keys, including:
+- Parse `metadata` JSON for `Sidekick` and `openclaw` keys, including:
   - `requires.bins`
   - `requires.env`
   - optional future fields such as `keywords` or `tags`
@@ -43,13 +43,13 @@ Add a first-class `skills` module to `nanobot-rs` that discovers builtin and wor
 
 ## Current State
 
-- `nanobot-rs` has no standalone `skills` module.
+- `Sidekick` has no standalone `skills` module.
 - Main agent prompt construction lives inside `agent::ContextBuilder`.
 - `ContextBuilder` currently scans only `<workspace>/skills/*/SKILL.md` and emits a plain list of paths under a `## Skills` section.
-- There is no builtin skills directory inside `nanobot-rs`.
+- There is no builtin skills directory inside `Sidekick`.
 - There is no frontmatter parsing, requirements checking, `always` handling, explicit skill matching, or semantic skill matching in Rust.
 - Subagent prompts currently contain a small standalone system prompt and no skill selection behavior.
-- The Python runtime already has a `SkillsLoader`, but `nanobot-rs` should establish its own builtin skill source and prompt behavior.
+- The Python runtime already has a `SkillsLoader`, but `Sidekick` should establish its own builtin skill source and prompt behavior.
 
 ## Desired State
 
@@ -57,7 +57,7 @@ Add a first-class `skills` module to `nanobot-rs` that discovers builtin and wor
 
 - Add `src/skills/mod.rs` and export it from `src/lib.rs`.
 - Keep the initial implementation in one module unless it becomes too large; splitting can happen later if needed.
-- Add a new repository directory `nanobot-rs/skills/` for Rust builtin skills.
+- Add a new repository directory `skills/` for Rust builtin skills.
 
 ### Data Model
 
@@ -87,7 +87,7 @@ The `skills` module should expose focused types that separate discovery, metadat
 
 ### Discovery Rules
 
-- Builtin skills load from `nanobot-rs/skills`.
+- Builtin skills load from `skills`.
 - Workspace skills load from `<workspace>/skills`.
 - Each skill lives in a directory containing `SKILL.md`.
 - Skill names are normalized for matching and override resolution.
@@ -101,7 +101,7 @@ The `skills` module should expose focused types that separate discovery, metadat
   - if frontmatter parsing fails, keep the skill as a body-only skill
   - if the file cannot be read, skip the skill and log a warning
 - Extract `description` from frontmatter when present, otherwise fall back to the skill name.
-- Parse the `metadata` field as JSON text and accept either the `nanobot` or `openclaw` object.
+- Parse the `metadata` field as JSON text and accept either the `Sidekick` or `openclaw` object.
 - Availability is derived from `requires.bins` and `requires.env`.
 - The stripped body is what gets injected into `Active Skills`.
 
@@ -204,7 +204,7 @@ If prompt budget needs to be constrained later, lower-priority semantic skills s
 
 ### Builtin Skills Tree
 
-- Create `nanobot-rs/skills/README.md`.
+- Create `skills/README.md`.
 - Add an initial builtin skills set only as needed for Rust runtime bring-up. The module design must not depend on a large initial catalog.
 
 ## Error Handling
@@ -222,11 +222,11 @@ If prompt budget needs to be constrained later, lower-priority semantic skills s
 
 ### Skills Module Unit Tests
 
-- discover builtin skills from `nanobot-rs/skills`
+- discover builtin skills from `skills`
 - discover workspace skills from `<workspace>/skills`
 - workspace skill overrides builtin skill by normalized name
 - parse frontmatter fields and stripped body correctly
-- parse `metadata` JSON under both `nanobot` and `openclaw`
+- parse `metadata` JSON under both `Sidekick` and `openclaw`
 - detect availability from required binaries and environment variables
 - compute missing requirement summaries for unavailable skills
 
@@ -262,17 +262,17 @@ If prompt budget needs to be constrained later, lower-priority semantic skills s
 - Local semantic matching is more predictable than LLM routing, but it will miss some valid matches and occasionally rank borderline matches imperfectly.
 - Recomputing the catalog on each prompt keeps behavior fresh and simple, but it may become a performance consideration if the skill tree grows substantially.
 - Tolerant parsing improves robustness, but it also means malformed metadata can silently degrade skill quality unless warnings are visible in logs.
-- Maintaining a Rust-specific builtin skills tree gives `nanobot-rs` independence, but it creates a second skill catalog that must be curated separately from Python.
+- Maintaining a Rust-specific builtin skills tree gives `Sidekick` independence, but it creates a second skill catalog that must be curated separately from Python.
 - Prompt growth becomes a real constraint once many `always` skills exist, so builtin skill curation matters.
 
 ## Acceptance Criteria
 
-- `nanobot-rs` exports a standalone `skills` module.
+- `Sidekick` exports a standalone `skills` module.
 - `ContextBuilder` no longer performs direct skill directory scanning itself.
 - Main agent prompt includes selected active skills using the local priority order `always > explicit > semantic`.
 - Main agent prompt still includes a full skills summary with availability details.
 - Explicitly requested but unavailable skills are surfaced to the model.
 - Workspace skills override builtin skills by name.
-- Builtin skills are sourced from `nanobot-rs/skills`, not the Python runtime tree.
+- Builtin skills are sourced from `skills`, not the Python runtime tree.
 - Subagents receive skills summary context but do not auto-inject semantic skills.
 - New tests cover discovery, parsing, selection, prompt assembly, and fallback behavior.

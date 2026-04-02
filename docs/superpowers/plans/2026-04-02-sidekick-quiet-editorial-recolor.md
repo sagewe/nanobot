@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Recolor the `nanobot-rs` frontend to the approved Anthropic-inspired "Quiet Editorial" palette across login, app shell, light theme, dark theme, semantic accents, and syntax highlighting without changing behavior or layout.
+**Goal:** Recolor the `Sidekick` frontend to the approved Anthropic-inspired "Quiet Editorial" palette across login, app shell, light theme, dark theme, semantic accents, and syntax highlighting without changing behavior or layout.
 
 **Architecture:** Treat `frontend/src/style.css` as the single source of truth for the new visual system. First lock the new palette into tests, then replace the shared theme tokens and the login-facing light-theme surfaces, then extend the same system through dark mode, semantic badges, avatars, traces, and code highlighting, and finally run full frontend verification.
 
@@ -47,7 +47,7 @@ it("locks the quiet editorial light palette and calmer login copy", () => {
   expect(loginShellCss).not.toContain("rgba(193, 95, 60, 0.16)");
   expect(loginCardCss).not.toContain("rgba(193, 95, 60, 0.18)");
 
-  expect(html).toContain("Nanobot Workspace");
+  expect(html).toContain("Sidekick Workspace");
   expect(html).toContain("Enter Workspace");
   expect(html).not.toContain("Enter Control Plane");
 
@@ -57,7 +57,7 @@ it("locks the quiet editorial light palette and calmer login copy", () => {
 
 - [ ] **Step 2: Run the targeted test to verify it fails on the current palette**
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test -- test/render.test.js -t "locks the quiet editorial light palette and calmer login copy"`
+Run: `cd <repo-root>/frontend && npm test -- test/render.test.js -t "locks the quiet editorial light palette and calmer login copy"`
 
 Expected: FAIL because the stylesheet still uses `#C15F3C`, `#A14A2F`, and the warmer login gradients, and the login button copy still says `Enter Control Plane`.
 
@@ -100,22 +100,22 @@ Expected: FAIL because the stylesheet still uses `#C15F3C`, `#A14A2F`, and the w
 Update the login copy in `frontend/index.html` to the quieter wording:
 
 ```html
-<div class="login-kicker">Nanobot Workspace</div>
+<div class="login-kicker">Sidekick Workspace</div>
 <h1>Sign in to your workspace</h1>
 <button id="login-button" type="submit">Enter Workspace</button>
 ```
 
 - [ ] **Step 4: Run the targeted test to verify the light-theme slice passes**
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test -- test/render.test.js -t "locks the quiet editorial light palette and calmer login copy"`
+Run: `cd <repo-root>/frontend && npm test -- test/render.test.js -t "locks the quiet editorial light palette and calmer login copy"`
 
 Expected: PASS
 
 - [ ] **Step 5: Commit the light-theme slice**
 
 ```bash
-cd /Users/sage/nanobot
-git add nanobot-rs/frontend/src/style.css nanobot-rs/frontend/index.html nanobot-rs/frontend/test/render.test.js
+cd <repo-root>
+git add frontend/src/style.css frontend/index.html frontend/test/render.test.js
 git commit -m "feat: add quiet editorial light palette"
 ```
 
@@ -154,7 +154,7 @@ it("locks the quiet editorial dark palette and removes the purple assistant avat
 
 - [ ] **Step 2: Run the targeted test to verify it fails on the current dark-theme styling**
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test -- test/render.test.js -t "locks the quiet editorial dark palette and removes the purple assistant avatar"`
+Run: `cd <repo-root>/frontend && npm test -- test/render.test.js -t "locks the quiet editorial dark palette and removes the purple assistant avatar"`
 
 Expected: FAIL because dark mode still uses the older orange-heavy token set and the assistant avatar still contains the purple gradient.
 
@@ -205,15 +205,15 @@ Mirror the same replacements in the system-dark `:root:not([data-theme="light"])
 
 - [ ] **Step 4: Run the targeted test to verify the dark-theme slice passes**
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test -- test/render.test.js -t "locks the quiet editorial dark palette and removes the purple assistant avatar"`
+Run: `cd <repo-root>/frontend && npm test -- test/render.test.js -t "locks the quiet editorial dark palette and removes the purple assistant avatar"`
 
 Expected: PASS
 
 - [ ] **Step 5: Commit the dark-theme slice**
 
 ```bash
-cd /Users/sage/nanobot
-git add nanobot-rs/frontend/src/style.css nanobot-rs/frontend/test/render.test.js
+cd <repo-root>
+git add frontend/src/style.css frontend/test/render.test.js
 git commit -m "feat: add quiet editorial dark palette"
 ```
 
@@ -249,7 +249,7 @@ it("uses restrained semantic accents and removes legacy off-brand palette leftov
 
 - [ ] **Step 2: Run the targeted test to verify it fails before the semantic cleanup**
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test -- test/render.test.js -t "uses restrained semantic accents and removes legacy off-brand palette leftovers"`
+Run: `cd <repo-root>/frontend && npm test -- test/render.test.js -t "uses restrained semantic accents and removes legacy off-brand palette leftovers"`
 
 Expected: FAIL because session badges and status-related colors still rely on leftover bright greens, blues, and historical dark-theme values.
 
@@ -276,21 +276,21 @@ If `color-mix()` would be inconsistent with the project's browser target, replac
 
 - [ ] **Step 4: Run the full frontend test suite**
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm test`
+Run: `cd <repo-root>/frontend && npm test`
 
 Expected: PASS with `vitest` reporting all frontend tests green.
 
 - [ ] **Step 5: Run the production build**
 
-Run: `cd /Users/sage/nanobot/nanobot-rs/frontend && npm run build`
+Run: `cd <repo-root>/frontend && npm run build`
 
 Expected: PASS with Vite emitting a production bundle and no CSS/HTML import errors.
 
 - [ ] **Step 6: Commit the semantic cleanup and verification pass**
 
 ```bash
-cd /Users/sage/nanobot
-git add nanobot-rs/frontend/src/style.css nanobot-rs/frontend/test/render.test.js nanobot-rs/frontend/index.html
+cd <repo-root>
+git add frontend/src/style.css frontend/test/render.test.js frontend/index.html
 git commit -m "feat: complete quiet editorial frontend recolor"
 ```
 

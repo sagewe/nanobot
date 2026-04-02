@@ -1,10 +1,10 @@
-# nanobot-rs README Implementation Plan
+# Sidekick README Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a dedicated [nanobot-rs/README.md](/Users/sage/nanobot/nanobot-rs/README.md) that gives first-time users a fast, accurate guide to the current Rust runtime.
+**Goal:** Add a dedicated [README.md](<repo-root>/README.md) that gives first-time users a fast, accurate guide to the current Rust runtime.
 
-**Architecture:** Keep the work isolated to documentation. Create one Rust-specific README under `nanobot-rs/`, grounded in the current runtime behavior and linked to the deeper runbook for smoke testing and triage. Do not change root project docs or runtime code as part of this task.
+**Architecture:** Keep the work isolated to documentation. Update the repository-root README, grounded in the current runtime behavior and linked to the deeper runbook for smoke testing and triage. Do not change runtime code as part of this task.
 
 **Tech Stack:** Markdown, existing Rust CLI/runtime behavior, existing runbook documentation
 
@@ -13,11 +13,11 @@
 ### Task 1: Confirm current runtime facts before writing
 
 **Files:**
-- Read: `/Users/sage/nanobot/docs/superpowers/specs/2026-03-24-nanobot-rs-readme-design.md`
-- Read: `/Users/sage/nanobot/docs/runbooks/nanobot-rs-runtime-smoke-checklist.md`
-- Read: `/Users/sage/nanobot/nanobot-rs/src/cli/mod.rs`
-- Read: `/Users/sage/nanobot/nanobot-rs/src/config/mod.rs`
-- Create: `/Users/sage/nanobot/nanobot-rs/README.md`
+- Read: `<repo-root>/docs/superpowers/specs/2026-03-24-sidekick-readme-design.md`
+- Read: `<repo-root>/docs/runbooks/sidekick-runtime-smoke-checklist.md`
+- Read: `<repo-root>/src/cli/mod.rs`
+- Read: `<repo-root>/src/config/mod.rs`
+- Create: `<repo-root>/README.md`
 
 - [x] **Step 1: Write the failing verification checklist in the plan notes**
 
@@ -27,7 +27,7 @@ Record the facts the README must match exactly:
 - onboard command exists
 - gateway starts embedded web
 - default embedded web port is 3456
-- config root is ~/.nanobot-rs
+- config root is ~/.sidekick
 - profiles use agents.defaults.defaultProfile + agents.profiles
 - providers include openai, custom, openrouter, ollama, codex
 - channels include telegram, wecom, weixin
@@ -39,7 +39,7 @@ Record the facts the README must match exactly:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
+cd <repo-root>
 cargo run --release -- help
 rg -n "DEFAULT_WEB_PORT|ONBOARD_TEMPLATE_SUMMARY" src/cli/mod.rs
 rg -n "defaultProfile|openai|custom|openrouter|ollama|codex|telegram|wecom|weixin" src/config/mod.rs
@@ -55,7 +55,7 @@ Expected:
 Use this exact section order:
 
 ```markdown
-# nanobot-rs
+# Sidekick
 ## Current Status
 ## Quick Start
 ## Configuration
@@ -72,18 +72,18 @@ No commit yet. This task is complete when the runtime facts are verified and the
 ### Task 2: Write the README with only current, verified behavior
 
 **Files:**
-- Create: `/Users/sage/nanobot/nanobot-rs/README.md`
-- Reference: `/Users/sage/nanobot/docs/runbooks/nanobot-rs-runtime-smoke-checklist.md`
-- Reference: `/Users/sage/nanobot/README.md`
+- Create: `<repo-root>/README.md`
+- Reference: `<repo-root>/docs/runbooks/sidekick-runtime-smoke-checklist.md`
+- Reference: `<repo-root>/README.md`
 
 - [x] **Step 1: Write the initial README draft**
 
 Write the document with the following minimum content:
 
 ```markdown
-# nanobot-rs
+# Sidekick
 
-Rust runtime for the nanobot project. This README covers the current Rust implementation only; the repository root README still documents the broader Python-first project.
+Rust runtime for the Sidekick project. This README covers the current Rust implementation only; the repository root README still documents the broader Python-first project.
 
 ## Current Status
 - `agent`
@@ -98,7 +98,7 @@ Rust runtime for the nanobot project. This README covers the current Rust implem
 cargo run --release -- onboard
 ```
 
-Edit `~/.nanobot-rs/config.json`, then:
+Edit `~/.config.json`, then:
 
 ```bash
 cargo run --release -- gateway
@@ -190,23 +190,23 @@ Include at least these points:
 - [x] **Step 6: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/README.md
-git commit -m "docs: add nanobot-rs readme"
+git add <repo-root>/README.md
+git commit -m "docs: add Sidekick readme"
 ```
 
 ### Task 3: Verify the README against the current runtime
 
 **Files:**
-- Verify: `/Users/sage/nanobot/nanobot-rs/README.md`
-- Verify: `/Users/sage/nanobot/docs/runbooks/nanobot-rs-runtime-smoke-checklist.md`
+- Verify: `<repo-root>/README.md`
+- Verify: `<repo-root>/docs/runbooks/sidekick-runtime-smoke-checklist.md`
 
 - [x] **Step 1: Run content checks against the finished README**
 
 Run:
 
 ```bash
-cd /Users/sage/nanobot
-rg -n "cargo run --release -- onboard|~/.nanobot-rs/config.json|cargo run --release -- gateway|127.0.0.1:3456|defaultProfile|Duplicate to Web|~/.codex/auth.json|Weixin currently handles text messages only" nanobot-rs/README.md
+cd <repo-root>
+rg -n "cargo run --release -- onboard|~/.config.json|cargo run --release -- gateway|127.0.0.1:3456|defaultProfile|Duplicate to Web|~/.codex/auth.json|Weixin currently handles text messages only" README.md
 ```
 
 Expected:
@@ -217,7 +217,7 @@ Expected:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
+cd <repo-root>
 cargo run --release -- help
 ```
 
@@ -229,15 +229,15 @@ Expected:
 Run:
 
 ```bash
-cd /Users/sage/nanobot
-sed -n '1,80p' nanobot-rs/README.md
+cd <repo-root>
+sed -n '1,80p' README.md
 ```
 
 Expected:
-- the first screenful includes what `nanobot-rs` is
+- the first screenful includes what `Sidekick` is
 - `Quick Start` appears near the top
 - `cargo run --release -- onboard`
-- `~/.nanobot-rs/config.json`
+- `~/.config.json`
 - `cargo run --release -- gateway`
 - `http://127.0.0.1:3456`
 
@@ -246,15 +246,15 @@ Expected:
 Manually compare the README against:
 
 ```text
-- /Users/sage/nanobot/docs/runbooks/nanobot-rs-runtime-smoke-checklist.md
-- /Users/sage/nanobot/nanobot-rs/src/cli/mod.rs
-- /Users/sage/nanobot/nanobot-rs/src/config/mod.rs
+- <repo-root>/docs/runbooks/sidekick-runtime-smoke-checklist.md
+- <repo-root>/src/cli/mod.rs
+- <repo-root>/src/config/mod.rs
 ```
 
 Expected:
 - no provider/channel/runtime claim in the README contradicts the current code or runbook
 - the README explicitly keeps Weixin text-only
-- the README explicitly links readers to /Users/sage/nanobot/docs/runbooks/nanobot-rs-runtime-smoke-checklist.md for smoke testing and triage
+- the README explicitly links readers to <repo-root>/docs/runbooks/sidekick-runtime-smoke-checklist.md for smoke testing and triage
 - the `Current Status` section matches the runtime surfaces described by the smoke checklist instead of claiming broader support
 
 - [x] **Step 5: Re-run the existing smoke-focused test baseline**
@@ -262,8 +262,8 @@ Expected:
 Run:
 
 ```bash
-cd /Users/sage/nanobot/nanobot-rs
-cargo test --target-dir /tmp/nanobot-rs-target-readme
+cd <repo-root>
+cargo test --target-dir /tmp/sidekick-target-readme
 ```
 
 Expected:
@@ -274,8 +274,8 @@ Expected:
 If verification caused follow-up edits:
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/README.md
-git commit -m "docs: tighten nanobot-rs quickstart wording"
+git add <repo-root>/README.md
+git commit -m "docs: tighten Sidekick quickstart wording"
 ```
 
 Otherwise, do not create an extra commit.

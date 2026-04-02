@@ -1,15 +1,15 @@
-# nanobot-rs README Design
+# Sidekick README Design
 
 Date: 2026-03-24
 
 ## Goal
 
-Add a dedicated [nanobot-rs/README.md](/Users/sage/nanobot/nanobot-rs/README.md) that helps a first-time user get the Rust runtime running quickly, without mixing Python-focused documentation from the repository root.
+Add a dedicated [README.md](<repo-root>/README.md) that helps a first-time user get the Rust runtime running quickly, without mixing Python-focused documentation from the repository root.
 
 ## Audience
 
 Primary audience:
-- Users who want to run `nanobot-rs` quickly
+- Users who want to run `Sidekick` quickly
 
 Secondary audience:
 - Contributors who need one short section pointing at the main development commands
@@ -17,7 +17,7 @@ Secondary audience:
 ## Scope
 
 The README should cover:
-- What `nanobot-rs` is
+- What `Sidekick` is
 - Current runtime status and supported surfaces
 - Quick start with `onboard`, config editing, and `gateway`
 - Minimal configuration model: `defaultProfile`, `profiles`, `providers`, `channels`, `tools`
@@ -27,14 +27,14 @@ The README should cover:
 - Minimal development commands
 
 The README should not:
-- Replace or rewrite the root [README.md](/Users/sage/nanobot/README.md)
+- Replace or rewrite the root [README.md](<repo-root>/README.md)
 - Promise feature parity with the Python runtime
 - Duplicate full config defaults inline
 - Include roadmap/spec/plan history
 
 ## Proposed Structure
 
-1. `nanobot-rs`
+1. `Sidekick`
 Short description that this is the Rust runtime for the project.
 
 2. `Current Status`
@@ -49,7 +49,7 @@ List current supported runtime paths:
 3. `Quick Start`
 Minimal runnable sequence:
 - `cargo run --release -- onboard`
-- edit `~/.nanobot-rs/config.json`
+- edit `~/.config.json`
 - `cargo run --release -- gateway`
 - open `http://127.0.0.1:3456`
 
@@ -82,7 +82,7 @@ State current practical limits, especially:
 Keep this short:
 - `cargo test`
 - `cargo run --release -- gateway`
-- link to [docs/runbooks/nanobot-rs-runtime-smoke-checklist.md](/Users/sage/nanobot/docs/runbooks/nanobot-rs-runtime-smoke-checklist.md)
+- link to [docs/runbooks/sidekick-runtime-smoke-checklist.md](<repo-root>/docs/runbooks/sidekick-runtime-smoke-checklist.md)
 
 ## Writing Guidance
 

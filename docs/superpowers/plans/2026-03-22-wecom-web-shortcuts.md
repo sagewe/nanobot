@@ -13,8 +13,8 @@
 ### Task 1: Add Web Composer Send Shortcuts
 
 **Files:**
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/web/page.rs`
-- Test: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/web_page.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/src/web/page.rs`
+- Test: `<repo-root>/.worktrees/wecom-web-shortcuts/tests/web_page.rs`
 
 - [x] **Step 1: Write the failing tests**
 
@@ -23,7 +23,7 @@ Add assertions to `tests/web_page.rs` that the rendered page includes a textarea
 ```rust
 #[test]
 fn page_shell_supports_ctrl_and_cmd_enter_submission() {
-    let html = nanobot_rs::web::page::render_index_html();
+    let html = sidekick::web::page::render_index_html();
 
     assert!(html.contains("messageInput.addEventListener(\"keydown\""));
     assert!(html.contains("event.key === \"Enter\""));
@@ -34,7 +34,7 @@ fn page_shell_supports_ctrl_and_cmd_enter_submission() {
 
 - [x] **Step 2: Run the targeted tests to verify they fail**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test web_page`
+Run: `cargo test --target-dir /tmp/sidekick-target --test web_page`
 Expected: FAIL because the page does not yet include the keyboard shortcut handler.
 
 - [x] **Step 3: Implement the minimal page-script change**
@@ -52,24 +52,24 @@ Do not duplicate submit logic. Reuse the existing form `submit` path so trim/cle
 
 - [x] **Step 4: Re-run the targeted tests**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test web_page`
+Run: `cargo test --target-dir /tmp/sidekick-target --test web_page`
 Expected: PASS with the new shortcut assertions and all existing page tests still green.
 
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/web/page.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/web_page.rs
+git add <repo-root>/.worktrees/wecom-web-shortcuts/src/web/page.rs <repo-root>/.worktrees/wecom-web-shortcuts/tests/web_page.rs
 git commit -m "feat: add web send shortcuts"
 ```
 
 ### Task 2: Add WeCom Config And Channel Wiring
 
 **Files:**
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/config/mod.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/mod.rs`
-- Create: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/wecom.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/channels.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/cli.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/src/config/mod.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/src/channels/mod.rs`
+- Create: `<repo-root>/.worktrees/wecom-web-shortcuts/src/channels/wecom.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/tests/channels.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/tests/cli.rs`
 
 - [x] **Step 1: Write the failing config and manager tests**
 
@@ -93,7 +93,7 @@ async fn channel_manager_registers_wecom_when_enabled() {
 
 - [x] **Step 2: Run the targeted tests to verify they fail**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test channels --test cli`
+Run: `cargo test --target-dir /tmp/sidekick-target --test channels --test cli`
 Expected: FAIL because `Config` and `ChannelManager` do not yet know about WeCom.
 
 - [x] **Step 3: Implement config and registration**
@@ -114,23 +114,23 @@ Wire it into `ChannelsConfig::default()` and into `ChannelManager::new()`. Creat
 
 - [x] **Step 4: Re-run the targeted tests**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test channels --test cli`
+Run: `cargo test --target-dir /tmp/sidekick-target --test channels --test cli`
 Expected: PASS with the WeCom config defaults and manager registration checks.
 
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/config/mod.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/mod.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/wecom.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/channels.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/cli.rs
+git add <repo-root>/.worktrees/wecom-web-shortcuts/src/config/mod.rs <repo-root>/.worktrees/wecom-web-shortcuts/src/channels/mod.rs <repo-root>/.worktrees/wecom-web-shortcuts/src/channels/wecom.rs <repo-root>/.worktrees/wecom-web-shortcuts/tests/channels.rs <repo-root>/.worktrees/wecom-web-shortcuts/tests/cli.rs
 git commit -m "feat: wire wecom channel configuration"
 ```
 
 ### Task 3: Build WeCom Protocol Primitives
 
 **Files:**
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/Cargo.toml`
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/wecom.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/mod.rs`
-- Test: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/wecom.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/Cargo.toml`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/src/channels/wecom.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/src/channels/mod.rs`
+- Test: `<repo-root>/.worktrees/wecom-web-shortcuts/tests/wecom.rs`
 
 - [x] **Step 1: Write the failing protocol tests**
 
@@ -152,7 +152,7 @@ fn subscribe_request_contains_bot_credentials() {
 
 - [x] **Step 2: Run the targeted tests to verify they fail**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test wecom`
+Run: `cargo test --target-dir /tmp/sidekick-target --test wecom`
 Expected: FAIL because the WeCom module and protocol helpers do not exist.
 
 - [x] **Step 3: Implement the protocol layer**
@@ -171,23 +171,23 @@ Keep this file focused on protocol and channel-local state. Do not put manager w
 
 - [x] **Step 4: Re-run the targeted tests**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test wecom`
+Run: `cargo test --target-dir /tmp/sidekick-target --test wecom`
 Expected: PASS with the protocol builder/parser tests.
 
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/Cargo.toml /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/wecom.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/mod.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/wecom.rs
+git add <repo-root>/.worktrees/wecom-web-shortcuts/Cargo.toml <repo-root>/.worktrees/wecom-web-shortcuts/src/channels/wecom.rs <repo-root>/.worktrees/wecom-web-shortcuts/src/channels/mod.rs <repo-root>/.worktrees/wecom-web-shortcuts/tests/wecom.rs
 git commit -m "feat: add wecom protocol primitives"
 ```
 
 ### Task 4: Implement WeCom Runtime Behavior And Full Verification
 
 **Files:**
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/wecom.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/mod.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/wecom.rs`
-- Modify: `/Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/channels.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/src/channels/wecom.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/src/channels/mod.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/tests/wecom.rs`
+- Modify: `<repo-root>/.worktrees/wecom-web-shortcuts/tests/channels.rs`
 
 - [x] **Step 1: Write the failing runtime tests**
 
@@ -214,7 +214,7 @@ async fn wecom_channel_publishes_text_callback_to_bus() {
 
 - [x] **Step 2: Run the targeted tests to verify they fail**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test wecom --test channels`
+Run: `cargo test --target-dir /tmp/sidekick-target --test wecom --test channels`
 Expected: FAIL because the placeholder channel does not yet manage a real connection lifecycle.
 
 - [x] **Step 3: Implement the runtime loop**
@@ -235,8 +235,8 @@ Keep unsupported event/message types as logged no-ops. Do not add markdown, medi
 Run:
 
 ```bash
-cargo test --target-dir /tmp/nanobot-rs-target --test web_page --test channels --test wecom
-cargo test --target-dir /tmp/nanobot-rs-target
+cargo test --target-dir /tmp/sidekick-target --test web_page --test channels --test wecom
+cargo test --target-dir /tmp/sidekick-target
 ```
 
 Expected: PASS for the new targeted suites and then PASS for the full Rust test suite.
@@ -244,6 +244,6 @@ Expected: PASS for the new targeted suites and then PASS for the full Rust test 
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/wecom.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/channels/mod.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/wecom.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/channels.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/src/web/page.rs /Users/sage/nanobot/.worktrees/wecom-web-shortcuts/nanobot-rs/tests/web_page.rs
+git add <repo-root>/.worktrees/wecom-web-shortcuts/src/channels/wecom.rs <repo-root>/.worktrees/wecom-web-shortcuts/src/channels/mod.rs <repo-root>/.worktrees/wecom-web-shortcuts/tests/wecom.rs <repo-root>/.worktrees/wecom-web-shortcuts/tests/channels.rs <repo-root>/.worktrees/wecom-web-shortcuts/src/web/page.rs <repo-root>/.worktrees/wecom-web-shortcuts/tests/web_page.rs
 git commit -m "feat: add wecom bot channel"
 ```

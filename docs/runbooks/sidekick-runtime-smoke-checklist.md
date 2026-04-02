@@ -4,7 +4,7 @@ Use this after a config change, provider switch, or fresh checkout to confirm th
 
 ## Baseline
 
-- Config lives in `~/.sidekick/config.toml` by default. If an older single-user install exists, Sidekick will also fall back to `~/.nanobot-rs/config.toml` or `config.json` during migration.
+- Config lives in `~/.sidekick/config.toml` by default.
 - Workspace lives in `~/.sidekick/workspace` by default.
 - Embedded web listens on `http://127.0.0.1:3456` unless overridden.
 - `cargo run --release -- web` still exists as a standalone UI; the smoke path below uses `gateway` because that is the production path for embedded web plus channels.
@@ -15,11 +15,16 @@ Use this after a config change, provider switch, or fresh checkout to confirm th
 Start the full runtime:
 
 ```bash
-cd /Users/sage/nanobot
+cd <repo-root>
 cargo run --release -- gateway
 ```
 
 Open `http://127.0.0.1:3456`.
+
+Auth notes:
+
+- The web UI uses the `sidekick_session` cookie only.
+- A brand-new empty `web` session now stays visually empty until the first message is sent. That is expected and not a rendering bug.
 
 What success looks like:
 
@@ -43,6 +48,7 @@ Failure triage:
 - No web page on port `3456`: check whether another process already owns the port.
 - No `channels started` line: config was not loaded or the channel is disabled.
 - Web request fails: look for `web session <id> failed` in the logs.
+- Sign-in succeeds but the UI returns to the login screen: the browser session was not established; delete stale site cookies, then sign in again.
 - Read-only session refuses input: duplicate the session into `web` first.
 
 ## 2. Telegram
@@ -156,7 +162,7 @@ Required conditions:
 Fast smoke:
 
 ```bash
-cd /Users/sage/nanobot
+cd <repo-root>
 cargo run --release -- agent \
   --config /tmp/sidekick-codex-smoke.json \
   --session cli:smoke \

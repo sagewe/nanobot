@@ -2,7 +2,7 @@
 
 ## Summary
 
-Implement two user-facing behavior changes for `nanobot-rs`:
+Implement two user-facing behavior changes for `Sidekick`:
 
 1. Hide internal runtime/progress/tool-hint messages from external channels (`telegram`, `wecom`, `web`).
 2. Render assistant Markdown replies across `telegram`, `wecom`, and `web` from one CommonMark source.
@@ -105,9 +105,9 @@ Cons:
 
 Create:
 
-- `/Users/sage/nanobot/nanobot-rs/src/presentation/mod.rs`
-- `/Users/sage/nanobot/nanobot-rs/src/presentation/filters.rs`
-- `/Users/sage/nanobot/nanobot-rs/src/presentation/markdown.rs`
+- `<repo-root>/src/presentation/mod.rs`
+- `<repo-root>/src/presentation/filters.rs`
+- `<repo-root>/src/presentation/markdown.rs`
 
 ### Responsibilities
 
@@ -253,7 +253,7 @@ CLI remains the operator-oriented interface and keeps the current progress/tool-
 
 ### Telegram
 
-Modify `/Users/sage/nanobot/nanobot-rs/src/channels/mod.rs`:
+Modify `<repo-root>/src/channels/mod.rs`:
 
 - Filter out runtime-only outbound messages before `sendMessage`
 - Render visible content using Telegram HTML
@@ -262,7 +262,7 @@ Modify `/Users/sage/nanobot/nanobot-rs/src/channels/mod.rs`:
 
 ### WeCom
 
-Modify `/Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs`:
+Modify `<repo-root>/src/channels/wecom.rs`:
 
 - Filter out runtime-only outbound messages
 - Add a markdown reply builder alongside the existing stream builder
@@ -274,8 +274,8 @@ Modify `/Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs`:
 
 Modify:
 
-- `/Users/sage/nanobot/nanobot-rs/src/web/api.rs`
-- `/Users/sage/nanobot/nanobot-rs/src/web/page.rs`
+- `<repo-root>/src/web/api.rs`
+- `<repo-root>/src/web/page.rs`
 
 Changes:
 

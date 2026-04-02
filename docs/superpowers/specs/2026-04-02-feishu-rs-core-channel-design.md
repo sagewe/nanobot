@@ -6,7 +6,7 @@ Branch: `main`
 
 ## Summary
 
-Bring `nanobot-rs` Feishu support up to the Python channel's core messaging path without attempting full media parity.
+Bring `Sidekick` Feishu support up to the Python channel's core messaging path without attempting full media parity.
 
 This slice keeps the Rust runtime architecture intact and adds the minimum Feishu-specific behavior needed for a usable first-party channel:
 
@@ -71,7 +71,7 @@ Community crates exist, but they are not clearly the stable default for this cod
 
 ## Configuration
 
-Extend `channels.feishu` in `nanobot-rs/src/config/mod.rs` with:
+Extend `channels.feishu` in `src/config/mod.rs` with:
 
 ```json
 "feishu": {
@@ -149,20 +149,20 @@ Progress and tool-hint filtering continues to use the existing presentation-laye
 
 ### Files And Responsibilities
 
-- Modify `nanobot-rs/src/config/mod.rs`
+- Modify `src/config/mod.rs`
   - extend `FeishuConfig`
   - add defaults and serde coverage for the new fields
-- Modify `nanobot-rs/src/channels/feishu.rs`
+- Modify `src/channels/feishu.rs`
   - move from outbound-only sender to full long-connection channel
   - keep Feishu-specific helpers private to this module
-- Modify `nanobot-rs/src/channels/mod.rs`
+- Modify `src/channels/mod.rs`
   - inject `MessageBus` into Feishu the same way `telegram` and `wecom` already do for inbound-capable channels
   - keep registration and re-export glue only
-- Modify `nanobot-rs/tests/channels.rs`
+- Modify `tests/channels.rs`
   - cover long-connection behavior, filtering, reply routing, and outbound format selection
-- Modify `nanobot-rs/tests/providers.rs`
+- Modify `tests/providers.rs`
   - assert default config serialization for new Feishu fields
-- Modify `nanobot-rs/README.md`
+- Modify `README.md`
   - update Feishu capability and config docs to match actual Rust behavior
 
 No bus or public channel trait redesign is needed for this slice.
@@ -454,7 +454,7 @@ Use local HTTP and WebSocket test servers. Do not depend on live Feishu infrastr
 
 ## Documentation Impact
 
-Update `nanobot-rs/README.md` so it no longer claims Feishu is outbound-only once this slice lands.
+Update `README.md` so it no longer claims Feishu is outbound-only once this slice lands.
 
 Do not update the root repository README to imply full Python parity. The root README can continue to describe the broader Python implementation separately.
 

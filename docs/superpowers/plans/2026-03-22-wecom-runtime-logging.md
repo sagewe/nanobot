@@ -13,8 +13,8 @@
 ### Task 1: Add WeCom Lifecycle Log Coverage
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/wecom.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs`
+- Modify: `<repo-root>/tests/wecom.rs`
+- Modify: `<repo-root>/src/channels/wecom.rs`
 
 - [x] **Step 1: Write the failing log-capture test**
 
@@ -29,7 +29,7 @@ The test should capture logs with a local `tracing_subscriber` writer, similar t
 
 - [x] **Step 2: Run the targeted test to verify it fails**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test wecom wecom_logs_connection_lifecycle`
+Run: `cargo test --target-dir /tmp/sidekick-target --test wecom wecom_logs_connection_lifecycle`
 Expected: FAIL because the current WeCom channel does not emit the positive lifecycle logs.
 
 - [x] **Step 3: Implement the minimal `info` logging**
@@ -50,21 +50,21 @@ Do not log message bodies, secrets, or full payloads.
 
 - [x] **Step 4: Re-run the targeted test**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test wecom wecom_logs_connection_lifecycle`
+Run: `cargo test --target-dir /tmp/sidekick-target --test wecom wecom_logs_connection_lifecycle`
 Expected: PASS with the new lifecycle logs present.
 
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs /Users/sage/nanobot/nanobot-rs/tests/wecom.rs
+git add <repo-root>/src/channels/wecom.rs <repo-root>/tests/wecom.rs
 git commit -m "feat: add wecom runtime logs"
 ```
 
 ### Task 2: Add Debug Diagnostics And Full Verification
 
 **Files:**
-- Modify: `/Users/sage/nanobot/nanobot-rs/tests/wecom.rs`
-- Modify: `/Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs`
+- Modify: `<repo-root>/tests/wecom.rs`
+- Modify: `<repo-root>/src/channels/wecom.rs`
 
 - [x] **Step 1: Write the failing diagnostic assertions**
 
@@ -77,7 +77,7 @@ Keep these assertions in one focused test. Do not assert unstable UUIDs or full 
 
 - [x] **Step 2: Run the targeted tests to verify they fail**
 
-Run: `cargo test --target-dir /tmp/nanobot-rs-target --test wecom`
+Run: `cargo test --target-dir /tmp/sidekick-target --test wecom`
 Expected: FAIL because the channel currently lacks the new debug diagnostics.
 
 - [x] **Step 3: Implement the minimal `debug` logging**
@@ -98,8 +98,8 @@ Run:
 
 ```bash
 cargo fmt
-cargo test --target-dir /tmp/nanobot-rs-target --test wecom
-cargo test --target-dir /tmp/nanobot-rs-target
+cargo test --target-dir /tmp/sidekick-target --test wecom
+cargo test --target-dir /tmp/sidekick-target
 ```
 
 Expected: PASS for the WeCom logging tests and then PASS for the full Rust suite.
@@ -107,6 +107,6 @@ Expected: PASS for the WeCom logging tests and then PASS for the full Rust suite
 - [x] **Step 5: Commit**
 
 ```bash
-git add /Users/sage/nanobot/nanobot-rs/src/channels/wecom.rs /Users/sage/nanobot/nanobot-rs/tests/wecom.rs
+git add <repo-root>/src/channels/wecom.rs <repo-root>/tests/wecom.rs
 git commit -m "test: cover wecom logging diagnostics"
 ```

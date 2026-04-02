@@ -6,7 +6,7 @@ Branch: `codex/weixin-channel`
 
 ## Summary
 
-Add a first-party Weixin channel to `nanobot-rs` using the backend contract documented in [WEIXIN_BACKEND_SPEC.md](/Users/sage/nanobot/docs/WEIXIN_BACKEND_SPEC.md).
+Add a first-party Weixin channel to `Sidekick` using the backend contract documented in [WEIXIN_BACKEND_SPEC.md](<repo-root>/docs/WEIXIN_BACKEND_SPEC.md).
 
 This first version is intentionally narrow:
 
@@ -76,7 +76,7 @@ The Weixin channel will:
 
 ### Configuration
 
-Add `channels.weixin` to [config/mod.rs](/Users/sage/nanobot/.worktrees/weixin-channel/nanobot-rs/src/config/mod.rs):
+Add `channels.weixin` to [config/mod.rs](<repo-root>/.worktrees/weixin-channel/src/config/mod.rs):
 
 ```json
 "weixin": {
@@ -111,7 +111,7 @@ Persist Weixin runtime state under the workspace, for example:
 
 ### Channel Structure
 
-Add [channels/weixin.rs](/Users/sage/nanobot/.worktrees/weixin-channel/nanobot-rs/src/channels/weixin.rs) with:
+Add [channels/weixin.rs](<repo-root>/.worktrees/weixin-channel/src/channels/weixin.rs) with:
 
 - `WeixinChannel`
 - `WeixinClient`
@@ -119,7 +119,7 @@ Add [channels/weixin.rs](/Users/sage/nanobot/.worktrees/weixin-channel/nanobot-r
 - `WeixinLoginManager`
 - request/response parsing helpers
 
-Keep [channels/mod.rs](/Users/sage/nanobot/.worktrees/weixin-channel/nanobot-rs/src/channels/mod.rs) as registry glue only:
+Keep [channels/mod.rs](<repo-root>/.worktrees/weixin-channel/src/channels/mod.rs) as registry glue only:
 
 - register `WeixinChannel` in `ChannelManager`
 - re-export narrow test helpers where useful
@@ -230,7 +230,7 @@ When the agent emits an outbound message for `channel == "weixin"`:
     "context_token": "<cached context token>"
   },
   "base_info": {
-    "channel_version": "<nanobot-rs channel version>"
+    "channel_version": "<Sidekick channel version>"
   }
 }
 ```
