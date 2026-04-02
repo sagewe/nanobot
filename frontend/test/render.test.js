@@ -275,6 +275,8 @@ describe("tool trace output", () => {
     const sectionHeaderCss = readCssBlock("\\.section-header");
     const sectionTitleGroupCss = readCssBlock("\\.section-title-group");
     const sectionActionCss = readCssBlock("\\.section-action");
+    const sectionActionHoverCss = readCssBlock("\\.section-action:hover");
+    const sectionActionFocusCss = readCssBlock("\\.section-action:focus");
 
     expect(rootCss).toContain("--nav-item-radius:");
     expect(rootCss).toContain("--nav-item-pad-y:");
@@ -301,20 +303,36 @@ describe("tool trace output", () => {
     expect(sectionActionCss).toContain("border: 1px solid var(--line);");
     expect(sectionActionCss).toContain("background: var(--nav-quiet-bg);");
     expect(sectionActionCss).toContain("color: var(--dim);");
+    expect(sectionActionCss).toContain("padding:");
+    expect(sectionActionCss).toContain("font-family: \"IBM Plex Mono\", \"SFMono-Regular\", Consolas, monospace;");
+    expect(sectionActionCss).toContain("font-size: 0.78rem;");
+    expect(sectionActionCss).toContain("cursor: pointer;");
+    expect(sectionActionCss).toContain("transition:");
+    expect(sectionActionHoverCss).toContain("background: var(--nav-hover-bg);");
+    expect(sectionActionHoverCss).toContain("border-color: var(--accent);");
+    expect(sectionActionHoverCss).toContain("color: var(--accent);");
+    expect(sectionActionFocusCss).toContain("outline:");
+    expect(sectionActionFocusCss).toContain("outline-offset:");
   });
 
   it("reuses shared header actions and token-driven active tab states", () => {
     const css = readCss();
-    const jobsHeaderButtonCss = readCssBlock("\\.jobs-header button");
-    const controlPanelHeaderButtonCss = readCssBlock("\\.control-panel-header button");
+    const sectionActionCss = readCssBlock("\\.section-action");
+    const jobsHeaderButtonCss = readCssBlock("\\.jobs-header \\.section-action");
     const jobsTitleCss = readCssBlock("\\.jobs-title");
     const skillsGroupCss = readCssBlock("\\.skills-group");
     const settingsSectionCssBlocks = readCssBlocks("\\.settings-section");
     const activeTabCss = readCssBlock("\\.tab-btn\\[data-active=\"true\"\\]");
     const collapsedActiveCss = readCssBlock("\\.session-rail\\[data-collapsed=\"true\"\\] \\.tab-btn\\[data-active=\"true\"\\]");
 
-    expect(jobsHeaderButtonCss).toContain("border-radius: var(--nav-item-radius);");
-    expect(controlPanelHeaderButtonCss).toContain("border-radius: var(--nav-item-radius);");
+    expect(sectionActionCss).toContain("border-radius: var(--nav-item-radius);");
+    expect(sectionActionCss).toContain("padding: 0.72rem 1rem;");
+    expect(sectionActionCss).toContain("font-family: \"IBM Plex Mono\", \"SFMono-Regular\", Consolas, monospace;");
+    expect(sectionActionCss).toContain("font-size: 0.78rem;");
+    expect(sectionActionCss).toContain("cursor: pointer;");
+    expect(jobsHeaderButtonCss).toContain("padding: 0;");
+    expect(jobsHeaderButtonCss).toContain("width: 2rem;");
+    expect(jobsHeaderButtonCss).toContain("height: 2rem;");
     expect(jobsTitleCss).toContain('font-family: "Poppins", Arial, sans-serif;');
     expect(skillsGroupCss).toContain("background: var(--section-surface-bg);");
     expect(settingsSectionCssBlocks).toHaveLength(1);
@@ -365,15 +383,15 @@ describe("tool trace output", () => {
   it("reuses the jobs panel palette for settings and users surfaces", () => {
     const controlPanelCss = readCssBlock("\\.control-panel");
     const adminUserCardCss = readCssBlock("\\.admin-user-card");
-    const controlPanelButtonCss = readCssBlock("\\.control-panel-header button");
+    const sectionActionCss = readCssBlock("\\.section-action");
     const adminUserActionCss = readCssBlock("\\.admin-user-actions button");
 
     expect(controlPanelCss).toContain("background: var(--panel);");
     expect(controlPanelCss).not.toContain("255, 255, 255");
     expect(adminUserCardCss).toContain("background: var(--panel);");
     expect(adminUserCardCss).not.toContain("253, 252, 251");
-    expect(controlPanelButtonCss).toContain("background: var(--nav-quiet-bg);");
-    expect(controlPanelButtonCss).not.toContain("rgba(193, 95, 60, 0.08)");
+    expect(sectionActionCss).toContain("background: var(--nav-quiet-bg);");
+    expect(sectionActionCss).not.toContain("rgba(193, 95, 60, 0.08)");
     expect(adminUserActionCss).toContain("background: transparent;");
     expect(adminUserActionCss).not.toContain("rgba(193, 95, 60, 0.08)");
   });
@@ -455,6 +473,7 @@ describe("tool trace output", () => {
     expect(html).toContain('class="settings-main"');
     expect(html).toContain('class="settings-advanced"');
     expect(html).toContain('class="settings-advanced-header section-header"');
+    expect(html).toContain('id="settings-refresh-button" type="button" class="section-action"');
     expect(settingsLayoutCss).toContain("grid-template-columns:");
     expect(settingsMainCss).toContain("display: grid;");
     expect(settingsAdvancedCss).toContain("grid-template-rows:");
@@ -468,10 +487,13 @@ describe("tool trace output", () => {
 
     expect(html).toContain('class="jobs-header section-header"');
     expect(html).toContain('id="jobs-refresh-btn" type="button" class="section-action"');
+    expect(html).toContain('id="mcp-refresh-btn" type="button" class="section-action"');
     expect(html).toContain('class="control-panel control-panel--skills section-surface"');
     expect(html).toContain('class="skills-group section-surface"');
     expect(html).toContain('class="skills-detail section-surface"');
     expect(html).toContain('class="users-pane-header section-title-group"');
+    expect(html).toMatch(/<div class="jobs-header section-header">[\s\S]*?<div class="section-title-group">[\s\S]*?<h2 class="jobs-title" data-i18n="jobs_title">Scheduled Jobs<\/h2>[\s\S]*?<button id="jobs-refresh-btn" type="button" class="section-action"/);
+    expect(html).toMatch(/<div class="jobs-header section-header">[\s\S]*?<div class="section-title-group">[\s\S]*?<h2 class="jobs-title" data-i18n="mcp_title">MCP Servers<\/h2>[\s\S]*?<button id="mcp-refresh-btn" type="button" class="section-action"/);
     expect(html).toContain('class="session-kicker section-eyebrow"');
   });
 

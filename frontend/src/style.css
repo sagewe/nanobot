@@ -452,6 +452,34 @@
         border-radius: var(--nav-item-radius);
         background: var(--nav-quiet-bg);
         color: var(--dim);
+        padding: 0.72rem 1rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.45rem;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.78rem;
+        line-height: 1;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s, background 0.15s;
+      }
+
+      .section-action:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+        background: var(--nav-hover-bg);
+      }
+
+      .section-action:focus {
+        outline: 2px solid rgba(217, 119, 87, 0.18);
+        outline-offset: 2px;
+      }
+
+      .jobs-header .section-action {
+        padding: 0;
+        width: 2rem;
+        height: 2rem;
+        flex-shrink: 0;
       }
 
       .sidebar-title {
@@ -912,26 +940,6 @@
         font-size: 1.25rem;
         font-weight: 600;
         font-family: "Poppins", Arial, sans-serif;
-      }
-
-      .jobs-header button {
-        border: 1px solid var(--line);
-        border-radius: var(--nav-item-radius);
-        width: 2rem;
-        height: 2rem;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--dim);
-        background: var(--nav-quiet-bg);
-        cursor: pointer;
-        transition: color 0.15s, border-color 0.15s, background 0.15s;
-      }
-
-      .jobs-header button:hover {
-        color: var(--accent);
-        border-color: var(--accent);
-        background: var(--nav-hover-bg);
       }
 
       .jobs-list {
@@ -3204,20 +3212,6 @@
         justify-content: space-between;
         gap: 0.75rem;
         margin-bottom: 0.9rem;
-      }
-
-      .control-panel-header button {
-        border: 1px solid var(--line);
-        border-radius: var(--nav-item-radius);
-        background: var(--nav-quiet-bg);
-        color: var(--dim);
-        transition: color 0.15s, border-color 0.15s, background 0.15s;
-      }
-
-      .control-panel-header button:hover {
-        color: var(--accent);
-        border-color: var(--accent);
-        background: var(--nav-hover-bg);
       }
 
       .control-form {
