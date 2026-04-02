@@ -303,7 +303,11 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
       render();
       return true;
     }
-    if (state.selected?.source === selected.source && state.selected?.id === selected.id) {
+    if (
+      state.selected?.source === selected.source &&
+      state.selected?.id === selected.id &&
+      state.detail
+    ) {
       return true;
     }
     if (!canLeaveDirtyDetail()) {

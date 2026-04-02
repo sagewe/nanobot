@@ -42,7 +42,22 @@ const apiMocks = vi.hoisted(() => {
   };
 });
 
+const skillsControllerMocks = vi.hoisted(() => ({
+  controller: {
+    load: vi.fn().mockResolvedValue(undefined),
+    confirmDiscardChanges: vi.fn().mockReturnValue(true),
+    rerender: vi.fn(),
+  },
+  createSkillsController: vi.fn(),
+}));
+
 vi.mock("../src/api.js", () => apiMocks);
+vi.mock("../src/skills.js", () => ({
+  createSkillsController: (...args) => {
+    skillsControllerMocks.createSkillsController(...args);
+    return skillsControllerMocks.controller;
+  },
+}));
 
 const BASE_MARKUP = `
   <div id="transcript"></div>
@@ -141,6 +156,10 @@ function readCssBlock(selectorPattern) {
 describe("tool trace output", () => {
   beforeEach(() => {
     document.body.innerHTML = BASE_MARKUP;
+    skillsControllerMocks.controller.load.mockReset().mockResolvedValue(undefined);
+    skillsControllerMocks.controller.confirmDiscardChanges.mockReset().mockReturnValue(true);
+    skillsControllerMocks.controller.rerender.mockReset();
+    skillsControllerMocks.createSkillsController.mockReset();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       writable: true,
@@ -433,6 +452,24 @@ describe("tool trace output", () => {
     expect(payload.channels.telegram.enabled).toBe(true);
     expect(payload.agents.defaults.defaultProfile).toBe("openai:gpt-4.1-mini");
     expect(payload).not.toBe(configEditor.value);
+  });
+
+  it("does not reload skills again when clicking the already-active skills tab", async () => {
+    vi.resetModules();
+    document.body.innerHTML = readHtmlBody();
+    apiMocks.fetchCurrentUser.mockRejectedValueOnce(new Error("login required"));
+
+    await import("../src/main.js");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const skillsTab = document.querySelector('.tab-btn[data-tab="skills"]');
+
+    skillsTab.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    skillsTab.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(skillsControllerMocks.controller.load).toHaveBeenCalledTimes(1);
   });
 
   it("separates the users page into a create card and a directory card", () => {

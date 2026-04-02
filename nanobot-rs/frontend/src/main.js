@@ -713,6 +713,9 @@ mobileMenuBtn.addEventListener("click", openMobileSidebar);
 backdropEl.addEventListener("click", closeMobileSidebar);
 
 function switchTab(tab) {
+  if (currentTab === "skills" && tab === "skills") {
+    return;
+  }
   if (currentTab === "skills" && tab !== "skills" && !skillsController.confirmDiscardChanges()) {
     return;
   }

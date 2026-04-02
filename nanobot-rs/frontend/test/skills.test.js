@@ -222,6 +222,45 @@ describe("createSkillsController", () => {
     expect(document.getElementById("skill-enabled-toggle").disabled).toBe(true);
   });
 
+  it("retries detail loading when the same row is clicked again after a failed fetch", async () => {
+    const workspaceSummary = buildSummary({
+      id: "workspace-weather",
+      name: "Workspace Weather",
+      source: "workspace",
+    });
+    const detail = buildDetail(workspaceSummary);
+    const api = {
+      fetchSkillsList: vi.fn().mockResolvedValue({
+        workspace: [workspaceSummary],
+        builtin: [],
+      }),
+      fetchSkillDetail: vi.fn()
+        .mockRejectedValueOnce(new Error("temporary failure"))
+        .mockResolvedValueOnce(detail),
+      createWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkillState: vi.fn(),
+      deleteWorkspaceSkill: vi.fn(),
+    };
+    const { createSkillsController } = await import("../src/skills.js");
+    const controller = createSkillsController({
+      root: document.querySelector(".skills-pane"),
+      api,
+      setStatus: vi.fn(),
+      t: (key) => key,
+      confirmDelete: vi.fn(),
+    });
+
+    await controller.load().catch(() => {});
+    expect(api.fetchSkillDetail).toHaveBeenCalledTimes(1);
+
+    document.querySelector('#skills-workspace-list button[data-id="workspace-weather"]').click();
+    await flush();
+
+    expect(api.fetchSkillDetail).toHaveBeenCalledTimes(2);
+    expect(document.getElementById("skill-editor").value).toContain("Workspace Weather");
+  });
+
   it("shows availability and missing requirements in the detail summary strip", async () => {
     const workspaceSummary = buildSummary({
       id: "workspace-weather",
