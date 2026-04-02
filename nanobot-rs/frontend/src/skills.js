@@ -127,7 +127,6 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
 
   function setDirty(nextDirty) {
     state.dirty = Boolean(nextDirty);
-    render(state.detail && !state.detail.readOnly ? editor.value : null);
   }
 
   function renderList(container, items) {

@@ -498,6 +498,66 @@ describe("createSkillsController", () => {
     expect(document.getElementById("skill-editor").value).toContain("# unsaved");
   });
 
+  it("preserves the caret position when typing in the middle of the editor", async () => {
+    const workspaceSummary = buildSummary({
+      id: "workspace-weather",
+      name: "Workspace Weather",
+      source: "workspace",
+    });
+    const api = {
+      fetchSkillsList: vi.fn().mockResolvedValue({
+        workspace: [workspaceSummary],
+        builtin: [],
+      }),
+      fetchSkillDetail: vi.fn().mockResolvedValue(buildDetail(workspaceSummary)),
+      createWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkillState: vi.fn(),
+      deleteWorkspaceSkill: vi.fn(),
+    };
+
+    const { createSkillsController } = await import("../src/skills.js");
+    const controller = createSkillsController({
+      root: document.querySelector(".skills-pane"),
+      api,
+      setStatus: vi.fn(),
+      t: (key) => key,
+      confirmDelete: vi.fn(),
+    });
+
+    await controller.load();
+
+    const editor = document.getElementById("skill-editor");
+    const valueDescriptor = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(editor),
+      "value"
+    );
+    let currentValue = editor.value;
+    Object.defineProperty(editor, "value", {
+      configurable: true,
+      get() {
+        return currentValue;
+      },
+      set(nextValue) {
+        currentValue = String(nextValue);
+        this.selectionStart = currentValue.length;
+        this.selectionEnd = currentValue.length;
+      },
+    });
+    const insertAt = editor.value.indexOf("description:");
+    const nextValue = `${editor.value.slice(0, insertAt)}X${editor.value.slice(insertAt)}`;
+
+    editor.value = nextValue;
+    editor.setSelectionRange(insertAt + 1, insertAt + 1);
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(editor.value).toBe(nextValue);
+    expect(editor.selectionStart).toBe(insertAt + 1);
+    expect(editor.selectionEnd).toBe(insertAt + 1);
+
+    Object.defineProperty(editor, "value", valueDescriptor);
+  });
+
   it("prompts before leaving a dirty workspace detail", async () => {
     const workspaceSummary = buildSummary({
       id: "workspace-weather",
