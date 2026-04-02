@@ -58,6 +58,10 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
               <span class="tab-label" data-i18n="tab_mcp">MCP</span>
             </button>
+            <button class="tab-btn" data-tab="skills" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M4 7h16"/><path d="M6 11h12"/><path d="M8 15h8"/></svg>
+              <span class="tab-label" data-i18n="tab_skills">Skills</span>
+            </button>
             <button class="tab-btn" data-tab="settings" role="tab">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               <span class="tab-label" data-i18n="tab_settings">Settings</span>
@@ -159,6 +163,53 @@
             </button>
           </div>
           <div id="mcp-list" class="jobs-list"></div>
+        </section>
+        <section class="skills-pane" hidden>
+          <section class="control-panel control-panel--skills">
+            <div class="control-panel-header">
+              <div>
+                <div class="session-kicker" data-i18n="tab_skills">Skills</div>
+                <h2 class="jobs-title" data-i18n="skills_title">Skills Library</h2>
+              </div>
+              <button id="skills-create-button" type="button" data-i18n="skills_create">Create Skill</button>
+            </div>
+            <div class="control-form skills-layout">
+              <aside class="skills-master">
+                <label class="skills-search">
+                  <span data-i18n="skills_search_label">Search skills</span>
+                  <input id="skills-search" type="search" data-i18n-placeholder="skills_search_placeholder" placeholder="Search skills…" autocomplete="off" />
+                </label>
+                <section class="skills-group">
+                  <div class="skills-group-header">
+                    <div class="session-kicker" data-i18n="skills_workspace_title">Workspace Skills</div>
+                  </div>
+                  <div id="skills-workspace-list" class="skills-list"></div>
+                </section>
+                <section class="skills-group">
+                  <div class="skills-group-header">
+                    <div class="session-kicker" data-i18n="skills_builtin_title">Built-in Skills</div>
+                  </div>
+                  <div id="skills-builtin-list" class="skills-list"></div>
+                </section>
+              </aside>
+              <section class="skills-detail">
+                <div class="skills-detail-header">
+                  <div>
+                    <div class="session-kicker" data-i18n="tab_skills">Skills</div>
+                    <h3 class="settings-section-title" data-i18n="skill_editor_title">Skill Editor</h3>
+                  </div>
+                  <label class="checkbox-row skill-enabled-toggle">
+                    <input id="skill-enabled-toggle" type="checkbox" />
+                    <span data-i18n="skill_enabled">Enabled</span>
+                  </label>
+                </div>
+                <label class="editor-label skills-editor">
+                  <span data-i18n="skill_editor_body">Skill definition</span>
+                  <textarea id="skill-editor" rows="18" spellcheck="false"></textarea>
+                </label>
+              </section>
+            </div>
+          </section>
         </section>
         <section class="settings-pane" hidden>
           <section class="control-panel control-panel--workspace">

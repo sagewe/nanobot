@@ -1,6 +1,27 @@
 import TOML from "@iarna/toml";
 import { t, getLang, setLang, applyI18n } from "./i18n.js";
+import * as api from "./api.js";
 import {
+  setStatus,
+  setCurrentProfile,
+  renderProfiles,
+  renderMessage,
+  appendMessage,
+  appendAssistantMessage,
+  renderTranscript,
+  renderSessionDetail,
+  renderSessionSelect,
+  renderSessionsList,
+  renderEmptyState,
+  renderWeixinAccount,
+  normalizeWeixinQrSource,
+  setMcpServerIcons,
+} from "./render.js";
+import { createSkillsController } from "./skills.js";
+
+applyI18n();
+
+const {
   fetchCurrentUser,
   loginUser,
   logoutUser,
@@ -33,25 +54,7 @@ import {
   fetchMcpServers,
   toggleMcpTool,
   applyMcpServerAction,
-} from "./api.js";
-import {
-  setStatus,
-  setCurrentProfile,
-  renderProfiles,
-  renderMessage,
-  appendMessage,
-  appendAssistantMessage,
-  renderTranscript,
-  renderSessionDetail,
-  renderSessionSelect,
-  renderSessionsList,
-  renderEmptyState,
-  renderWeixinAccount,
-  normalizeWeixinQrSource,
-  setMcpServerIcons,
-} from "./render.js";
-
-applyI18n();
+} = api;
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 const SESSION_KEY = "pikachu.sessionId";
@@ -97,6 +100,7 @@ const channelsPane = document.querySelector(".channels-pane");
 const sessionsPane = document.querySelector(".sessions-pane");
 const jobsPane = document.querySelector(".jobs-pane");
 const mcpPane = document.querySelector(".mcp-pane");
+const skillsPane = document.querySelector(".skills-pane");
 const settingsPane = document.querySelector(".settings-pane");
 const usersPane = document.querySelector(".users-pane");
 const sessionsSearch = document.getElementById("sessions-search");
@@ -152,6 +156,7 @@ let weixinPollTimer = null;
 let busyTimer = null;
 let busyStart = null;
 let isBusy = false;
+let currentTab = "chat";
 let slashState = { open: false, items: [], selectedIndex: 0 };
 
 const SLASH_COMMANDS = [
@@ -162,6 +167,14 @@ const SLASH_COMMANDS = [
   { name: "/model", insertText: "/model ", hintKey: "command_model_hint" },
   { name: "/btw", insertText: "/btw ", hintKey: "command_btw_hint" },
 ];
+
+const skillsController = createSkillsController({
+  root: skillsPane,
+  api,
+  setStatus,
+  t,
+  confirmDelete: (message) => window.confirm(message),
+});
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 function startBusyTimer() {
@@ -716,20 +729,31 @@ mobileMenuBtn.addEventListener("click", openMobileSidebar);
 backdropEl.addEventListener("click", closeMobileSidebar);
 
 function switchTab(tab) {
+  if (currentTab === "skills" && tab === "skills") {
+    return;
+  }
+  if (currentTab === "skills" && tab !== "skills" && !skillsController.confirmDiscardChanges()) {
+    return;
+  }
   tabButtons.forEach((b) => { b.dataset.active = String(b.dataset.tab === tab); });
   conversationPane.hidden = tab !== "chat";
   sessionsPane.hidden = tab !== "sessions";
   channelsPane.hidden = tab !== "channels";
   jobsPane.hidden = tab !== "jobs";
   mcpPane.hidden = tab !== "mcp";
+  skillsPane.hidden = tab !== "skills";
   settingsPane.hidden = tab !== "settings";
   usersPane.hidden = tab !== "users";
   if (tab === "jobs") refreshJobs();
   if (tab === "mcp") refreshMcp();
+  if (tab === "skills") {
+    skillsController.load().catch((error) => setStatus(error?.message || "Failed to load skills", "error"));
+  }
   if (tab === "settings") loadSettings().catch((error) => setStatus(error?.message || t("settings_load_failed"), "error"));
   if (tab === "users" && currentUser?.role === "admin") {
     refreshAdminUsers().catch((error) => setStatus(error?.message || t("users_load_failed"), "error"));
   }
+  currentTab = tab;
 }
 
 tabButtons.forEach((btn) => {
@@ -778,6 +802,7 @@ langToggleBtn.addEventListener("click", () => {
   applyWide(document.body.getAttribute("data-wide") !== "false");
   renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
   syncSessionsList();
+  skillsController.rerender();
   if (currentUser?.role === "admin") {
     refreshAdminUsers().catch(() => {});
   }

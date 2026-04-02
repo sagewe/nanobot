@@ -174,7 +174,170 @@ fn selector_reports_unavailable_explicit_requests() {
 
     assert!(selected.active.is_empty());
     assert_eq!(selected.requested_unavailable.len(), 1);
-    assert!(selected
-        .render_requested_status()
-        .contains("CLI: definitely_missing_binary_for_selector_test"));
+    assert!(
+        selected
+            .render_requested_status()
+            .contains("CLI: definitely_missing_binary_for_selector_test")
+    );
+}
+
+#[test]
+fn managed_catalog_disables_workspace_skill_and_restores_builtin_effective_entry() {
+    let temp = tempdir().expect("tempdir");
+    let builtin_root = temp.path().join("builtin");
+    let workspace = temp.path().join("workspace");
+    write_skill(
+        &builtin_root,
+        "weather",
+        r#"---
+name: weather
+description: builtin weather
+---
+
+Builtin weather body
+"#,
+    );
+    write_skill(
+        &workspace.join("skills"),
+        "weather",
+        r#"---
+name: weather
+description: workspace weather
+---
+
+Workspace weather body
+"#,
+    );
+    fs::create_dir_all(workspace.join(".nanobot")).expect("state dir");
+    fs::write(
+        workspace.join(".nanobot/skills-state.json"),
+        r#"{"weather":{"enabled":false}}"#,
+    )
+    .expect("state file");
+
+    let managed = SkillsCatalog::with_builtin_root(workspace.clone(), builtin_root)
+        .discover_managed()
+        .expect("managed catalog");
+
+    let workspace_skill = managed
+        .workspace
+        .iter()
+        .find(|skill| skill.id == "weather")
+        .expect("workspace skill");
+    let builtin_skill = managed
+        .builtin
+        .iter()
+        .find(|skill| skill.id == "weather")
+        .expect("builtin skill");
+    let discovered = SkillsCatalog::with_builtin_root(workspace, temp.path().join("builtin"))
+        .discover()
+        .expect("discover");
+    let effective_skill = discovered.find("weather").expect("effective weather");
+
+    assert!(!workspace_skill.enabled);
+    assert!(!workspace_skill.effective);
+    assert!(builtin_skill.effective);
+    assert_eq!(effective_skill.description, "builtin weather");
+    assert!(effective_skill.path.ends_with("builtin/weather/SKILL.md"));
+}
+
+#[test]
+fn managed_catalog_uses_directory_slug_and_reports_extra_files() {
+    let temp = tempdir().expect("tempdir");
+    let workspace = temp.path().join("workspace");
+    write_skill(
+        &workspace.join("skills"),
+        "release-check",
+        r#"---
+name: Release Checklist
+description: release skill
+---
+
+Body
+"#,
+    );
+    fs::write(workspace.join("skills/release-check/notes.txt"), "extra").expect("extra file");
+
+    let managed = SkillsCatalog::with_builtin_root(workspace, temp.path().join("builtin"))
+        .discover_managed()
+        .expect("managed catalog");
+
+    let skill = managed
+        .workspace
+        .iter()
+        .find(|skill| skill.id == "release-check")
+        .expect("workspace skill");
+
+    assert_eq!(skill.entry.name, "Release Checklist");
+    assert!(skill.has_extra_files);
+}
+
+#[test]
+fn discover_ignores_malformed_state_and_keeps_workspace_skill_effective() {
+    let temp = tempdir().expect("tempdir");
+    let builtin_root = temp.path().join("builtin");
+    let workspace = temp.path().join("workspace");
+    write_skill(
+        &builtin_root,
+        "weather",
+        r#"---
+name: weather
+description: builtin weather
+---
+
+Builtin weather body
+"#,
+    );
+    write_skill(
+        &workspace.join("skills"),
+        "weather",
+        r#"---
+name: weather
+description: workspace weather
+---
+
+Workspace weather body
+"#,
+    );
+    fs::create_dir_all(workspace.join(".nanobot")).expect("state dir");
+    fs::write(
+        workspace.join(".nanobot/skills-state.json"),
+        r#"{"weather":not-json}"#,
+    )
+    .expect("state file");
+
+    let catalog = SkillsCatalog::with_builtin_root(workspace, builtin_root)
+        .discover()
+        .expect("discover");
+
+    let weather = catalog.find("weather").expect("weather skill");
+    assert_eq!(weather.description, "workspace weather");
+    assert!(weather.path.ends_with("workspace/skills/weather/SKILL.md"));
+}
+
+#[test]
+fn discover_ignores_unreadable_state_and_keeps_builtin_skill_effective() {
+    let temp = tempdir().expect("tempdir");
+    let builtin_root = temp.path().join("builtin");
+    let workspace = temp.path().join("workspace");
+    write_skill(
+        &builtin_root,
+        "weather",
+        r#"---
+name: weather
+description: builtin weather
+---
+
+Builtin weather body
+"#,
+    );
+    fs::create_dir_all(workspace.join(".nanobot/skills-state.json")).expect("state dir");
+
+    let catalog = SkillsCatalog::with_builtin_root(workspace, builtin_root)
+        .discover()
+        .expect("discover");
+
+    let weather = catalog.find("weather").expect("weather skill");
+    assert_eq!(weather.description, "builtin weather");
+    assert!(weather.path.ends_with("builtin/weather/SKILL.md"));
 }

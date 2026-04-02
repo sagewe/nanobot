@@ -328,6 +328,77 @@ export async function applyMcpServerAction(name, action) {
   return payload;
 }
 
+export async function fetchSkillsList() {
+  const response = await fetch("/api/skills");
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to load skills");
+  }
+  return {
+    workspace: payload.workspace || [],
+    builtin: payload.builtin || [],
+  };
+}
+
+export async function fetchSkillDetail(source, id) {
+  const response = await fetch(`/api/skills/${source}/${encodeURIComponent(id)}`);
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to load skill");
+  }
+  return payload;
+}
+
+export async function createWorkspaceSkill(input) {
+  const response = await fetch("/api/skills/workspace", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to create skill");
+  }
+  return payload;
+}
+
+export async function updateWorkspaceSkill(id, rawContent) {
+  const response = await fetch(`/api/skills/workspace/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rawContent }),
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to save skill");
+  }
+  return payload;
+}
+
+export async function updateWorkspaceSkillState(id, enabled) {
+  const response = await fetch(`/api/skills/workspace/${encodeURIComponent(id)}/state`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to update skill state");
+  }
+  return payload;
+}
+
+export async function deleteWorkspaceSkill(id) {
+  const response = await fetch(`/api/skills/workspace/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to delete skill");
+  }
+  return payload;
+}
+
 export async function loadProfiles() {
   try {
     const response = await fetch("/api/profiles");

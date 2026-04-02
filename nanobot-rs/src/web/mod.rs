@@ -4,7 +4,7 @@ pub mod page;
 use std::error::Error as StdError;
 use std::fmt;
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
@@ -31,12 +31,17 @@ use crate::presentation::render_web_html;
 use crate::session::{
     Session, SessionGroupSummary, SessionMessage, SessionSummary, split_session_key,
 };
+use crate::skills::SkillsCatalog;
 
 const WEB_NAMESPACE: &str = "web";
 
 #[async_trait]
 pub trait ChatService: Send + Sync {
     async fn chat(&self, message: &str, channel: &str, session_id: &str) -> Result<WebChatReply>;
+
+    fn workspace_path(&self) -> Option<&Path> {
+        None
+    }
 
     async fn list_sessions(&self) -> Result<Vec<WebSessionGroup>> {
         bail!("session listing is not implemented for this service")
@@ -324,6 +329,7 @@ pub struct AppState {
     pub(crate) auth: Option<AuthService>,
     pub(crate) control: Option<ControlStore>,
     pub(crate) runtimes: Option<RuntimeManager>,
+    pub(crate) builtin_skills_root: Option<PathBuf>,
 }
 
 impl AppState {
@@ -334,6 +340,7 @@ impl AppState {
             auth: None,
             control: None,
             runtimes: None,
+            builtin_skills_root: None,
         }
     }
 
@@ -344,7 +351,13 @@ impl AppState {
             auth: Some(AuthService::new(control.clone())),
             control: Some(control),
             runtimes: Some(runtimes),
+            builtin_skills_root: None,
         }
+    }
+
+    pub fn with_builtin_skills_root(mut self, builtin_skills_root: PathBuf) -> Self {
+        self.builtin_skills_root = Some(builtin_skills_root);
+        self
     }
 
     pub fn auth_service(&self) -> Option<&AuthService> {
@@ -394,6 +407,27 @@ impl AppState {
         self.chat
             .clone()
             .ok_or_else(|| anyhow::anyhow!("chat service is not configured"))
+    }
+
+    pub fn workspace_for_user(&self, user: Option<&AuthenticatedUser>) -> Result<PathBuf> {
+        if let Some(user) = user {
+            if let Some(control) = &self.control {
+                return Ok(control.user_workspace_path(&user.user_id));
+            }
+            return Err(anyhow::anyhow!("control store is not configured"));
+        }
+        self.chat
+            .as_ref()
+            .and_then(|chat| chat.workspace_path())
+            .map(Path::to_path_buf)
+            .ok_or_else(|| anyhow::anyhow!("workspace path is not configured"))
+    }
+
+    pub fn skills_catalog(&self, workspace: PathBuf) -> SkillsCatalog {
+        match &self.builtin_skills_root {
+            Some(builtin_root) => SkillsCatalog::with_builtin_root(workspace, builtin_root.clone()),
+            None => SkillsCatalog::new(workspace),
+        }
     }
 }
 
@@ -458,6 +492,19 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/mcp/servers/{name}/tools/bulk",
             post(api::apply_mcp_server_action),
+        )
+        .route("/api/skills", get(api::list_skills))
+        .route("/api/skills/{source}/{id}", get(api::get_skill))
+        .route("/api/skills/workspace", post(api::create_workspace_skill))
+        .route(
+            "/api/skills/workspace/{id}",
+            get(api::get_workspace_skill)
+                .put(api::update_workspace_skill)
+                .delete(api::delete_workspace_skill),
+        )
+        .route(
+            "/api/skills/workspace/{id}/state",
+            axum::routing::put(api::update_workspace_skill_state),
         )
         .with_state(state)
 }
@@ -736,6 +783,10 @@ impl ChatService for AgentChatService {
         action: McpServerToolAction,
     ) -> Result<bool> {
         self.agent.apply_mcp_server_action(name, action).await
+    }
+
+    fn workspace_path(&self) -> Option<&Path> {
+        Some(self.agent.workspace_path())
     }
 }
 

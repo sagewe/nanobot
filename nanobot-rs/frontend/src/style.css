@@ -223,7 +223,8 @@
       }
 
       .settings-pane,
-      .users-pane {
+      .users-pane,
+      .skills-pane {
         flex: 1;
         width: min(72rem, 100%);
         max-width: 100%;
@@ -3147,6 +3148,58 @@
         gap: 0.9rem;
       }
 
+      .skills-layout {
+        display: grid;
+        grid-template-columns: minmax(18rem, 0.95fr) minmax(24rem, 1.05fr);
+        gap: 1rem;
+        align-items: start;
+      }
+
+      .skills-master {
+        display: grid;
+        gap: 0.85rem;
+        min-width: 0;
+      }
+
+      .skills-group,
+      .skills-detail {
+        display: grid;
+        gap: 0.85rem;
+        padding: 0.95rem;
+        border: 1px solid var(--line);
+        border-radius: 0.95rem;
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .skills-group-header,
+      .skills-detail-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+
+      .skills-list {
+        display: grid;
+        gap: 0.65rem;
+        min-height: 8rem;
+      }
+
+      .skills-editor {
+        display: grid;
+        gap: 0.45rem;
+        min-height: 0;
+      }
+
+      .skills-editor textarea {
+        min-height: 18rem;
+        height: 100%;
+      }
+
+      .skill-enabled-toggle {
+        align-self: flex-start;
+      }
+
       .settings-layout {
         grid-template-columns: minmax(18rem, 1fr) minmax(24rem, 1.08fr);
         gap: 1rem;
@@ -3422,7 +3475,8 @@
         }
 
         .settings-pane,
-        .users-pane {
+        .users-pane,
+        .skills-pane {
           width: 100%;
         }
 
@@ -3432,6 +3486,10 @@
       }
 
       @media (max-width: 1100px) {
+        .skills-layout {
+          grid-template-columns: 1fr;
+        }
+
         .settings-layout {
           grid-template-columns: 1fr;
         }
