@@ -271,6 +271,7 @@ describe("tool trace output", () => {
     const rootCss = readCssBlock(":root");
     const tabBtnCss = readCssBlock("\\.tab-btn");
     const tabBtnHoverCss = readCssBlock("\\.tab-btn:hover");
+    const tabBtnFocusCss = readCssBlock("\\.tab-btn:focus-visible");
     const tabBtnActiveCss = readCssBlock("\\.tab-btn\\[data-active=\"true\"\\]");
     const sectionHeaderCss = readCssBlock("\\.section-header");
     const sectionTitleGroupCss = readCssBlock("\\.section-title-group");
@@ -293,6 +294,11 @@ describe("tool trace output", () => {
     expect(tabBtnCss).toContain("background: var(--nav-quiet-bg);");
     expect(tabBtnHoverCss).toContain("background: var(--nav-hover-bg);");
     expect(tabBtnHoverCss).toContain("color: var(--ink);");
+    expect(tabBtnFocusCss).toContain("outline: 2px solid rgba(217, 119, 87, 0.18);");
+    expect(tabBtnFocusCss).toContain("outline-offset: 2px;");
+    expect(tabBtnFocusCss).toContain("background: var(--nav-hover-bg);");
+    expect(tabBtnFocusCss).toContain("color: var(--ink);");
+    expect(tabBtnFocusCss).toContain("box-shadow: inset 0 0 0 1px rgba(217, 119, 87, 0.24);");
     expect(tabBtnActiveCss).toContain("color: var(--nav-active-ink);");
     expect(tabBtnActiveCss).toContain("background: var(--nav-active-bg-strong);");
     expect(tabBtnActiveCss).toContain("font-weight: 600;");
