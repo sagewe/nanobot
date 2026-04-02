@@ -742,7 +742,6 @@ export function renderEmptyState() {
 export function renderTranscript(messages, activeProfile) {
   if (!messages.length) {
     transcript.innerHTML = "";
-    appendAssistantMessage(t("initial_message"));
     return;
   }
   batchRender(messages, activeProfile);
@@ -754,7 +753,6 @@ export function renderSessionDetail(detail) {
   const messages = detail.messages || [];
   if (!messages.length) {
     transcript.innerHTML = "";
-    appendAssistantMessage(t("initial_message"));
     return messages;
   }
   // for (const message of messages) renderMessage(message, activeProfile);

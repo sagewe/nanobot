@@ -294,6 +294,24 @@ function setAuthState(user) {
   }
 }
 
+function isAuthenticationRequiredError(error) {
+  return error?.message?.trim().toLowerCase() === "authentication required";
+}
+
+function resetToLoginState(error) {
+  clearWeixinPollTimer();
+  setSelectedSession(null, null);
+  currentMessages = [];
+  renderTranscript([]);
+  setCurrentProfile("");
+  setComposerAccess(false, false);
+  setStatus("", "idle");
+  setAuthState(null);
+  loginError.textContent = error?.message || "Authentication required";
+  loginPasswordInput.value = "";
+  loginUsernameInput.focus();
+}
+
 function stringifyConfigEditor(config) {
   return TOML.stringify(config || {});
 }
@@ -852,7 +870,11 @@ loginForm.addEventListener("submit", async (event) => {
     try {
       await initializeAuthenticatedApp();
     } catch (error) {
-      setStatus(error?.message || t("failed_load_sessions"), "error");
+      if (isAuthenticationRequiredError(error)) {
+        resetToLoginState(error);
+      } else {
+        setStatus(error?.message || t("failed_load_sessions"), "error");
+      }
     }
     loginPasswordInput.value = "";
   } catch (error) {
@@ -1337,8 +1359,12 @@ setAuthState(null);
     try {
       await initializeAuthenticatedApp();
     } catch (error) {
-      clearWeixinPollTimer();
-      setStatus(error?.message || t("failed_load_sessions"), "error");
+      if (isAuthenticationRequiredError(error)) {
+        resetToLoginState(error);
+      } else {
+        clearWeixinPollTimer();
+        setStatus(error?.message || t("failed_load_sessions"), "error");
+      }
     }
   } catch (_) {
     setAuthState(null);

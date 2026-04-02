@@ -5,40 +5,39 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiMocks = vi.hoisted(() => {
-  const noop = vi.fn();
   return {
     fetchCurrentUser: vi.fn(),
-    loginUser: noop,
-    logoutUser: noop,
-    changePassword: noop,
-    fetchMyConfig: noop,
+    loginUser: vi.fn(),
+    logoutUser: vi.fn(),
+    changePassword: vi.fn(),
+    fetchMyConfig: vi.fn(),
     updateMyConfig: vi.fn(),
-    fetchAdminUsers: noop,
-    createAdminUser: noop,
-    enableAdminUser: noop,
-    disableAdminUser: noop,
-    setAdminUserPassword: noop,
-    setAdminUserRole: noop,
-    fetchSessions: noop,
-    fetchSessionDetail: noop,
-    createSession: noop,
-    duplicateSession: noop,
-    deleteSession: noop,
-    setSessionProfile: noop,
-    sendChat: noop,
-    fetchWeixinAccount: noop,
-    startWeixinLogin: noop,
-    fetchWeixinLoginStatus: noop,
-    logoutWeixin: noop,
-    loadProfiles: noop,
-    fetchCronJobs: noop,
-    addCronJob: noop,
-    deleteCronJob: noop,
-    toggleCronJob: noop,
-    runCronJob: noop,
-    fetchMcpServers: noop,
-    toggleMcpTool: noop,
-    applyMcpServerAction: noop,
+    fetchAdminUsers: vi.fn(),
+    createAdminUser: vi.fn(),
+    enableAdminUser: vi.fn(),
+    disableAdminUser: vi.fn(),
+    setAdminUserPassword: vi.fn(),
+    setAdminUserRole: vi.fn(),
+    fetchSessions: vi.fn(),
+    fetchSessionDetail: vi.fn(),
+    createSession: vi.fn(),
+    duplicateSession: vi.fn(),
+    deleteSession: vi.fn(),
+    setSessionProfile: vi.fn(),
+    sendChat: vi.fn(),
+    fetchWeixinAccount: vi.fn(),
+    startWeixinLogin: vi.fn(),
+    fetchWeixinLoginStatus: vi.fn(),
+    logoutWeixin: vi.fn(),
+    loadProfiles: vi.fn(),
+    fetchCronJobs: vi.fn(),
+    addCronJob: vi.fn(),
+    deleteCronJob: vi.fn(),
+    toggleCronJob: vi.fn(),
+    runCronJob: vi.fn(),
+    fetchMcpServers: vi.fn(),
+    toggleMcpTool: vi.fn(),
+    applyMcpServerAction: vi.fn(),
   };
 });
 
@@ -151,6 +150,10 @@ function readCssBlock(selectorPattern) {
   const css = readCss();
   const match = css.match(new RegExp(`${selectorPattern}\\s*\\{([\\s\\S]*?)\\n\\s*\\}`));
   return match ? match[1] : "";
+}
+
+function flush() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("tool trace output", () => {
@@ -608,6 +611,40 @@ describe("tool trace output", () => {
     expect(skillsControllerMocks.controller.load).toHaveBeenCalledTimes(1);
   });
 
+  it("returns to the login shell when authenticated bootstrap fails after sign-in", async () => {
+    vi.resetModules();
+    document.body.innerHTML = readHtmlBody();
+    apiMocks.fetchCurrentUser.mockRejectedValueOnce(new Error("login required"));
+    apiMocks.loginUser.mockResolvedValueOnce({
+      userId: "u_1",
+      username: "sage",
+      displayName: "sage",
+      role: "admin",
+    });
+    apiMocks.fetchSessions.mockRejectedValue(new Error("authentication required"));
+    apiMocks.fetchMcpServers.mockResolvedValueOnce([]);
+    apiMocks.fetchWeixinAccount.mockResolvedValueOnce({});
+    apiMocks.loadProfiles.mockResolvedValueOnce([]);
+    apiMocks.fetchMyConfig.mockResolvedValueOnce({});
+    apiMocks.fetchAdminUsers.mockResolvedValueOnce([]);
+
+    await import("../src/main.js");
+    await flush();
+
+    document.getElementById("login-username").value = "sage";
+    document.getElementById("login-password").value = "password123";
+    document
+      .getElementById("login-form")
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+    await flush();
+    await flush();
+
+    expect(document.getElementById("login-shell").hidden).toBe(false);
+    expect(document.getElementById("app").hidden).toBe(true);
+    expect(document.getElementById("current-user-display").textContent).toBe("Guest");
+  });
+
   it("separates the users page into a create card and a directory card", () => {
     const html = readHtml();
     const css = readCss();
@@ -660,5 +697,17 @@ describe("tool trace output", () => {
     });
 
     expect(document.querySelector(".msg-group[data-role=\"assistant\"] .msg-footer")).not.toBeNull();
+  });
+
+  it("does not inject an initial assistant message for empty sessions", async () => {
+    const { renderSessionDetail } = await loadRenderModule();
+
+    renderSessionDetail({
+      activeProfile: "codex:gpt-5.4",
+      messages: [],
+    });
+
+    expect(document.getElementById("transcript").textContent.trim()).toBe("");
+    expect(document.querySelector(".msg-group")).toBeNull();
   });
 });

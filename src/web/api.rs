@@ -106,7 +106,6 @@ pub struct AuthUserResponse {
 }
 
 const SESSION_COOKIE_NAME: &str = "sidekick_session";
-const LEGACY_SESSION_COOKIE_NAME: &str = "nanobot_session";
 
 fn user_response(user: &AuthenticatedUser) -> AuthUserResponse {
     AuthUserResponse {
@@ -125,15 +124,16 @@ fn session_cookie(headers: &HeaderMap) -> Option<String> {
         .get(header::COOKIE)
         .and_then(|value| value.to_str().ok())
         .and_then(|raw| {
-            raw.split(';').find_map(|part| {
+            for part in raw.split(';') {
                 let part = part.trim();
-                let (name, value) = part.split_once('=')?;
-                if name == SESSION_COOKIE_NAME || name == LEGACY_SESSION_COOKIE_NAME {
-                    Some(value.to_string())
-                } else {
-                    None
+                let Some((name, value)) = part.split_once('=') else {
+                    continue;
+                };
+                if name == SESSION_COOKIE_NAME {
+                    return Some(value.to_string());
                 }
-            })
+            }
+            None
         })
 }
 
@@ -282,12 +282,6 @@ pub async fn logout(
         header::SET_COOKIE,
         HeaderValue::from_static(
             "sidekick_session=deleted; Path=/; Max-Age=0; HttpOnly; SameSite=Strict",
-        ),
-    );
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        HeaderValue::from_static(
-            "nanobot_session=deleted; Path=/; Max-Age=0; HttpOnly; SameSite=Strict",
         ),
     );
     Ok(response)

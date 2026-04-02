@@ -399,6 +399,65 @@ async fn login_sets_cookie_and_me_returns_authenticated_user() {
 }
 
 #[tokio::test]
+async fn auth_rejects_legacy_nanobot_cookie_name() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+
+    let sidekick_cookie = login_cookie(&app, "alice", "password123").await;
+    let session_value = sidekick_cookie
+        .split(';')
+        .next()
+        .and_then(|cookie| cookie.split_once('='))
+        .map(|(_, value)| value)
+        .expect("session cookie value");
+
+    let me = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/auth/me")
+                .header("cookie", format!("nanobot_session={session_value}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("me");
+
+    assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn logout_only_clears_sidekick_cookie() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/logout")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("logout");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookies = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect::<Vec<_>>();
+    assert_eq!(cookies.len(), 1);
+    assert_eq!(
+        cookies[0],
+        "sidekick_session=deleted; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"
+    );
+}
+
+#[tokio::test]
 async fn me_config_returns_the_authenticated_users_private_config() {
     let (state, dir) = multiuser_state();
     let app = web::build_router(state);
