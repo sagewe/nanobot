@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -124,6 +125,54 @@ async fn send_message(
     Json(json!({"ok": true, "result": {"message_id": 1}}))
 }
 
+async fn record_telegram_attachment(
+    state: TelegramState,
+    mut payload: Value,
+    route: &'static str,
+) -> Value {
+    if let Some(map) = payload.as_object_mut() {
+        map.insert("route".to_string(), json!(route));
+    }
+    state.sent.lock().await.push(payload);
+    json!({"ok": true, "result": {"message_id": 1}})
+}
+
+async fn send_photo(State(state): State<TelegramState>, Json(payload): Json<Value>) -> Json<Value> {
+    Json(record_telegram_attachment(state, payload, "sendPhoto").await)
+}
+
+async fn send_voice(State(state): State<TelegramState>, Json(payload): Json<Value>) -> Json<Value> {
+    Json(record_telegram_attachment(state, payload, "sendVoice").await)
+}
+
+async fn send_audio(State(state): State<TelegramState>, Json(payload): Json<Value>) -> Json<Value> {
+    Json(record_telegram_attachment(state, payload, "sendAudio").await)
+}
+
+async fn send_document(
+    State(state): State<TelegramState>,
+    Json(payload): Json<Value>,
+) -> Json<Value> {
+    Json(record_telegram_attachment(state, payload, "sendDocument").await)
+}
+
+async fn get_file(State(_state): State<TelegramState>, Json(payload): Json<Value>) -> Json<Value> {
+    let file_id = payload
+        .get("file_id")
+        .and_then(Value::as_str)
+        .unwrap_or("file");
+    Json(json!({
+        "ok": true,
+        "result": {
+            "file_path": format!("downloads/{file_id}.bin")
+        }
+    }))
+}
+
+async fn download_file(axum::extract::Path(file_path): axum::extract::Path<String>) -> String {
+    format!("downloaded:{file_path}")
+}
+
 async fn weixin_send_message(
     State(state): State<TelegramState>,
     Json(payload): Json<Value>,
@@ -136,6 +185,15 @@ async fn start_server(state: TelegramState) -> SocketAddr {
     let app = Router::new()
         .route("/bottoken/getUpdates", post(get_updates))
         .route("/bottoken/sendMessage", post(send_message))
+        .route("/bottoken/sendPhoto", post(send_photo))
+        .route("/bottoken/sendVoice", post(send_voice))
+        .route("/bottoken/sendAudio", post(send_audio))
+        .route("/bottoken/sendDocument", post(send_document))
+        .route("/bottoken/getFile", post(get_file))
+        .route(
+            "/file/bottoken/{*file_path}",
+            axum::routing::get(download_file),
+        )
         .with_state(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
@@ -318,6 +376,7 @@ async fn telegram_channel_sends_outbound_text() {
             channel: "telegram".to_string(),
             chat_id: "123".to_string(),
             content: "hello".to_string(),
+            media: Vec::new(),
             metadata: HashMap::new(),
         })
         .await
@@ -325,6 +384,133 @@ async fn telegram_channel_sends_outbound_text() {
     let sent = state.sent.lock().await;
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].get("text").and_then(Value::as_str), Some("hello"));
+}
+
+#[tokio::test]
+async fn telegram_channel_publishes_media_and_reply_context() {
+    let state = TelegramState {
+        updates: Arc::new(Mutex::new(vec![json!({
+            "update_id": 2,
+            "message": {
+                "message_id": 11,
+                "text": "photo caption",
+                "caption": "photo caption",
+                "chat": {"id": 99, "is_forum": true},
+                "from": {"id": 42, "username": "alice"},
+                "message_thread_id": 7,
+                "media_group_id": "group-1",
+                "reply_to_message": {"message_id": 10},
+                "is_topic_message": true,
+                "photo": [
+                    {"file_id": "small-photo", "file_unique_id": "u1"},
+                    {"file_id": "large-photo", "file_unique_id": "u2"}
+                ]
+            }
+        })])),
+        sent: Arc::new(Mutex::new(Vec::new())),
+    };
+    let addr = start_server(state.clone()).await;
+    let bus = MessageBus::new(32);
+    let channel = TelegramChannel::new(
+        TelegramConfig {
+            enabled: true,
+            token: "token".to_string(),
+            allow_from: vec!["42".to_string()],
+            api_base: format!("http://{addr}"),
+        },
+        bus.clone(),
+    );
+    let handle = tokio::spawn({
+        let channel = channel;
+        async move { channel.start().await.expect("telegram start") }
+    });
+
+    let inbound = tokio::time::timeout(std::time::Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("message");
+
+    assert_eq!(inbound.channel, "telegram");
+    assert_eq!(inbound.content, "photo caption");
+    assert_eq!(inbound.media.len(), 1);
+    assert!(
+        fs::metadata(&inbound.media[0]).is_ok(),
+        "missing downloaded media"
+    );
+    assert_eq!(inbound.metadata.get("message_id"), Some(&json!("11")));
+    assert_eq!(
+        inbound.metadata.get("reply_to_message_id"),
+        Some(&json!("10"))
+    );
+    assert_eq!(inbound.metadata.get("message_thread_id"), Some(&json!("7")));
+    assert_eq!(
+        inbound.metadata.get("media_group_id"),
+        Some(&json!("group-1"))
+    );
+    assert_eq!(inbound.metadata.get("username"), Some(&json!("alice")));
+    assert_eq!(inbound.metadata.get("chat_is_forum"), Some(&json!(true)));
+    assert_eq!(inbound.metadata.get("is_topic_message"), Some(&json!(true)));
+    assert_eq!(inbound.session_key(), "telegram:99:7");
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn telegram_channel_sends_attachments_and_thread_reply_metadata() {
+    let state = TelegramState::default();
+    let addr = start_server(state.clone()).await;
+    let bus = MessageBus::new(32);
+    let channel = TelegramChannel::new(
+        TelegramConfig {
+            enabled: true,
+            token: "token".to_string(),
+            allow_from: vec!["*".to_string()],
+            api_base: format!("http://{addr}"),
+        },
+        bus,
+    );
+
+    for (content, media, route) in [
+        ("photo", vec!["/tmp/photo.jpg".to_string()], "sendPhoto"),
+        ("voice", vec!["/tmp/voice.ogg".to_string()], "sendVoice"),
+        ("audio", vec!["/tmp/audio.mp3".to_string()], "sendAudio"),
+        (
+            "document",
+            vec!["/tmp/file.pdf".to_string()],
+            "sendDocument",
+        ),
+    ] {
+        channel
+            .send(OutboundMessage {
+                channel: "telegram".to_string(),
+                chat_id: "123".to_string(),
+                content: content.to_string(),
+                media,
+                metadata: HashMap::from([
+                    ("message_id".to_string(), json!("100")),
+                    ("message_thread_id".to_string(), json!("42")),
+                    ("reply_to_message_id".to_string(), json!("99")),
+                ]),
+            })
+            .await
+            .expect("send");
+
+        let sent = state.sent.lock().await;
+        let payload = sent.last().expect("payload");
+        assert_eq!(payload.get("route").and_then(Value::as_str), Some(route));
+        assert_eq!(payload.get("chat_id").and_then(Value::as_str), Some("123"));
+        assert_eq!(
+            payload.get("message_thread_id").and_then(Value::as_str),
+            Some("42")
+        );
+        assert_eq!(
+            payload.get("reply_to_message_id").and_then(Value::as_str),
+            Some("99")
+        );
+    }
+
+    let sent = state.sent.lock().await;
+    assert_eq!(sent.len(), 4);
 }
 
 #[tokio::test]
@@ -347,6 +533,7 @@ async fn telegram_channel_drops_runtime_messages() {
             channel: "telegram".to_string(),
             chat_id: "123".to_string(),
             content: "message(\"telegram\")".to_string(),
+            media: Vec::new(),
             metadata: HashMap::from([("_progress".to_string(), json!(true))]),
         })
         .await
@@ -390,6 +577,7 @@ async fn telegram_channel_sends_rendered_html() {
             channel: "telegram".to_string(),
             chat_id: "123".to_string(),
             content: "**hello** `code` [link](https://example.com)".to_string(),
+            media: Vec::new(),
             metadata: HashMap::new(),
         })
         .await
@@ -417,6 +605,7 @@ async fn outbound_delivery_to_different_keys_is_parallel() {
         channel: "mock".to_string(),
         chat_id: "chat-a".to_string(),
         content: "first".to_string(),
+        media: Vec::new(),
         metadata: HashMap::new(),
     })
     .await
@@ -425,6 +614,7 @@ async fn outbound_delivery_to_different_keys_is_parallel() {
         channel: "mock".to_string(),
         chat_id: "chat-b".to_string(),
         content: "second".to_string(),
+        media: Vec::new(),
         metadata: HashMap::new(),
     })
     .await
@@ -453,6 +643,7 @@ async fn outbound_delivery_preserves_fifo_for_one_key() {
         channel: "mock".to_string(),
         chat_id: "chat-a".to_string(),
         content: "first".to_string(),
+        media: Vec::new(),
         metadata: HashMap::new(),
     })
     .await
@@ -464,6 +655,7 @@ async fn outbound_delivery_preserves_fifo_for_one_key() {
         channel: "mock".to_string(),
         chat_id: "chat-a".to_string(),
         content: "second".to_string(),
+        media: Vec::new(),
         metadata: HashMap::new(),
     })
     .await
@@ -495,6 +687,7 @@ async fn outbound_delivery_buffers_same_key_messages_without_blocking_other_keys
         channel: "mock".to_string(),
         chat_id: "chat-a".to_string(),
         content: "first".to_string(),
+        media: Vec::new(),
         metadata: HashMap::new(),
     })
     .await
@@ -503,6 +696,7 @@ async fn outbound_delivery_buffers_same_key_messages_without_blocking_other_keys
         channel: "mock".to_string(),
         chat_id: "chat-a".to_string(),
         content: "second".to_string(),
+        media: Vec::new(),
         metadata: HashMap::new(),
     })
     .await
@@ -511,6 +705,7 @@ async fn outbound_delivery_buffers_same_key_messages_without_blocking_other_keys
         channel: "mock".to_string(),
         chat_id: "chat-a".to_string(),
         content: "third".to_string(),
+        media: Vec::new(),
         metadata: HashMap::new(),
     })
     .await
@@ -519,6 +714,7 @@ async fn outbound_delivery_buffers_same_key_messages_without_blocking_other_keys
         channel: "mock".to_string(),
         chat_id: "chat-b".to_string(),
         content: "other".to_string(),
+        media: Vec::new(),
         metadata: HashMap::new(),
     })
     .await
@@ -548,6 +744,7 @@ async fn stop_all_aborts_active_delivery_workers() {
         channel: "mock".to_string(),
         chat_id: "chat-a".to_string(),
         content: "blocked".to_string(),
+        media: Vec::new(),
         metadata: HashMap::new(),
     })
     .await
@@ -597,6 +794,7 @@ async fn weixin_channel_sends_outbound_text() {
             channel: "weixin".to_string(),
             chat_id: "user@im.wechat".to_string(),
             content: "hello".to_string(),
+            media: Vec::new(),
             metadata: HashMap::new(),
         })
         .await

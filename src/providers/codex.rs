@@ -41,6 +41,14 @@ pub struct CodexProvider {
     auth_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexAuthSummary {
+    pub auth_path: PathBuf,
+    pub account_id: Option<String>,
+    pub parse_valid: bool,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct CodexAuthFile {
     #[serde(default = "default_auth_mode")]
@@ -88,6 +96,35 @@ impl CodexProvider {
             auth,
             auth_path,
         })
+    }
+
+    pub fn auth_summary(config: &CodexProviderConfig) -> CodexAuthSummary {
+        let auth_path = match resolve_auth_path(&config.auth_file) {
+            Ok(path) => path,
+            Err(error) => {
+                return CodexAuthSummary {
+                    auth_path: PathBuf::from(config.auth_file.trim()),
+                    account_id: None,
+                    parse_valid: false,
+                    error: Some(error.to_string()),
+                };
+            }
+        };
+
+        match load_auth_file(&auth_path) {
+            Ok(auth) => CodexAuthSummary {
+                auth_path,
+                account_id: auth.tokens.account_id.clone(),
+                parse_valid: true,
+                error: None,
+            },
+            Err(error) => CodexAuthSummary {
+                auth_path,
+                account_id: None,
+                parse_valid: false,
+                error: Some(error.to_string()),
+            },
+        }
     }
 
     #[allow(dead_code)]

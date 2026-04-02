@@ -85,16 +85,62 @@ impl Session {
 
     pub fn clear(&mut self) {
         self.messages.clear();
-        self.last_consolidated = 0;
+        self.reset_last_consolidated();
         self.updated_at = Utc::now();
+    }
+
+    pub fn reset_last_consolidated(&mut self) {
+        self.last_consolidated = 0;
+    }
+
+    pub fn clamped_last_consolidated(&self) -> usize {
+        self.last_consolidated.min(self.messages.len())
     }
 
     pub fn active_profile_or<'a>(&'a self, default_profile: &'a str) -> &'a str {
         self.active_profile.as_deref().unwrap_or(default_profile)
     }
 
+    pub fn unconsolidated_tail(&self) -> &[SessionMessage] {
+        self.messages
+            .get(self.clamped_last_consolidated()..)
+            .unwrap_or(&[])
+    }
+
+    pub fn unconsolidated_slice_to(&self, boundary: usize) -> &[SessionMessage] {
+        let start = self.clamped_last_consolidated();
+        let end = boundary.clamp(start, self.messages.len());
+        &self.messages[start..end]
+    }
+
+    pub fn legal_consolidation_boundaries(&self) -> Vec<usize> {
+        let start = self.clamped_last_consolidated();
+        ((start + 1)..=self.messages.len())
+            .filter(|boundary| self.is_legal_consolidation_boundary(*boundary))
+            .collect()
+    }
+
+    pub fn is_legal_consolidation_boundary(&self, boundary: usize) -> bool {
+        let start = self.clamped_last_consolidated();
+        if boundary <= start || boundary > self.messages.len() {
+            return false;
+        }
+        if boundary == self.messages.len() {
+            return true;
+        }
+        self.messages
+            .get(boundary)
+            .map(|message| message.role == "user" && !message.excluded_from_context())
+            .unwrap_or(false)
+    }
+
+    pub fn safe_history_start(messages: &[SessionMessage]) -> usize {
+        legal_start(messages)
+    }
+
     pub fn get_history(&self, max_messages: usize) -> Vec<Value> {
-        let unconsolidated = self.messages[self.last_consolidated..]
+        let unconsolidated = self
+            .unconsolidated_tail()
             .iter()
             .filter(|message| !message.excluded_from_context())
             .cloned()
@@ -109,7 +155,7 @@ impl Session {
             sliced = sliced[pos..].to_vec();
         }
 
-        let start = legal_start(&sliced);
+        let start = Self::safe_history_start(&sliced);
         if start > 0 {
             sliced = sliced[start..].to_vec();
         }

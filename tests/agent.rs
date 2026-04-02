@@ -1,6 +1,7 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -13,12 +14,14 @@ use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::{Json, Router};
 use serde_json::{Map, Value, json};
-use sidekick::agent::{AgentLoop, ContextBuilder, SubagentManager};
+use sidekick::agent::memory::{ConsolidationPolicy, MemoryConsolidator};
+use sidekick::agent::{AgentLoop, ContextBuilder, RestartHook, SubagentManager};
 use sidekick::bus::{InboundMessage, MessageBus};
 use sidekick::config::{AgentProfileConfig, Config, WebToolsConfig};
 use sidekick::providers::{
     LlmProvider, LlmResponse, ProviderPool, ProviderRequestDescriptor, ToolCall,
 };
+use sidekick::session::{Session, SessionMessage};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify};
@@ -932,6 +935,184 @@ impl LlmProvider for DebounceRecordingProvider {
     }
 }
 
+#[derive(Clone)]
+enum MemoryProviderReply {
+    Response(LlmResponse),
+    Error(String),
+}
+
+impl MemoryProviderReply {
+    fn ok(response: LlmResponse) -> Self {
+        Self::Response(response)
+    }
+}
+
+#[derive(Default)]
+struct MemoryProviderState {
+    conversation_calls: Arc<Mutex<Vec<Vec<Value>>>>,
+    consolidation_calls: Arc<Mutex<Vec<Vec<Value>>>>,
+    conversation_replies: Arc<Mutex<VecDeque<MemoryProviderReply>>>,
+    consolidation_replies: Arc<Mutex<VecDeque<MemoryProviderReply>>>,
+    tamper_memory_path: Arc<Mutex<Option<PathBuf>>>,
+}
+
+#[derive(Clone)]
+struct MemoryRecordingProvider {
+    state: Arc<MemoryProviderState>,
+}
+
+impl MemoryRecordingProvider {
+    async fn pop_reply(queue: &Mutex<VecDeque<MemoryProviderReply>>) -> Result<LlmResponse> {
+        match queue.lock().await.pop_front() {
+            Some(MemoryProviderReply::Response(response)) => Ok(response),
+            Some(MemoryProviderReply::Error(message)) => Err(anyhow::anyhow!(message)),
+            None => Err(anyhow::anyhow!("no queued reply")),
+        }
+    }
+
+    fn is_consolidation_call(tools: &[Value]) -> bool {
+        tools.iter().any(|tool| {
+            tool.get("function")
+                .and_then(Value::as_object)
+                .and_then(|function| function.get("name"))
+                .and_then(Value::as_str)
+                == Some("save_memory")
+        })
+    }
+}
+
+#[async_trait]
+impl LlmProvider for MemoryRecordingProvider {
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        Err(anyhow::anyhow!(
+            "chat() should not be used for memory recording provider"
+        ))
+    }
+
+    async fn chat_with_request(
+        &self,
+        messages: Vec<serde_json::Value>,
+        tools: Vec<serde_json::Value>,
+        _request: &ProviderRequestDescriptor,
+    ) -> Result<LlmResponse> {
+        if Self::is_consolidation_call(&tools) {
+            self.state.consolidation_calls.lock().await.push(messages);
+            if let Some(path) = self.state.tamper_memory_path.lock().await.take() {
+                if path.is_file() {
+                    fs::remove_file(&path).expect("remove memory file");
+                }
+                fs::create_dir_all(&path).expect("replace memory file with directory");
+            }
+            return Self::pop_reply(&self.state.consolidation_replies).await;
+        }
+
+        self.state.conversation_calls.lock().await.push(messages);
+        Self::pop_reply(&self.state.conversation_replies).await
+    }
+}
+
+fn text_message(role: &str, content: &str) -> SessionMessage {
+    SessionMessage {
+        role: role.to_string(),
+        content: json!(content),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    }
+}
+
+fn excluded_message(role: &str, content: &str) -> SessionMessage {
+    let mut message = text_message(role, content);
+    message
+        .extra
+        .insert("_exclude_from_context".to_string(), json!(true));
+    message
+}
+
+fn assistant_tool_message(call_id: &str) -> SessionMessage {
+    SessionMessage {
+        role: "assistant".to_string(),
+        content: Value::Null,
+        timestamp: None,
+        tool_calls: Some(vec![json!({
+            "id": call_id,
+            "type": "function",
+            "function": {"name": "lookup", "arguments": "{}"}
+        })]),
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    }
+}
+
+fn tool_result_message(call_id: &str) -> SessionMessage {
+    SessionMessage {
+        role: "tool".to_string(),
+        content: json!("tool result"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: Some(call_id.to_string()),
+        name: Some("lookup".to_string()),
+        extra: Default::default(),
+    }
+}
+
+fn save_memory_response(history_entry: &str, memory_update: Option<&str>) -> LlmResponse {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("history_entry".to_string(), json!(history_entry));
+    match memory_update {
+        Some(memory_update) => {
+            arguments.insert("memory_update".to_string(), json!(memory_update));
+        }
+        None => {
+            arguments.insert("memory_update".to_string(), Value::Null);
+        }
+    }
+    LlmResponse {
+        content: None,
+        tool_calls: vec![ToolCall {
+            id: "save_memory_call".to_string(),
+            name: "save_memory".to_string(),
+            arguments: Value::Object(arguments),
+        }],
+        finish_reason: "tool_calls".to_string(),
+        extra: Map::new(),
+    }
+}
+
+fn invalid_consolidation_response() -> LlmResponse {
+    LlmResponse {
+        content: Some("not a tool call".to_string()),
+        tool_calls: Vec::new(),
+        finish_reason: "stop".to_string(),
+        extra: Map::new(),
+    }
+}
+
+fn memory_policy(max_context_tokens: usize, target_context_tokens: usize) -> ConsolidationPolicy {
+    ConsolidationPolicy {
+        max_context_tokens,
+        target_context_tokens,
+        retry_limit: 2,
+        max_rounds: 2,
+    }
+}
+
+fn default_request() -> ProviderRequestDescriptor {
+    ProviderRequestDescriptor::new("openai", "mock-model", Map::new())
+}
+
 fn multi_profile_config(workspace: &std::path::Path) -> Config {
     let mut config = Config::default();
     config.agents.defaults.workspace = workspace.display().to_string();
@@ -972,6 +1153,26 @@ fn debounce_config(workspace: &std::path::Path, debounce_ms: u64) -> Config {
     config
 }
 
+#[derive(Default)]
+struct RestartHookState {
+    calls: AtomicUsize,
+    notified: Notify,
+}
+
+#[derive(Clone)]
+struct RestartHookSpy {
+    state: Arc<RestartHookState>,
+}
+
+#[async_trait]
+impl RestartHook for RestartHookSpy {
+    async fn restart(&self) -> Result<()> {
+        self.state.calls.fetch_add(1, Ordering::SeqCst);
+        self.state.notified.notify_waiters();
+        Ok(())
+    }
+}
+
 fn inbound_message(
     channel: &str,
     chat_id: &str,
@@ -983,6 +1184,7 @@ fn inbound_message(
         sender_id: "user".to_string(),
         chat_id: chat_id.to_string(),
         content: content.to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some(session_key.to_string()),
@@ -1163,6 +1365,7 @@ async fn agent_bus_mode_suppresses_duplicate_final_reply_after_message_tool() {
         sender_id: "user".to_string(),
         chat_id: "test".to_string(),
         content: "say hi".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:test".to_string()),
@@ -1189,6 +1392,91 @@ async fn agent_bus_mode_suppresses_duplicate_final_reply_after_message_tool() {
         .await
         .is_err()
     );
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn message_tool_forwards_media_and_context_metadata() {
+    let dir = tempdir().expect("tempdir");
+    let provider = mock_provider(vec![
+        LlmResponse {
+            content: Some("sending".to_string()),
+            tool_calls: vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "message".to_string(),
+                arguments: json!({
+                    "content": "Here are the attachments",
+                    "media": ["/tmp/photo.jpg", "/tmp/voice.ogg"]
+                }),
+            }],
+            finish_reason: "tool_calls".to_string(),
+            extra: Map::new(),
+        },
+        LlmResponse {
+            content: Some("done".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            extra: Map::new(),
+        },
+    ]);
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::new(
+        bus.clone(),
+        provider,
+        dir.path().to_path_buf(),
+        "mock-model".to_string(),
+        5,
+        10,
+        false,
+        WebToolsConfig::default(),
+    )
+    .await
+    .expect("agent");
+    let runner = spawn_runner(agent.clone());
+
+    let metadata = HashMap::from([
+        ("message_id".to_string(), json!("100")),
+        ("message_thread_id".to_string(), json!("42")),
+        ("reply_to_message_id".to_string(), json!("99")),
+    ]);
+    bus.publish_inbound(InboundMessage {
+        channel: "telegram".to_string(),
+        sender_id: "user".to_string(),
+        chat_id: "chat-1".to_string(),
+        content: "send media".to_string(),
+        media: Vec::new(),
+        timestamp: chrono::Utc::now(),
+        metadata,
+        session_key_override: Some("telegram:chat-1".to_string()),
+    })
+    .await
+    .expect("publish inbound");
+
+    let outbound = loop {
+        let outbound = bus.consume_outbound().await.expect("message tool outbound");
+        let is_progress = outbound
+            .metadata
+            .get("_progress")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if !is_progress {
+            break outbound;
+        }
+    };
+
+    assert_eq!(outbound.content, "Here are the attachments");
+    assert_eq!(outbound.media, vec!["/tmp/photo.jpg", "/tmp/voice.ogg"]);
+    assert_eq!(outbound.metadata.get("message_id"), Some(&json!("100")));
+    assert_eq!(
+        outbound.metadata.get("message_thread_id"),
+        Some(&json!("42"))
+    );
+    assert_eq!(
+        outbound.metadata.get("reply_to_message_id"),
+        Some(&json!("99"))
+    );
+
     agent.stop();
     runner.abort();
 }
@@ -1402,6 +1690,299 @@ async fn help_lists_model_commands() {
 
     assert!(result.contains("/models"));
     assert!(result.contains("/model <provider:model>"));
+}
+
+#[tokio::test]
+async fn restart_command_publishes_restart_notice_and_invokes_restart_hook() {
+    let dir = tempdir().expect("tempdir");
+    let bus = MessageBus::new(32);
+    let provider = mock_provider(Vec::new());
+    let restart_state = Arc::new(RestartHookState::default());
+    let agent = AgentLoop::from_config(bus.clone(), provider, debounce_config(dir.path(), 200))
+        .await
+        .expect("agent")
+        .with_restart_hook(Arc::new(RestartHookSpy {
+            state: restart_state.clone(),
+        }));
+    let runner = spawn_runner(agent.clone());
+
+    bus.publish_inbound(inbound_message("cli", "restart", "cli:restart", "/restart"))
+        .await
+        .expect("publish restart");
+
+    let outbound = tokio::time::timeout(Duration::from_millis(100), bus.consume_outbound())
+        .await
+        .expect("restart should bypass debounce")
+        .expect("outbound");
+    assert_eq!(outbound.content, "Restarting...");
+
+    wait_for_count(&restart_state.calls, &restart_state.notified, 1).await;
+    assert_eq!(restart_state.calls.load(Ordering::SeqCst), 1);
+    assert!(
+        agent
+            .load_session_by_key("cli:restart")
+            .expect("load session")
+            .is_none(),
+        "restart should stay ephemeral and avoid creating a conversational turn"
+    );
+
+    agent.stop();
+    runner.abort();
+}
+
+#[tokio::test]
+async fn memory_consolidator_appends_history_and_rewrites_memory_from_save_memory_tool_call() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(MemoryProviderState::default());
+    state
+        .consolidation_replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(save_memory_response(
+            "## 2026-04-03\n- important fact",
+            Some("# MEMORY\n\nimportant fact\n"),
+        )));
+    let provider: Arc<dyn LlmProvider> = Arc::new(MemoryRecordingProvider {
+        state: state.clone(),
+    });
+    let consolidator =
+        MemoryConsolidator::new(dir.path(), provider, memory_policy(1, 0)).expect("memory");
+    let mut session = Session::new("cli:memory-save");
+    session.messages.push(text_message("user", "remember this"));
+    session.messages.push(text_message("assistant", "noted"));
+
+    let changed = consolidator
+        .flush_session(&mut session, &default_request(), "manual flush")
+        .await
+        .expect("flush");
+
+    assert!(changed);
+    assert_eq!(session.last_consolidated, 2);
+    assert!(
+        fs::read_to_string(dir.path().join("memory").join("HISTORY.md"))
+            .expect("history")
+            .contains("important fact")
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("memory").join("MEMORY.md")).expect("memory"),
+        "# MEMORY\n\nimportant fact\n"
+    );
+}
+
+#[tokio::test]
+async fn memory_consolidator_keeps_watermark_when_memory_persistence_fails() {
+    let dir = tempdir().expect("tempdir");
+    let memory_path = dir.path().join("memory").join("MEMORY.md");
+    let state = Arc::new(MemoryProviderState::default());
+    state
+        .consolidation_replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(save_memory_response(
+            "## 2026-04-03\n- failed write",
+            Some("# MEMORY\n\nnew content\n"),
+        )));
+    *state.tamper_memory_path.lock().await = Some(memory_path.clone());
+    let provider: Arc<dyn LlmProvider> = Arc::new(MemoryRecordingProvider {
+        state: state.clone(),
+    });
+    let consolidator =
+        MemoryConsolidator::new(dir.path(), provider, memory_policy(1, 0)).expect("memory");
+    let mut session = Session::new("cli:memory-fail");
+    session.messages.push(text_message("user", "remember this"));
+    session.messages.push(text_message("assistant", "noted"));
+
+    let err = consolidator
+        .flush_session(&mut session, &default_request(), "manual flush")
+        .await
+        .expect_err("flush should fail");
+
+    assert!(err.to_string().contains("MEMORY.md"), "{err}");
+    assert_eq!(session.last_consolidated, 0);
+    assert!(
+        fs::read_to_string(dir.path().join("memory").join("HISTORY.md"))
+            .expect("history")
+            .contains("failed write")
+    );
+}
+
+#[tokio::test]
+async fn memory_consolidator_uses_watermark_and_safe_boundaries_for_budget_compaction() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(MemoryProviderState::default());
+    state
+        .consolidation_replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(save_memory_response(
+            "## 2026-04-03\n- compacted first turn",
+            None,
+        )));
+    let provider: Arc<dyn LlmProvider> = Arc::new(MemoryRecordingProvider {
+        state: state.clone(),
+    });
+    let consolidator =
+        MemoryConsolidator::new(dir.path(), provider, memory_policy(8, 4)).expect("memory");
+    let mut session = Session::new("cli:memory-boundary");
+    session.messages.push(text_message("user", "old turn"));
+    session
+        .messages
+        .push(text_message("assistant", "old answer"));
+    session
+        .messages
+        .push(text_message("user", "lookup weather"));
+    session.messages.push(assistant_tool_message("call_1"));
+    session.messages.push(tool_result_message("call_1"));
+    session
+        .messages
+        .push(excluded_message("assistant", "timeline-only"));
+    session.messages.push(text_message(
+        "user",
+        "current turn that should remain active",
+    ));
+    session
+        .messages
+        .push(text_message("assistant", "current answer"));
+    session.last_consolidated = 2;
+
+    let changed = consolidator
+        .consolidate_if_needed(&mut session, &default_request())
+        .await
+        .expect("consolidate");
+
+    assert!(changed);
+    assert_eq!(session.last_consolidated, 6);
+
+    let prompts = state.consolidation_calls.lock().await;
+    let prompt = prompts
+        .last()
+        .and_then(|messages| messages.last())
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(!prompt.contains("old turn"), "{prompt}");
+    assert!(prompt.contains("lookup weather"), "{prompt}");
+    assert!(!prompt.contains("timeline-only"), "{prompt}");
+    assert!(
+        !prompt.contains("current turn that should remain active"),
+        "{prompt}"
+    );
+}
+
+#[tokio::test]
+async fn agent_consolidates_saved_turns_when_the_session_is_over_budget() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(MemoryProviderState::default());
+    state
+        .conversation_replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(LlmResponse {
+            content: Some("normal reply".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            extra: Map::new(),
+        }));
+    state
+        .consolidation_replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(save_memory_response(
+            "## 2026-04-03\n- durable fact",
+            Some("# MEMORY\n\ndurable fact\n"),
+        )));
+    let provider: Arc<dyn LlmProvider> = Arc::new(MemoryRecordingProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus, provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent")
+        .with_memory_policy(memory_policy(8, 4));
+
+    let reply = agent
+        .process_direct(
+            "please remember this durable fact for later",
+            "cli:memory-agent",
+            "cli",
+            "memory-agent",
+        )
+        .await
+        .expect("reply");
+
+    assert_eq!(reply, "normal reply");
+    let session = agent
+        .load_session_by_key("cli:memory-agent")
+        .expect("load session")
+        .expect("session");
+    assert!(session.last_consolidated > 0);
+    assert!(
+        fs::read_to_string(dir.path().join("memory").join("HISTORY.md"))
+            .expect("history")
+            .contains("durable fact")
+    );
+}
+
+#[tokio::test]
+async fn new_flushes_unconsolidated_tail_to_raw_archive_before_resetting_session() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(MemoryProviderState::default());
+    state
+        .conversation_replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(LlmResponse {
+            content: Some("session reply".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            extra: Map::new(),
+        }));
+    state
+        .consolidation_replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(invalid_consolidation_response()));
+    let provider: Arc<dyn LlmProvider> = Arc::new(MemoryRecordingProvider {
+        state: state.clone(),
+    });
+    let bus = MessageBus::new(32);
+    let agent = AgentLoop::from_config(bus, provider, multi_profile_config(dir.path()))
+        .await
+        .expect("agent")
+        .with_memory_policy(memory_policy(10_000, 9_000));
+
+    agent
+        .process_direct(
+            "hold this transient turn",
+            "cli:new-memory",
+            "cli",
+            "new-memory",
+        )
+        .await
+        .expect("message");
+    let result = agent
+        .process_direct("/new", "cli:new-memory", "cli", "new-memory")
+        .await
+        .expect("new");
+
+    assert_eq!(result, "New session started.");
+    let session = agent
+        .load_session_by_key("cli:new-memory")
+        .expect("load session")
+        .expect("session");
+    assert!(session.messages.is_empty());
+    assert_eq!(session.last_consolidated, 0);
+    assert!(
+        fs::read_to_string(dir.path().join("memory").join("HISTORY.md"))
+            .expect("history")
+            .contains("[RAW]")
+    );
+    assert!(
+        fs::read_dir(dir.path().join("memory").join("raw-archive"))
+            .expect("raw archive dir")
+            .next()
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -1749,6 +2330,7 @@ async fn system_turn_uses_the_target_sessions_active_profile() {
         sender_id: "subagent".to_string(),
         chat_id: "cli:one".to_string(),
         content: "background".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: None,
@@ -1812,6 +2394,7 @@ async fn session_burst_messages_are_merged_into_one_turn() {
             sender_id: "user".to_string(),
             chat_id: "burst".to_string(),
             content: content.to_string(),
+            media: Vec::new(),
             timestamp: chrono::Utc::now(),
             metadata: Default::default(),
             session_key_override: Some("cli:burst".to_string()),
@@ -1875,6 +2458,7 @@ async fn messages_outside_the_debounce_window_are_processed_separately() {
         sender_id: "user".to_string(),
         chat_id: "split".to_string(),
         content: "one".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:split".to_string()),
@@ -1894,6 +2478,7 @@ async fn messages_outside_the_debounce_window_are_processed_separately() {
         sender_id: "user".to_string(),
         chat_id: "split".to_string(),
         content: "two".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:split".to_string()),
@@ -1934,6 +2519,7 @@ async fn models_command_bypasses_pending_debounce() {
         sender_id: "user".to_string(),
         chat_id: "models".to_string(),
         content: "hello".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:models".to_string()),
@@ -1945,6 +2531,7 @@ async fn models_command_bypasses_pending_debounce() {
         sender_id: "user".to_string(),
         chat_id: "models".to_string(),
         content: "/models".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:models".to_string()),
@@ -1997,6 +2584,7 @@ async fn help_command_bypasses_pending_debounce() {
         sender_id: "user".to_string(),
         chat_id: "help".to_string(),
         content: "hello".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:help".to_string()),
@@ -2008,6 +2596,7 @@ async fn help_command_bypasses_pending_debounce() {
         sender_id: "user".to_string(),
         chat_id: "help".to_string(),
         content: "/help".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:help".to_string()),
@@ -2060,6 +2649,7 @@ async fn model_command_bypasses_pending_debounce_and_updates_the_flushed_burst_p
         sender_id: "user".to_string(),
         chat_id: "model".to_string(),
         content: "hello".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:model".to_string()),
@@ -2071,6 +2661,7 @@ async fn model_command_bypasses_pending_debounce_and_updates_the_flushed_burst_p
         sender_id: "user".to_string(),
         chat_id: "model".to_string(),
         content: "/model openrouter:deepseek-r1".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:model".to_string()),
@@ -2125,6 +2716,7 @@ async fn new_clears_any_pending_burst_before_resetting_the_session() {
         sender_id: "user".to_string(),
         chat_id: "new".to_string(),
         content: "hello".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:new".to_string()),
@@ -2136,6 +2728,7 @@ async fn new_clears_any_pending_burst_before_resetting_the_session() {
         sender_id: "user".to_string(),
         chat_id: "new".to_string(),
         content: "/new".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:new".to_string()),
@@ -2188,6 +2781,7 @@ async fn stop_bypasses_debounce_cancels_the_running_task_and_clears_pending_burs
         sender_id: "user".to_string(),
         chat_id: "stop".to_string(),
         content: "block".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:stop".to_string()),
@@ -2209,6 +2803,7 @@ async fn stop_bypasses_debounce_cancels_the_running_task_and_clears_pending_burs
         sender_id: "user".to_string(),
         chat_id: "stop".to_string(),
         content: "later".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:stop".to_string()),
@@ -2220,6 +2815,7 @@ async fn stop_bypasses_debounce_cancels_the_running_task_and_clears_pending_burs
         sender_id: "user".to_string(),
         chat_id: "stop".to_string(),
         content: "/stop".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:stop".to_string()),
@@ -2279,6 +2875,7 @@ async fn bursts_are_never_merged_across_different_sessions_in_the_same_channel()
             sender_id: "user".to_string(),
             chat_id: chat_id.to_string(),
             content: content.to_string(),
+            media: Vec::new(),
             timestamp: chrono::Utc::now(),
             metadata: Default::default(),
             session_key_override: Some(session_key.to_string()),
@@ -2338,6 +2935,7 @@ async fn bus_requests_for_different_sessions_can_complete_in_parallel() {
         sender_id: "user".to_string(),
         chat_id: "a".to_string(),
         content: "hold-a".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:a".to_string()),
@@ -2359,6 +2957,7 @@ async fn bus_requests_for_different_sessions_can_complete_in_parallel() {
         sender_id: "user".to_string(),
         chat_id: "b".to_string(),
         content: "fast-b".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:b".to_string()),
@@ -2423,6 +3022,7 @@ async fn system_messages_share_the_same_session_lock_as_user_messages() {
         sender_id: "user".to_string(),
         chat_id: "shared".to_string(),
         content: "hold-user".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:shared".to_string()),
@@ -2441,6 +3041,7 @@ async fn system_messages_share_the_same_session_lock_as_user_messages() {
         sender_id: "subagent".to_string(),
         chat_id: "cli:shared".to_string(),
         content: "system-hold".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: None,
@@ -2521,6 +3122,7 @@ async fn stop_cancels_system_work_for_the_target_session() {
         sender_id: "subagent".to_string(),
         chat_id: "cli:shared".to_string(),
         content: "system-hold".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: None,
@@ -2542,6 +3144,7 @@ async fn stop_cancels_system_work_for_the_target_session() {
         sender_id: "user".to_string(),
         chat_id: "shared".to_string(),
         content: "/stop".to_string(),
+        media: Vec::new(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
         session_key_override: Some("cli:shared".to_string()),

@@ -40,6 +40,7 @@ pub struct ToolContext {
     pub chat_id: String,
     pub session_key: String,
     pub message_id: Option<String>,
+    pub metadata: HashMap<String, Value>,
     pub reply_to_caller: bool,
     pub provider_request: Option<ProviderRequestDescriptor>,
 }
@@ -794,6 +795,10 @@ impl Tool for MessageTool {
             "type": "object",
             "properties": {
                 "content": {"type": "string"},
+                "media": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                },
                 "channel": {"type": "string"},
                 "chat_id": {"type": "string"}
             },
@@ -821,14 +826,28 @@ impl Tool for MessageTool {
             self.direct_replies.lock().await.push(content.to_string());
             return "Message returned directly to caller".to_string();
         }
-        let mut metadata = HashMap::new();
+        let media = args
+            .get("media")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut metadata = context.metadata.clone();
         if let Some(message_id) = context.message_id.clone() {
-            metadata.insert("message_id".to_string(), json!(message_id));
+            metadata
+                .entry("message_id".to_string())
+                .or_insert_with(|| json!(message_id));
         }
         let outbound = OutboundMessage {
             channel: context.channel.clone(),
             chat_id: context.chat_id.clone(),
             content: content.to_string(),
+            media,
             metadata,
         };
         match self.bus.publish_outbound(outbound).await {

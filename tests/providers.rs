@@ -11,8 +11,8 @@ use sidekick::config::load_config;
 use sidekick::config::save_config;
 use sidekick::config::{Config, FeishuConfig};
 use sidekick::providers::{
-    LlmProvider, LlmResponse, ProviderError, ProviderKind, ProviderPool, ProviderRegistry,
-    ProviderRequestDescriptor,
+    CodexProvider, LlmProvider, LlmResponse, ProviderError, ProviderKind, ProviderPool,
+    ProviderRegistry, ProviderRequestDescriptor,
 };
 use tempfile::tempdir;
 
@@ -525,6 +525,86 @@ fn provider_registry_builds_codex_configs_with_the_correct_default_base() {
     assert_eq!(built.kind, ProviderKind::Codex);
     assert_eq!(built.api_base, "https://chatgpt.com/backend-api/codex");
     assert_eq!(built.default_model, "gpt-5-codex");
+}
+
+#[test]
+fn codex_auth_summary_reports_ready_state_for_valid_auth_file() {
+    let dir = tempdir().expect("tempdir");
+    let auth_path = dir.path().join("codex-auth.json");
+    fs::write(
+        &auth_path,
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "id_token": "id-token",
+                "account_id": "acct-ready"
+            }
+        })
+        .to_string(),
+    )
+    .expect("write auth");
+
+    let summary = CodexProvider::auth_summary(&sidekick::config::CodexProviderConfig {
+        auth_file: auth_path.display().to_string(),
+        api_base: "https://chatgpt.com/backend-api/codex".to_string(),
+        service_tier: None,
+    });
+
+    assert!(summary.parse_valid);
+    assert_eq!(summary.account_id.as_deref(), Some("acct-ready"));
+    assert!(summary.error.is_none());
+    assert_eq!(summary.auth_path, auth_path);
+}
+
+#[test]
+fn codex_auth_summary_reports_errors_for_missing_and_malformed_auth_files() {
+    let dir = tempdir().expect("tempdir");
+
+    let missing_path = dir.path().join("missing-auth.json");
+    let missing_summary = CodexProvider::auth_summary(&sidekick::config::CodexProviderConfig {
+        auth_file: missing_path.display().to_string(),
+        api_base: "https://chatgpt.com/backend-api/codex".to_string(),
+        service_tier: None,
+    });
+    assert!(!missing_summary.parse_valid);
+    assert!(missing_summary.account_id.is_none());
+    assert!(
+        missing_summary
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("failed to read codex auth file"))
+    );
+    assert_eq!(missing_summary.auth_path, missing_path);
+
+    let malformed_path = dir.path().join("malformed-auth.json");
+    fs::write(
+        &malformed_path,
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "access-token",
+                "refresh_token": "refresh-token"
+            }
+        })
+        .to_string(),
+    )
+    .expect("write malformed auth");
+    let malformed_summary = CodexProvider::auth_summary(&sidekick::config::CodexProviderConfig {
+        auth_file: malformed_path.display().to_string(),
+        api_base: "https://chatgpt.com/backend-api/codex".to_string(),
+        service_tier: None,
+    });
+    assert!(!malformed_summary.parse_valid);
+    assert!(malformed_summary.account_id.is_none());
+    assert!(
+        malformed_summary
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("missing required field"))
+    );
+    assert_eq!(malformed_summary.auth_path, malformed_path);
 }
 
 #[test]

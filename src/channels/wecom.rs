@@ -245,6 +245,7 @@ impl WecomBotChannel {
                     sender_id: parsed.sender_id,
                     chat_id: parsed.chat_id,
                     content: parsed.content,
+                    media: Vec::new(),
                     timestamp: chrono::Utc::now(),
                     metadata,
                     session_key_override: None,
@@ -302,21 +303,27 @@ pub fn parse_wecom_text_callback(payload: &Value) -> Option<ParsedWecomTextCallb
         return None;
     }
 
-    if payload.pointer("/body/msgtype").and_then(Value::as_str) != Some("text") {
-        return None;
-    }
-
     let req_id = payload.pointer("/headers/req_id").and_then(Value::as_str)?;
     let sender_id = payload
         .pointer("/body/from/userid")
-        .and_then(Value::as_str)?;
-    let content = payload
-        .pointer("/body/text/content")
         .and_then(Value::as_str)?;
     let chat_id = payload
         .pointer("/body/chatid")
         .and_then(Value::as_str)
         .unwrap_or(sender_id);
+    let content = match payload.pointer("/body/msgtype").and_then(Value::as_str) {
+        Some("text") => payload
+            .pointer("/body/text/content")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "[wecom text]".to_string()),
+        Some("image") => "[wecom image]".to_string(),
+        Some("file") => "[wecom file]".to_string(),
+        Some("voice") => "[wecom voice]".to_string(),
+        Some("mixed") => "[wecom mixed]".to_string(),
+        Some(other) => format!("[wecom {other}]"),
+        None => "[wecom message]".to_string(),
+    };
 
     Some(ParsedWecomTextCallback {
         req_id: req_id.to_string(),

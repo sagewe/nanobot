@@ -11,6 +11,8 @@ pub struct InboundMessage {
     pub sender_id: String,
     pub chat_id: String,
     pub content: String,
+    #[serde(default)]
+    pub media: Vec<String>,
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
     #[serde(default)]
@@ -32,6 +34,8 @@ pub struct OutboundMessage {
     pub channel: String,
     pub chat_id: String,
     pub content: String,
+    #[serde(default)]
+    pub media: Vec<String>,
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
 }

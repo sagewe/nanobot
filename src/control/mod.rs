@@ -582,6 +582,7 @@ impl UserRuntime {
                                         channel,
                                         chat_id: job.payload.to.clone().unwrap_or_default(),
                                         content: response.clone(),
+                                        media: Vec::new(),
                                         metadata: Default::default(),
                                     })
                                     .await;
@@ -627,6 +628,7 @@ impl UserRuntime {
                                 channel: "cli".to_string(),
                                 chat_id: "direct".to_string(),
                                 content: response,
+                                media: Vec::new(),
                                 metadata: Default::default(),
                             })
                             .await;
@@ -872,6 +874,10 @@ fn ensure_workspace_templates(workspace: &Path) -> Result<()> {
         (
             workspace.join("memory").join("MEMORY.md"),
             "# MEMORY\n\nStore durable facts here.\n",
+        ),
+        (
+            workspace.join("memory").join("HISTORY.md"),
+            "# HISTORY\n\nAppend consolidation events here.\n",
         ),
     ] {
         if !path.exists() {

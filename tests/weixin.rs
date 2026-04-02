@@ -544,6 +544,24 @@ fn weixin_account_store_round_trips_account_and_context_tokens() {
     assert_eq!(token.as_deref(), Some("ctx-1"));
 }
 
+#[test]
+fn weixin_account_store_reports_cli_status_summary() {
+    let temp = tempdir().unwrap();
+    let store = WeixinAccountStore::new(temp.path()).unwrap();
+
+    let missing = store.login_status_summary().unwrap();
+    assert!(!missing.configured);
+    assert_eq!(missing.login_state, "not logged in");
+    assert_eq!(missing.account_status, "missing");
+
+    store.save_account(&sample_account()).unwrap();
+    let summary = store.login_status_summary().unwrap();
+    assert!(summary.configured);
+    assert_eq!(summary.login_state, "logged in");
+    assert_eq!(summary.account_status, "active");
+    assert_eq!(summary.bot_id.as_deref(), Some("ilink-bot-id"));
+}
+
 #[tokio::test]
 async fn start_login_parses_qr_payload() {
     let server =
@@ -747,6 +765,7 @@ fn sample_outbound(channel: &str, chat_id: &str, content: &str) -> OutboundMessa
         channel: channel.to_string(),
         chat_id: chat_id.to_string(),
         content: content.to_string(),
+        media: Vec::new(),
         metadata: HashMap::new(),
     }
 }
@@ -1077,21 +1096,23 @@ async fn poll_loop_ignores_group_messages() {
 }
 
 #[tokio::test]
-async fn poll_loop_ignores_non_text_items() {
+async fn weixin_channel_accepts_non_text_getupdates_items() {
     let server =
         spawn_weixin_test_server(vec![non_text_message("alice@im.wechat", "cursor-2", 35000)])
             .await;
     let account = sample_account();
     let (_temp, bus, _, handle) = start_weixin_channel(&server, Some(account)).await;
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let inbound = tokio::time::timeout(std::time::Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound for non-text item")
+        .expect("message");
     handle.abort();
 
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(50), bus.consume_inbound())
-            .await
-            .is_err()
-    );
+    assert_eq!(inbound.channel, "weixin");
+    assert_eq!(inbound.sender_id, "alice@im.wechat");
+    assert_eq!(inbound.chat_id, "alice@im.wechat");
+    assert!(inbound.content.contains("non-text"), "{}", inbound.content);
 }
 
 #[tokio::test]

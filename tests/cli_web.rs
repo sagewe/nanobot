@@ -8,6 +8,7 @@ fn help_lists_web_command() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("web"));
+    assert!(stdout.contains("status"));
     assert!(stdout.contains("users"));
 }
 

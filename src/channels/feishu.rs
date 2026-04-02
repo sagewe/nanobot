@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,6 +11,7 @@ use prost::Message as ProstMessage;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio::fs;
 use tokio::sync::Mutex;
 use tokio::time::{self, MissedTickBehavior};
 use tokio_tungstenite::connect_async;
@@ -95,6 +97,11 @@ struct FeishuWsSessionConfig {
 struct FeishuToken {
     token: String,
     expire_at_unix: i64,
+}
+
+struct NormalizedInboundContent {
+    content: String,
+    media: Vec<String>,
 }
 
 pub struct FeishuChannel {
@@ -360,6 +367,297 @@ impl FeishuChannel {
         Ok(())
     }
 
+    fn media_dir(&self) -> PathBuf {
+        std::env::temp_dir().join("sidekick-feishu-media")
+    }
+
+    fn sanitize_media_component(value: &str) -> String {
+        let sanitized: String = value
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        if sanitized.is_empty() {
+            "media.bin".to_string()
+        } else {
+            sanitized
+        }
+    }
+
+    fn upload_is_image(media_path: &str) -> bool {
+        let extension = Path::new(media_path)
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+        matches!(
+            extension.as_deref(),
+            Some("jpg") | Some("jpeg") | Some("png") | Some("gif") | Some("webp") | Some("bmp")
+        )
+    }
+
+    async fn download_message_resource(
+        &self,
+        access_token: &str,
+        message_id: &str,
+        resource_key: &str,
+        resource_type: &str,
+        label: &str,
+    ) -> Result<String> {
+        let url = format!(
+            "{}/im/v1/messages/{message_id}/resources/{resource_key}",
+            self.config.api_base.trim_end_matches('/')
+        );
+        let bytes = self
+            .client
+            .get(url)
+            .bearer_auth(access_token)
+            .query(&[("type", resource_type)])
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        let mut local_path = self.media_dir();
+        let file_key = Self::sanitize_media_component(resource_key);
+        local_path.push(format!("{message_id}-{label}-{file_key}"));
+        if let Some(parent) = local_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        fs::write(&local_path, bytes).await?;
+        Ok(local_path.display().to_string())
+    }
+
+    async fn upload_image(&self, access_token: &str, media_path: &str) -> Result<(String, String)> {
+        let bytes = fs::read(media_path).await?;
+        let file_name = Path::new(media_path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("image.bin")
+            .to_string();
+        let (content_type, payload_bytes) =
+            Self::multipart_body(&[("image_type", "message")], "image", &file_name, &bytes);
+        let url = format!(
+            "{}/im/v1/images",
+            self.config.api_base.trim_end_matches('/')
+        );
+        let payload: Value = self
+            .client
+            .post(url)
+            .bearer_auth(access_token)
+            .header("Content-Type", content_type)
+            .body(payload_bytes)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        ensure!(
+            payload.get("code").and_then(Value::as_i64).unwrap_or(-1) == 0,
+            "feishu image upload failed"
+        );
+        let image_key = payload
+            .pointer("/data/image_key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing feishu image_key"))?
+            .to_string();
+        Ok((
+            "image".to_string(),
+            json!({ "image_key": image_key }).to_string(),
+        ))
+    }
+
+    async fn upload_file(&self, access_token: &str, media_path: &str) -> Result<(String, String)> {
+        let bytes = fs::read(media_path).await?;
+        let file_name = Path::new(media_path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("file.bin")
+            .to_string();
+        let (content_type, payload_bytes) = Self::multipart_body(
+            &[("file_type", "stream"), ("file_name", file_name.as_str())],
+            "file",
+            &file_name,
+            &bytes,
+        );
+        let url = format!("{}/im/v1/files", self.config.api_base.trim_end_matches('/'));
+        let payload: Value = self
+            .client
+            .post(url)
+            .bearer_auth(access_token)
+            .header("Content-Type", content_type)
+            .body(payload_bytes)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        ensure!(
+            payload.get("code").and_then(Value::as_i64).unwrap_or(-1) == 0,
+            "feishu file upload failed"
+        );
+        let file_key = payload
+            .pointer("/data/file_key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing feishu file_key"))?
+            .to_string();
+        Ok((
+            "file".to_string(),
+            json!({ "file_key": file_key }).to_string(),
+        ))
+    }
+
+    fn multipart_body(
+        fields: &[(&str, &str)],
+        file_field: &str,
+        file_name: &str,
+        bytes: &[u8],
+    ) -> (String, Vec<u8>) {
+        let boundary = format!(
+            "----sidekick-feishu-{}",
+            chrono::Utc::now().timestamp_micros()
+        );
+        let mut body = Vec::new();
+        for (name, value) in fields {
+            body.extend_from_slice(
+                format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+                )
+                .as_bytes(),
+            );
+        }
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{file_field}\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        (format!("multipart/form-data; boundary={boundary}"), body)
+    }
+
+    async fn extract_post_media(
+        &self,
+        access_token: &str,
+        message_id: &str,
+        post_payload: &Value,
+    ) -> Result<Vec<String>> {
+        let root = post_payload.get("post").unwrap_or(post_payload);
+        let Some(root_object) = root.as_object() else {
+            return Ok(Vec::new());
+        };
+        let mut media = Vec::new();
+        for locale in root_object.values() {
+            let Some(rows) = locale.get("content").and_then(Value::as_array) else {
+                continue;
+            };
+            for row in rows {
+                let Some(elements) = row.as_array() else {
+                    continue;
+                };
+                for element in elements {
+                    let Some("img") = element.get("tag").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let Some(image_key) = element.get("image_key").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    if image_key.trim().is_empty() {
+                        continue;
+                    }
+                    media.push(
+                        self.download_message_resource(
+                            access_token,
+                            message_id,
+                            image_key,
+                            "image",
+                            "post-image",
+                        )
+                        .await?,
+                    );
+                }
+            }
+        }
+        Ok(media)
+    }
+
+    async fn normalize_inbound_content(
+        &self,
+        access_token: &str,
+        message_id: &str,
+        message_type: &str,
+        raw_content: &str,
+    ) -> Result<Option<NormalizedInboundContent>> {
+        match message_type {
+            "text" => {
+                let payload: Value =
+                    serde_json::from_str(raw_content).context("invalid feishu text content")?;
+                Ok(payload.get("text").and_then(Value::as_str).map(|text| {
+                    NormalizedInboundContent {
+                        content: text.trim().to_string(),
+                        media: Vec::new(),
+                    }
+                }))
+            }
+            "post" => {
+                let payload: Value =
+                    serde_json::from_str(raw_content).context("invalid feishu post content")?;
+                let mut content = extract_post_text(&payload);
+                let media = self
+                    .extract_post_media(access_token, message_id, &payload)
+                    .await?;
+                if content.trim().is_empty() && !media.is_empty() {
+                    content = "[post]".to_string();
+                }
+                Ok(Some(NormalizedInboundContent { content, media }))
+            }
+            "image" | "audio" | "file" | "media" => {
+                let payload: Value = serde_json::from_str(raw_content)
+                    .with_context(|| format!("invalid feishu {message_type} content"))?;
+                let (key_field, resource_type, label) = if message_type == "image" {
+                    ("image_key", "image", "image")
+                } else {
+                    ("file_key", "file", message_type)
+                };
+                let mut media = Vec::new();
+                if let Some(resource_key) = payload.get(key_field).and_then(Value::as_str) {
+                    if !resource_key.trim().is_empty() {
+                        media.push(
+                            self.download_message_resource(
+                                access_token,
+                                message_id,
+                                resource_key,
+                                resource_type,
+                                label,
+                            )
+                            .await?,
+                        );
+                    }
+                }
+                let content = payload
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty())
+                    .or_else(|| placeholder_message(message_type))
+                    .unwrap_or_else(|| format!("[{message_type}]"));
+                Ok(Some(NormalizedInboundContent { content, media }))
+            }
+            other => Ok(
+                placeholder_message(other).map(|content| NormalizedInboundContent {
+                    content,
+                    media: Vec::new(),
+                }),
+            ),
+        }
+    }
+
     async fn run_session(&self) -> Result<()> {
         let bot_open_id = self.bot_open_id().await?;
         let session_config = self.ws_session_config().await?;
@@ -605,7 +903,11 @@ impl FeishuChannel {
             return Ok(());
         }
 
-        let content = match normalize_inbound_content(message_type, raw_content)? {
+        let access_token = self.tenant_access_token().await?;
+        let NormalizedInboundContent { content, media } = match self
+            .normalize_inbound_content(&access_token, message_id, message_type, raw_content)
+            .await?
+        {
             Some(content) => content,
             None => {
                 debug!(
@@ -617,7 +919,7 @@ impl FeishuChannel {
                 return Ok(());
             }
         };
-        if content.trim().is_empty() {
+        if content.trim().is_empty() && media.is_empty() {
             debug!(
                 message_id,
                 chat_id = %redact_identifier(chat_id),
@@ -655,6 +957,7 @@ impl FeishuChannel {
                     chat_id.to_string()
                 },
                 content,
+                media,
                 timestamp: chrono::Utc::now(),
                 metadata,
                 session_key_override: None,
@@ -1271,25 +1574,6 @@ fn placeholder_message(message_type: &str) -> Option<String> {
     }
 }
 
-fn normalize_inbound_content(message_type: &str, raw_content: &str) -> Result<Option<String>> {
-    match message_type {
-        "text" => {
-            let payload: Value =
-                serde_json::from_str(raw_content).context("invalid feishu text content")?;
-            Ok(payload
-                .get("text")
-                .and_then(Value::as_str)
-                .map(|text| text.trim().to_string()))
-        }
-        "post" => {
-            let payload: Value =
-                serde_json::from_str(raw_content).context("invalid feishu post content")?;
-            Ok(Some(extract_post_text(&payload)))
-        }
-        other => Ok(placeholder_message(other)),
-    }
-}
-
 #[async_trait::async_trait]
 impl Channel for FeishuChannel {
     fn name(&self) -> &'static str {
@@ -1341,20 +1625,30 @@ impl Channel for FeishuChannel {
         let _ = self.bot_open_id().await?;
         let receive_id_type = resolve_receive_id_type(&msg.chat_id);
 
-        let payloads: Vec<(&'static str, String)> = match detect_message_format(&msg.content) {
+        let mut payloads: Vec<(String, String)> = Vec::new();
+        for media_path in &msg.media {
+            let uploaded = if Self::upload_is_image(media_path) {
+                self.upload_image(&access_token, media_path).await?
+            } else {
+                self.upload_file(&access_token, media_path).await?
+            };
+            payloads.push(uploaded);
+        }
+        let text_payloads: Vec<(String, String)> = match detect_message_format(&msg.content) {
             FeishuMessageFormat::Text => vec![(
-                "text",
+                "text".to_string(),
                 json!({
                     "text": msg.content.trim(),
                 })
                 .to_string(),
             )],
-            FeishuMessageFormat::Post => vec![("post", render_post_body(&msg.content))],
+            FeishuMessageFormat::Post => vec![("post".to_string(), render_post_body(&msg.content))],
             FeishuMessageFormat::Interactive => render_interactive_cards(&msg.content)
                 .into_iter()
-                .map(|card| ("interactive", card))
+                .map(|card| ("interactive".to_string(), card))
                 .collect(),
         };
+        payloads.extend(text_payloads);
 
         let reply_message_id = if self.config.reply_to_message
             && !msg
@@ -1376,6 +1670,7 @@ impl Channel for FeishuChannel {
         info!(
             receive_id_type,
             chat_id = %redact_identifier(msg.chat_id.as_str()),
+            media_count = msg.media.len(),
             payload_count = payloads.len(),
             reply_message_id = %reply_message_id
                 .map(redact_identifier)
@@ -1395,7 +1690,7 @@ impl Channel for FeishuChannel {
                     "feishu outbound reply attempt"
                 );
                 if self
-                    .reply_message(&access_token, message_id, msg_type, content)
+                    .reply_message(&access_token, message_id, msg_type.as_str(), content)
                     .await
                     .is_ok()
                 {
@@ -1423,7 +1718,7 @@ impl Channel for FeishuChannel {
                 &access_token,
                 receive_id_type,
                 &msg.chat_id,
-                msg_type,
+                msg_type.as_str(),
                 content,
             )
             .await?;

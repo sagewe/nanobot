@@ -98,6 +98,64 @@ fn parse_text_callback_extracts_sender_chat_and_content() {
 }
 
 #[test]
+fn parse_wecom_callback_accepts_non_text_message_types() {
+    let cases = [
+        (
+            "image",
+            json!({
+                "image": { "mediaid": "image-media-1" }
+            }),
+            "[wecom image]",
+        ),
+        (
+            "file",
+            json!({
+                "file": {
+                    "mediaid": "file-media-1",
+                    "filename": "report.pdf"
+                }
+            }),
+            "[wecom file]",
+        ),
+        (
+            "voice",
+            json!({
+                "voice": { "mediaid": "voice-media-1" }
+            }),
+            "[wecom voice]",
+        ),
+        ("mixed", json!({}), "[wecom mixed]"),
+    ];
+
+    for (msgtype, extra, expected_content) in cases {
+        let mut body = json!({
+            "msgid": format!("msg-{msgtype}"),
+            "aibotid": "bot-id",
+            "chatid": format!("chat-{msgtype}"),
+            "chattype": "group",
+            "from": { "userid": "alice" },
+            "msgtype": msgtype,
+        });
+        body.as_object_mut()
+            .expect("body object")
+            .extend(extra.as_object().expect("extra object").clone());
+
+        let payload = json!({
+            "cmd": "aibot_msg_callback",
+            "headers": { "req_id": format!("req-{msgtype}") },
+            "body": body,
+        });
+
+        let parsed = parse_wecom_text_callback(&payload).expect("non-text callback");
+
+        assert_eq!(parsed.req_id, format!("req-{msgtype}"));
+        assert_eq!(parsed.sender_id, "alice");
+        assert_eq!(parsed.chat_id, format!("chat-{msgtype}"));
+        assert_eq!(parsed.content, expected_content);
+    }
+}
+
+#[test]
 fn markdown_reply_request_carries_req_id_and_markdown_content() {
     let request = build_wecom_markdown_reply_request("req-4", "# working on it");
 
@@ -296,6 +354,7 @@ async fn wecom_channel_publishes_text_callback_and_replies() {
             channel: "wecom".to_string(),
             chat_id: "chat-1".to_string(),
             content: "reply body".to_string(),
+            media: Vec::new(),
             metadata: Default::default(),
         })
         .await
@@ -322,6 +381,93 @@ async fn wecom_channel_publishes_text_callback_and_replies() {
         .find(|payload| payload["cmd"] == "aibot_respond_msg")
         .expect("reply payload");
     assert_eq!(reply["headers"]["req_id"], "reply-1");
+    assert_eq!(reply["body"]["msgtype"], "markdown");
+    assert_eq!(reply["body"]["markdown"]["content"], "reply body");
+
+    channel.stop().await.expect("stop");
+    tokio::time::timeout(Duration::from_secs(1), start_task)
+        .await
+        .expect("channel stopped in time")
+        .expect("join");
+}
+
+#[tokio::test]
+async fn wecom_channel_publishes_non_text_inbound_messages() {
+    let server = MockWecomServer::start().await;
+    let bus = MessageBus::new(32);
+    let channel = Arc::new(WecomBotChannel::new_with_timing(
+        runtime_config(server.ws_base()),
+        bus.clone(),
+        WecomTiming::for_tests(),
+    ));
+
+    let start_task = tokio::spawn({
+        let channel = channel.clone();
+        async move { channel.start().await.expect("start") }
+    });
+
+    server.send_callback(json!({
+        "cmd": "aibot_msg_callback",
+        "headers": { "req_id": "reply-image-1" },
+        "body": {
+            "msgid": "msg-image-1",
+            "aibotid": "bot-id",
+            "chatid": "chat-image-1",
+            "chattype": "group",
+            "from": { "userid": "alice" },
+            "msgtype": "image",
+            "image": { "mediaid": "image-media-1" }
+        }
+    }));
+
+    let inbound = tokio::time::timeout(Duration::from_secs(2), bus.consume_inbound())
+        .await
+        .expect("timely inbound")
+        .expect("inbound");
+    assert_eq!(inbound.channel, "wecom");
+    assert_eq!(inbound.sender_id, "alice");
+    assert_eq!(inbound.chat_id, "chat-image-1");
+    assert_eq!(inbound.content, "[wecom image]");
+    assert_eq!(
+        inbound
+            .metadata
+            .get("req_id")
+            .and_then(|value| value.as_str()),
+        Some("reply-image-1")
+    );
+
+    channel
+        .send(OutboundMessage {
+            channel: "wecom".to_string(),
+            chat_id: "chat-image-1".to_string(),
+            content: "reply body".to_string(),
+            media: Vec::new(),
+            metadata: Default::default(),
+        })
+        .await
+        .expect("send reply");
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let received = server.received.lock().await.clone();
+            if received
+                .iter()
+                .any(|payload| payload["cmd"] == "aibot_respond_msg")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("reply observed");
+
+    let received = server.received.lock().await;
+    let reply = received
+        .iter()
+        .find(|payload| payload["cmd"] == "aibot_respond_msg")
+        .expect("reply payload");
+    assert_eq!(reply["headers"]["req_id"], "reply-image-1");
     assert_eq!(reply["body"]["msgtype"], "markdown");
     assert_eq!(reply["body"]["markdown"]["content"], "reply body");
 
@@ -372,6 +518,7 @@ async fn wecom_channel_drops_runtime_messages() {
             channel: "wecom".to_string(),
             chat_id: "chat-progress-1".to_string(),
             content: "message(\"wecom\")".to_string(),
+            media: Vec::new(),
             metadata: [("_progress".to_string(), json!(true))]
                 .into_iter()
                 .collect(),
@@ -446,6 +593,7 @@ async fn wecom_logs_connection_lifecycle() {
             channel: "wecom".to_string(),
             chat_id: "chat-log-1".to_string(),
             content: "reply body".to_string(),
+            media: Vec::new(),
             metadata: Default::default(),
         })
         .await

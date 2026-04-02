@@ -5,10 +5,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+mod auth;
+mod onboard;
+mod status;
+
 use crate::agent::AgentLoop;
 use crate::bus::{InboundMessage, MessageBus};
 use crate::config::{Config, default_workspace_path};
-use crate::control::{BootstrapAdmin, ControlStore, Role};
+use crate::control::{ControlStore, Role};
 use crate::mcp::connect_mcp_servers;
 use crate::providers::build_provider_from_config;
 use crate::web;
@@ -37,11 +41,14 @@ pub struct GatewayArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    Status,
     Onboard {
-        #[arg(long)]
-        admin_username: String,
-        #[arg(long)]
-        admin_password: String,
+        #[arg(long, default_value_t = false)]
+        wizard: bool,
+        #[arg(long, required_unless_present = "wizard")]
+        admin_username: Option<String>,
+        #[arg(long, required_unless_present = "wizard")]
+        admin_password: Option<String>,
         #[arg(long, default_value = "")]
         admin_display_name: String,
     },
@@ -59,6 +66,14 @@ pub enum Commands {
         host: String,
         #[arg(long, default_value_t = DEFAULT_WEB_PORT)]
         port: u16,
+    },
+    Channels {
+        #[command(subcommand)]
+        action: auth::ChannelsCommand,
+    },
+    Provider {
+        #[command(subcommand)]
+        action: auth::ProviderCommand,
     },
     Users {
         #[command(subcommand)]
@@ -113,11 +128,33 @@ pub async fn run() -> Result<()> {
     let app = App::parse();
     let root = control_root(app.root);
     match app.command {
+        Commands::Status => {
+            let auth_lines = auth::status_lines(&root)?;
+            if auth_lines.is_empty() {
+                return status::run(root).await;
+            }
+            let output =
+                status::render_status(&root, &status::AuthStatusLines { lines: auth_lines })?;
+            println!("{output}");
+            Ok(())
+        }
         Commands::Onboard {
+            wizard,
             admin_username,
             admin_password,
             admin_display_name,
-        } => onboard(root, admin_username, admin_password, admin_display_name).await,
+        } => {
+            onboard::run(
+                root,
+                onboard::OnboardOptions {
+                    wizard,
+                    admin_username,
+                    admin_password,
+                    admin_display_name,
+                },
+            )
+            .await
+        }
         Commands::Agent {
             message,
             session,
@@ -125,32 +162,10 @@ pub async fn run() -> Result<()> {
         } => agent(root, user, message, session).await,
         Commands::Gateway(args) => gateway(root, args).await,
         Commands::Web { host, port } => web_command(root, host, port).await,
+        Commands::Channels { action } => auth::run_channels(root, action).await,
+        Commands::Provider { action } => auth::run_provider(root, action).await,
         Commands::Users { action } => users(root, action).await,
     }
-}
-
-async fn onboard(
-    root: PathBuf,
-    admin_username: String,
-    admin_password: String,
-    admin_display_name: String,
-) -> Result<()> {
-    let store = ControlStore::new(&root)?;
-    let display_name = if admin_display_name.trim().is_empty() {
-        admin_username.clone()
-    } else {
-        admin_display_name
-    };
-    let admin = BootstrapAdmin {
-        username: admin_username,
-        password: admin_password,
-        display_name,
-    };
-    let user = store.bootstrap_first_admin(&admin)?;
-    println!("Initialized multi-user control plane at {}", root.display());
-    println!("Created first admin user {}", user.username);
-    println!("{ONBOARD_TEMPLATE_SUMMARY}");
-    Ok(())
 }
 
 async fn agent(
@@ -206,6 +221,7 @@ async fn agent(
             sender_id: "user".to_string(),
             chat_id: chat_id.clone(),
             content: line,
+            media: Vec::new(),
             timestamp: chrono::Utc::now(),
             metadata: Default::default(),
             session_key_override: Some(session.clone()),

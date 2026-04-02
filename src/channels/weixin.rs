@@ -433,16 +433,24 @@ impl WeixinChannel {
                 self.store
                     .save_context_token(&message.from_user_id, context_token)?;
             }
-            info!(
-                "weixin text callback sender={} chat={}",
-                message.from_user_id, message.from_user_id
-            );
+            if message.is_text {
+                info!(
+                    "weixin text callback sender={} chat={}",
+                    message.from_user_id, message.from_user_id
+                );
+            } else {
+                info!(
+                    "weixin non-text callback sender={} chat={}",
+                    message.from_user_id, message.from_user_id
+                );
+            }
             self.bus
                 .publish_inbound(InboundMessage {
                     channel: "weixin".to_string(),
                     sender_id: message.from_user_id.clone(),
                     chat_id: message.from_user_id,
                     content: message.text,
+                    media: Vec::new(),
                     timestamp: Utc::now(),
                     metadata: Default::default(),
                     session_key_override: None,
@@ -713,6 +721,7 @@ struct ParsedWeixinMessage {
     from_user_id: String,
     text: String,
     context_token: Option<String>,
+    is_text: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -745,10 +754,6 @@ fn parse_weixin_message(root: &Value) -> Option<ParsedWeixinMessage> {
         .get("message_type")
         .or_else(|| root.get("messageType"))
         .and_then(Value::as_i64)?;
-    if message_type != 1 {
-        debug!("dropping weixin message_type {message_type}");
-        return None;
-    }
     if root
         .get("group_id")
         .and_then(Value::as_str)
@@ -779,13 +784,70 @@ fn parse_weixin_message(root: &Value) -> Option<ParsedWeixinMessage> {
         .get("item_list")
         .or_else(|| root.get("itemList"))
         .and_then(Value::as_array)?;
-    let text = item_list.iter().find_map(parse_weixin_text_item)?;
+    let text_item = item_list.iter().find_map(parse_weixin_text_item);
+    let has_non_text_item = item_list
+        .iter()
+        .filter_map(weixin_item_type)
+        .any(|item_type| item_type != 1);
+    let (text, is_text) = if let Some(text) = text_item {
+        (text.to_string(), true)
+    } else if message_type != 1 || has_non_text_item {
+        (
+            summarize_non_text_weixin_message(message_type, item_list),
+            false,
+        )
+    } else {
+        return None;
+    };
+
+    if !is_text {
+        debug!("accepted non-text weixin message_type {message_type}");
+    }
 
     Some(ParsedWeixinMessage {
         from_user_id: from_user_id.to_string(),
-        text: text.to_string(),
+        text,
         context_token,
+        is_text,
     })
+}
+
+fn summarize_non_text_weixin_message(message_type: i64, item_list: &[Value]) -> String {
+    let mut labels = Vec::new();
+    for item in item_list {
+        let item_type = weixin_item_type(item);
+        let Some(item_type) = item_type else {
+            continue;
+        };
+        let label = match item_type {
+            1 => "text",
+            2 => "image",
+            3 => "voice",
+            4 => "video",
+            5 => "file",
+            6 => "location",
+            7 => "link",
+            _ => "unknown",
+        };
+        if !labels.iter().any(|existing| existing == &label) {
+            labels.push(label);
+        }
+    }
+    if labels.is_empty() {
+        format!("Received non-text weixin message (message_type={message_type})")
+    } else {
+        format!(
+            "Received non-text weixin message (message_type={message_type}, items={})",
+            labels.join(",")
+        )
+    }
+}
+
+fn weixin_item_type(item: &Value) -> Option<i64> {
+    item.get("item_type")
+        .or_else(|| item.get("type"))
+        .or_else(|| item.get("itemType"))
+        .and_then(Value::as_i64)
 }
 
 fn parse_weixin_text_item(item: &Value) -> Option<&str> {
@@ -841,6 +903,14 @@ pub struct WeixinAccountStore {
     workspace_lock: Arc<Mutex<()>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeixinLoginStatusSummary {
+    pub configured: bool,
+    pub login_state: String,
+    pub account_status: String,
+    pub bot_id: Option<String>,
+}
+
 impl WeixinAccountStore {
     pub fn new(workspace: &Path) -> Result<Self> {
         let dir = workspace.join("channels").join("weixin");
@@ -872,6 +942,29 @@ impl WeixinAccountStore {
         }
         let account = read_json::<WeixinAccountState>(&path)?;
         Ok(Some(account))
+    }
+
+    pub fn login_status_summary(&self) -> Result<WeixinLoginStatusSummary> {
+        match self.load_account()? {
+            Some(account) => Ok(WeixinLoginStatusSummary {
+                configured: true,
+                login_state: if account.is_expired() {
+                    "expired".to_string()
+                } else if account.is_logged_in() {
+                    "logged in".to_string()
+                } else {
+                    "not logged in".to_string()
+                },
+                account_status: account.status,
+                bot_id: Some(account.ilink_bot_id),
+            }),
+            None => Ok(WeixinLoginStatusSummary {
+                configured: false,
+                login_state: "not logged in".to_string(),
+                account_status: "missing".to_string(),
+                bot_id: None,
+            }),
+        }
     }
 
     pub fn save_account(&self, account: &WeixinAccountState) -> Result<()> {

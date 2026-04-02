@@ -1,4 +1,7 @@
+pub mod memory;
+
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +19,7 @@ use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use self::memory::{ConsolidationPolicy, MemoryConsolidator, MemoryStore};
 use crate::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::config::{AgentProfileConfig, Config, WebToolsConfig, WeixinConfig};
 use crate::providers::{LlmProvider, ProviderRequestDescriptor};
@@ -48,6 +52,31 @@ enum BtwCompletion {
     Deliver(String),
     Stale(String),
     Suppress,
+}
+
+#[async_trait]
+pub trait RestartHook: Send + Sync {
+    async fn restart(&self) -> Result<()>;
+}
+
+#[derive(Clone, Default)]
+struct ProcessRestartHook;
+
+#[async_trait]
+impl RestartHook for ProcessRestartHook {
+    async fn restart(&self) -> Result<()> {
+        let executable = std::env::current_exe()?;
+        let args = std::env::args_os().skip(1).collect::<Vec<OsString>>();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            std::process::Command::new(&executable)
+                .args(&args)
+                .spawn()
+                .map(|_| ())
+                .map_err(anyhow::Error::from)
+        })
+        .await??;
+        std::process::exit(0);
+    }
 }
 
 #[derive(Clone)]
@@ -359,6 +388,7 @@ impl ProgressReporter for BusProgressReporter {
                 channel: self.channel.clone(),
                 chat_id: self.chat_id.clone(),
                 content,
+                media: Vec::new(),
                 metadata,
             })
             .await;
@@ -671,6 +701,7 @@ impl SubagentManager {
                 sender_id: "subagent".to_string(),
                 chat_id: format!("{origin_channel}:{origin_chat_id}"),
                 content,
+                media: Vec::new(),
                 timestamp: Utc::now(),
                 metadata: HashMap::new(),
                 session_key_override: None,
@@ -723,6 +754,8 @@ pub struct AgentLoop {
     btw_tasks: Arc<Mutex<HashMap<String, BtwTask>>>,
     pending_btw_stale: Arc<Mutex<HashMap<String, PendingBtwStale>>>,
     running: Arc<AtomicBool>,
+    restart_hook: Arc<dyn RestartHook>,
+    memory_policy: Option<ConsolidationPolicy>,
     cron: Arc<Mutex<Option<Arc<CronService>>>>,
     mcp: Arc<Mutex<Option<McpClients>>>,
 }
@@ -845,9 +878,21 @@ impl AgentLoop {
             btw_tasks: Arc::new(Mutex::new(HashMap::new())),
             pending_btw_stale: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(AtomicBool::new(false)),
+            restart_hook: Arc::new(ProcessRestartHook),
+            memory_policy: None,
             cron: Arc::new(Mutex::new(None)),
             mcp: Arc::new(Mutex::new(None)),
         })
+    }
+
+    pub fn with_restart_hook(mut self, restart_hook: Arc<dyn RestartHook>) -> Self {
+        self.restart_hook = restart_hook;
+        self
+    }
+
+    pub fn with_memory_policy(mut self, memory_policy: ConsolidationPolicy) -> Self {
+        self.memory_policy = Some(memory_policy);
+        self
     }
 
     /// Attach a cron service so the `cron` tool is available to the agent.
@@ -993,6 +1038,7 @@ impl AgentLoop {
                 channel: msg.channel.clone(),
                 chat_id: msg.chat_id.clone(),
                 content,
+                media: Vec::new(),
                 metadata: HashMap::new(),
             })
             .await;
@@ -1005,6 +1051,7 @@ impl AgentLoop {
     fn is_immediate_command(&self, msg: &InboundMessage) -> bool {
         let trimmed = msg.content.trim();
         trimmed.eq_ignore_ascii_case("/new")
+            || trimmed.eq_ignore_ascii_case("/restart")
             || trimmed.eq_ignore_ascii_case("/help")
             || trimmed.eq_ignore_ascii_case("/models")
             || trimmed.starts_with("/model ")
@@ -1032,6 +1079,7 @@ impl AgentLoop {
             channel: msg.channel.clone(),
             chat_id: msg.chat_id.clone(),
             content: "Usage: /btw <question>".to_string(),
+            media: Vec::new(),
             metadata: HashMap::new(),
         }
     }
@@ -1043,6 +1091,7 @@ impl AgentLoop {
             content:
                 "No active main task is running in this session. Send a normal message instead."
                     .to_string(),
+            media: Vec::new(),
             metadata: HashMap::new(),
         }
     }
@@ -1054,6 +1103,7 @@ impl AgentLoop {
             content:
                 "A BTW reply is already running for this session. Wait for it to finish or stop the session."
                     .to_string(),
+            media: Vec::new(),
             metadata: HashMap::new(),
         }
     }
@@ -1065,6 +1115,7 @@ impl AgentLoop {
             content:
                 "The BTW request became stale because the running main task generation changed. Send /btw again if you still need it."
                     .to_string(),
+            media: Vec::new(),
             metadata: HashMap::new(),
         }
     }
@@ -1101,7 +1152,7 @@ impl AgentLoop {
     }
 
     fn help_text(&self) -> String {
-        "Sidekick commands:\n/new — Start a new conversation\n/stop — Stop the current task\n/help — Show available commands\n/models — List available model profiles\n/model <provider:model> — Switch the current session model\n/btw <question> — Ask a side question while the current task keeps running".to_string()
+        "Sidekick commands:\n/new — Start a new conversation\n/restart — Restart the Sidekick process\n/stop — Stop the current task\n/help — Show available commands\n/models — List available model profiles\n/model <provider:model> — Switch the current session model\n/btw <question> — Ask a side question while the current task keeps running".to_string()
     }
 
     fn models_text(&self, current_profile: &str) -> String {
@@ -1251,6 +1302,7 @@ impl AgentLoop {
             sender_id: "user".to_string(),
             chat_id: chat_id.to_string(),
             content: content.to_string(),
+            media: Vec::new(),
             timestamp: Utc::now(),
             metadata,
             session_key_override: Some(session_key.to_string()),
@@ -1299,11 +1351,134 @@ impl AgentLoop {
     fn is_ephemeral_direct_message(&self, content: &str) -> bool {
         let trimmed = content.trim();
         trimmed.eq_ignore_ascii_case("/new")
+            || trimmed.eq_ignore_ascii_case("/restart")
             || trimmed.eq_ignore_ascii_case("/help")
             || trimmed.eq_ignore_ascii_case("/models")
             || trimmed.eq_ignore_ascii_case("/stop")
             || trimmed.starts_with("/model ")
             || Self::btw_question(trimmed).is_some()
+    }
+
+    fn schedule_restart(&self) {
+        let restart_hook = self.restart_hook.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            if let Err(error) = restart_hook.restart().await {
+                warn!(error = %error, "restart hook failed");
+            }
+        });
+    }
+
+    fn memory_consolidator(&self) -> Result<Option<MemoryConsolidator>> {
+        let Some(policy) = &self.memory_policy else {
+            return Ok(None);
+        };
+        Ok(Some(MemoryConsolidator::new(
+            &self.workspace,
+            self.provider.clone(),
+            policy.clone(),
+        )?))
+    }
+
+    async fn maybe_consolidate_session(
+        &self,
+        session: &mut Session,
+        request: &ProviderRequestDescriptor,
+    ) {
+        let Some(policy) = &self.memory_policy else {
+            return;
+        };
+        let consolidator = match self.memory_consolidator() {
+            Ok(Some(consolidator)) => consolidator,
+            Ok(None) => return,
+            Err(error) => {
+                warn!(session_key = %session.key, error = %error, "failed to create memory consolidator");
+                return;
+            }
+        };
+        for _ in 0..policy.max_rounds.max(1) {
+            match consolidator.consolidate_if_needed(session, request).await {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(error) => {
+                    warn!(session_key = %session.key, error = %error, "memory consolidation failed");
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn flush_session_memory(
+        &self,
+        session: &mut Session,
+        request: &ProviderRequestDescriptor,
+    ) {
+        if session.unconsolidated_tail().is_empty() {
+            return;
+        }
+        let consolidator = match self.memory_consolidator() {
+            Ok(Some(consolidator)) => consolidator,
+            Ok(None) => return,
+            Err(error) => {
+                warn!(session_key = %session.key, error = %error, "failed to create memory consolidator");
+                return;
+            }
+        };
+        if let Err(error) = consolidator
+            .flush_session(session, request, "session reset")
+            .await
+        {
+            warn!(
+                session_key = %session.key,
+                error = %error,
+                "failed to flush session memory before reset"
+            );
+            if session.last_consolidated < session.messages.len() {
+                let raw_tail = session.unconsolidated_tail().to_vec();
+                if let Err(raw_error) = self.archive_unconsolidated_tail(session, &raw_tail, "session reset fallback") {
+                    warn!(
+                        session_key = %session.key,
+                        error = %raw_error,
+                        "failed to raw-archive unconsolidated session tail before reset"
+                    );
+                }
+            }
+        }
+    }
+
+    fn archive_unconsolidated_tail(
+        &self,
+        session: &mut Session,
+        tail: &[SessionMessage],
+        reason: &str,
+    ) -> Result<()> {
+        let store = MemoryStore::new(&self.workspace)?;
+        let raw = tail
+            .iter()
+            .map(|message| {
+                format!(
+                    "- role={}; content={}; excluded={}",
+                    message.role,
+                    message
+                        .content
+                        .as_str()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| message.content.to_string()),
+                    message.excluded_from_context()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let path = store.append_raw_archive(&format!("{}-{reason}", session.key), &raw)?;
+        store.append_history(&format!(
+            "## {} [RAW]\n- session: {}\n- reason: {}\n- archive: {}",
+            Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+            session.key,
+            reason,
+            path.display()
+        ))?;
+        session.last_consolidated = session.messages.len();
+        Ok(())
     }
 
     async fn process_message(
@@ -1328,6 +1503,7 @@ impl AgentLoop {
                     chat_id: chat_id.clone(),
                     session_key: format!("{channel}:{chat_id}"),
                     message_id: None,
+                    metadata: msg.metadata.clone(),
                     reply_to_caller: false,
                     provider_request: Some(request.clone()),
                 })
@@ -1347,11 +1523,13 @@ impl AgentLoop {
             let (final_content, all_messages) =
                 self.run_agent_loop(messages, None, tools, &request).await?;
             self.save_turn(&mut session, all_messages, 1)?;
+            self.maybe_consolidate_session(&mut session, &request).await;
             self.save_session_with_timeline_merge(&session).await?;
             return Ok(Some(OutboundMessage {
                 channel,
                 chat_id,
                 content: final_content.unwrap_or_else(|| "Background task completed.".to_string()),
+                media: Vec::new(),
                 metadata: HashMap::new(),
             }));
         }
@@ -1363,6 +1541,8 @@ impl AgentLoop {
         let current_profile = self.normalize_session_profile(&mut session).to_string();
         match msg.content.trim() {
             "/new" => {
+                let request = self.resolve_request(&mut session)?;
+                self.flush_session_memory(&mut session, &request).await;
                 session.clear();
                 session.active_profile = Some(self.default_profile.clone());
                 self.sessions.save(&session)?;
@@ -1370,6 +1550,17 @@ impl AgentLoop {
                     channel: msg.channel,
                     chat_id: msg.chat_id,
                     content: "New session started.".to_string(),
+                    media: Vec::new(),
+                    metadata: HashMap::new(),
+                }));
+            }
+            "/restart" => {
+                self.schedule_restart();
+                return Ok(Some(OutboundMessage {
+                    channel: msg.channel,
+                    chat_id: msg.chat_id,
+                    content: "Restarting...".to_string(),
+                    media: Vec::new(),
                     metadata: HashMap::new(),
                 }));
             }
@@ -1378,6 +1569,7 @@ impl AgentLoop {
                     channel: msg.channel,
                     chat_id: msg.chat_id,
                     content: self.help_text(),
+                    media: Vec::new(),
                     metadata: HashMap::new(),
                 }));
             }
@@ -1386,6 +1578,7 @@ impl AgentLoop {
                     channel: msg.channel,
                     chat_id: msg.chat_id,
                     content: self.models_text(&current_profile),
+                    media: Vec::new(),
                     metadata: HashMap::new(),
                 }));
             }
@@ -1396,6 +1589,7 @@ impl AgentLoop {
                         channel: msg.channel,
                         chat_id: msg.chat_id,
                         content: format!("Unknown model profile: {requested}"),
+                        media: Vec::new(),
                         metadata: HashMap::new(),
                     }));
                 }
@@ -1405,6 +1599,7 @@ impl AgentLoop {
                     channel: msg.channel,
                     chat_id: msg.chat_id,
                     content: format!("Switched this session to {requested}."),
+                    media: Vec::new(),
                     metadata: HashMap::new(),
                 }));
             }
@@ -1423,6 +1618,7 @@ impl AgentLoop {
                     .get("message_id")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                metadata: msg.metadata.clone(),
                 reply_to_caller: msg
                     .metadata
                     .get(DIRECT_REPLY_METADATA_KEY)
@@ -1471,6 +1667,7 @@ impl AgentLoop {
             .run_agent_loop(messages, reporter, tools, &request)
             .await?;
         self.save_turn(&mut session, all_messages, 1 + history.len())?;
+        self.maybe_consolidate_session(&mut session, &request).await;
         self.save_session_with_timeline_merge(&session).await?;
 
         if tools.sent_message_this_turn().await {
@@ -1483,6 +1680,7 @@ impl AgentLoop {
             content: final_content.unwrap_or_else(|| {
                 "I've completed processing but have no response to give.".to_string()
             }),
+            media: Vec::new(),
             metadata: msg.metadata,
         }))
     }
@@ -1545,6 +1743,7 @@ impl AgentLoop {
                     .get("message_id")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                metadata: msg.metadata.clone(),
                 reply_to_caller: true,
                 provider_request: Some(request.clone()),
             })
@@ -1619,6 +1818,7 @@ impl AgentLoop {
                         channel: msg.channel,
                         chat_id: msg.chat_id,
                         content,
+                        media: Vec::new(),
                         metadata: HashMap::new(),
                     },
                     persisted,
@@ -1647,6 +1847,7 @@ impl AgentLoop {
                         channel: msg.channel,
                         chat_id: msg.chat_id,
                         content,
+                        media: Vec::new(),
                         metadata: HashMap::new(),
                     },
                     persisted,
@@ -1657,6 +1858,7 @@ impl AgentLoop {
                     channel: msg.channel,
                     chat_id: msg.chat_id,
                     content: String::new(),
+                    media: Vec::new(),
                     metadata: HashMap::new(),
                 },
                 false,
@@ -2364,6 +2566,8 @@ impl Clone for AgentLoop {
             btw_tasks: self.btw_tasks.clone(),
             pending_btw_stale: self.pending_btw_stale.clone(),
             running: self.running.clone(),
+            restart_hook: self.restart_hook.clone(),
+            memory_policy: self.memory_policy.clone(),
             cron: self.cron.clone(),
             mcp: self.mcp.clone(),
         }

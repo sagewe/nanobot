@@ -1,6 +1,16 @@
-use serde_json::json;
+use std::collections::VecDeque;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use anyhow::Result;
+use async_trait::async_trait;
+use serde_json::{Map, Value, json};
+use sidekick::agent::memory::{ConsolidationPolicy, MemoryConsolidator};
+use sidekick::providers::{LlmProvider, LlmResponse, ProviderRequestDescriptor, ToolCall};
 use sidekick::session::{Session, SessionMessage, SessionStore};
 use tempfile::tempdir;
+use tokio::sync::Mutex;
 use tracing::subscriber::with_default;
 
 struct SharedWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
@@ -90,6 +100,152 @@ fn assert_no_orphans(history: &[serde_json::Value]) {
     }
 }
 
+#[derive(Clone)]
+enum MemoryProviderReply {
+    Response(LlmResponse),
+}
+
+impl MemoryProviderReply {
+    fn ok(response: LlmResponse) -> Self {
+        Self::Response(response)
+    }
+}
+
+#[derive(Default)]
+struct MemoryProviderState {
+    calls: Arc<Mutex<Vec<Vec<Value>>>>,
+    replies: Arc<Mutex<VecDeque<MemoryProviderReply>>>,
+    tamper_memory_path: Arc<Mutex<Option<PathBuf>>>,
+}
+
+#[derive(Clone)]
+struct SessionMemoryProvider {
+    state: Arc<MemoryProviderState>,
+}
+
+impl SessionMemoryProvider {
+    async fn pop_reply(queue: &Mutex<VecDeque<MemoryProviderReply>>) -> Result<LlmResponse> {
+        match queue.lock().await.pop_front() {
+            Some(MemoryProviderReply::Response(response)) => Ok(response),
+            None => Err(anyhow::anyhow!("no queued reply")),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmProvider for SessionMemoryProvider {
+    fn default_model(&self) -> &str {
+        "mock-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<Value>,
+        _tools: Vec<Value>,
+        _model: &str,
+    ) -> Result<LlmResponse> {
+        Err(anyhow::anyhow!(
+            "chat() should not be used for session memory provider"
+        ))
+    }
+
+    async fn chat_with_request(
+        &self,
+        messages: Vec<Value>,
+        _tools: Vec<Value>,
+        _request: &ProviderRequestDescriptor,
+    ) -> Result<LlmResponse> {
+        self.state.calls.lock().await.push(messages);
+        if let Some(path) = self.state.tamper_memory_path.lock().await.take() {
+            if path.is_file() {
+                fs::remove_file(&path).expect("remove memory file");
+            }
+            fs::create_dir_all(&path).expect("replace memory file with directory");
+        }
+        Self::pop_reply(&self.state.replies).await
+    }
+}
+
+fn text_message(role: &str, content: &str) -> SessionMessage {
+    SessionMessage {
+        role: role.to_string(),
+        content: json!(content),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    }
+}
+
+fn excluded_message(role: &str, content: &str) -> SessionMessage {
+    let mut message = text_message(role, content);
+    message
+        .extra
+        .insert("_exclude_from_context".to_string(), json!(true));
+    message
+}
+
+fn assistant_tool_message(call_id: &str) -> SessionMessage {
+    SessionMessage {
+        role: "assistant".to_string(),
+        content: Value::Null,
+        timestamp: None,
+        tool_calls: Some(vec![json!({
+            "id": call_id,
+            "type": "function",
+            "function": {"name": "lookup", "arguments": "{}"}
+        })]),
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    }
+}
+
+fn tool_result_message(call_id: &str) -> SessionMessage {
+    SessionMessage {
+        role: "tool".to_string(),
+        content: json!("tool result"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: Some(call_id.to_string()),
+        name: Some("lookup".to_string()),
+        extra: Default::default(),
+    }
+}
+
+fn save_memory_response(history_entry: &str, memory_update: Option<&str>) -> LlmResponse {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("history_entry".to_string(), json!(history_entry));
+    arguments.insert(
+        "memory_update".to_string(),
+        memory_update.map_or(Value::Null, |content| json!(content)),
+    );
+    LlmResponse {
+        content: None,
+        tool_calls: vec![ToolCall {
+            id: "save_memory_call".to_string(),
+            name: "save_memory".to_string(),
+            arguments: Value::Object(arguments),
+        }],
+        finish_reason: "tool_calls".to_string(),
+        extra: Map::new(),
+    }
+}
+
+fn memory_policy(max_context_tokens: usize, target_context_tokens: usize) -> ConsolidationPolicy {
+    ConsolidationPolicy {
+        max_context_tokens,
+        target_context_tokens,
+        retry_limit: 2,
+        max_rounds: 2,
+    }
+}
+
+fn default_request() -> ProviderRequestDescriptor {
+    ProviderRequestDescriptor::new("openai", "mock-model", Map::new())
+}
+
 #[test]
 fn get_history_drops_orphan_tool_results() {
     let mut session = Session::new("cli:test");
@@ -170,6 +326,301 @@ fn load_old_session_without_active_profile_uses_supplied_default() {
 
     assert_eq!(session.active_profile.as_deref(), Some("fallback-profile"));
     assert_eq!(session.active_profile_or("ignored"), "fallback-profile");
+}
+
+#[test]
+fn session_store_persists_and_reloads_last_consolidated() {
+    let dir = tempdir().expect("tempdir");
+    let store = SessionStore::new(dir.path()).expect("session store");
+
+    let mut session = Session::new("cli:watermark");
+    session.last_consolidated = 4;
+    session.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("hello"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    store.save(&session).expect("save session");
+
+    let loaded = store
+        .get_session_detail("cli:watermark")
+        .expect("load session")
+        .expect("session");
+
+    assert_eq!(loaded.last_consolidated, 4);
+}
+
+#[tokio::test]
+async fn memory_consolidator_flushes_history_then_memory_and_advances_watermark() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(MemoryProviderState::default());
+    state
+        .replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(save_memory_response(
+            "## 2026-04-03\n- durable fact",
+            Some("# MEMORY\n\ndurable fact\n"),
+        )));
+    let provider: Arc<dyn LlmProvider> = Arc::new(SessionMemoryProvider {
+        state: state.clone(),
+    });
+    let consolidator =
+        MemoryConsolidator::new(dir.path(), provider, memory_policy(1, 0)).expect("memory");
+    let mut session = Session::new("cli:session-memory");
+    session.messages.push(text_message("user", "remember this"));
+    session.messages.push(text_message("assistant", "noted"));
+
+    let changed = consolidator
+        .flush_session(&mut session, &default_request(), "manual flush")
+        .await
+        .expect("flush");
+
+    assert!(changed);
+    assert_eq!(session.last_consolidated, 2);
+    assert!(
+        fs::read_to_string(dir.path().join("memory").join("HISTORY.md"))
+            .expect("history")
+            .contains("durable fact")
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("memory").join("MEMORY.md")).expect("memory"),
+        "# MEMORY\n\ndurable fact\n"
+    );
+}
+
+#[tokio::test]
+async fn memory_consolidator_keeps_history_append_and_watermark_when_memory_write_fails() {
+    let dir = tempdir().expect("tempdir");
+    let memory_path = dir.path().join("memory").join("MEMORY.md");
+    let state = Arc::new(MemoryProviderState::default());
+    state
+        .replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(save_memory_response(
+            "## 2026-04-03\n- failed memory write",
+            Some("# MEMORY\n\nnew content\n"),
+        )));
+    *state.tamper_memory_path.lock().await = Some(memory_path);
+    let provider: Arc<dyn LlmProvider> = Arc::new(SessionMemoryProvider {
+        state: state.clone(),
+    });
+    let consolidator =
+        MemoryConsolidator::new(dir.path(), provider, memory_policy(1, 0)).expect("memory");
+    let mut session = Session::new("cli:session-fail");
+    session.messages.push(text_message("user", "remember this"));
+    session.messages.push(text_message("assistant", "noted"));
+
+    let err = consolidator
+        .flush_session(&mut session, &default_request(), "manual flush")
+        .await
+        .expect_err("flush should fail");
+
+    assert!(err.to_string().contains("MEMORY.md"), "{err}");
+    assert_eq!(session.last_consolidated, 0);
+    assert!(
+        fs::read_to_string(dir.path().join("memory").join("HISTORY.md"))
+            .expect("history")
+            .contains("failed memory write")
+    );
+}
+
+#[test]
+fn clear_resets_last_consolidated_to_zero() {
+    let mut session = Session::new("cli:reset");
+    session.last_consolidated = 9;
+    session.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("hello"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+
+    session.clear();
+
+    assert_eq!(session.last_consolidated, 0);
+    assert!(session.messages.is_empty());
+}
+
+#[test]
+fn unconsolidated_tail_and_boundary_helpers_match_history_slicing() {
+    let mut session = Session::new("cli:tail");
+    session.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("old"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    session.messages.extend(tool_turn("tail", 0));
+    session.messages.push(SessionMessage {
+        role: "user".to_string(),
+        content: json!("current"),
+        timestamp: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+        extra: Default::default(),
+    });
+    session.messages.extend(tool_turn("tail", 1));
+    session.last_consolidated = 4;
+
+    assert_eq!(session.unconsolidated_tail().len(), 4);
+    assert_eq!(
+        Session::safe_history_start(session.unconsolidated_tail()),
+        0
+    );
+
+    let history = session.get_history(100);
+    assert_no_orphans(&history);
+}
+
+#[tokio::test]
+async fn memory_consolidator_uses_deterministic_budget_policy_and_safe_boundary() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(MemoryProviderState::default());
+    state
+        .replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(save_memory_response(
+            "## 2026-04-03\n- compacted tool turn",
+            None,
+        )));
+    let provider: Arc<dyn LlmProvider> = Arc::new(SessionMemoryProvider {
+        state: state.clone(),
+    });
+    let consolidator =
+        MemoryConsolidator::new(dir.path(), provider, memory_policy(8, 4)).expect("memory");
+    let mut session = Session::new("cli:session-boundary");
+    session.messages.push(text_message("user", "old turn"));
+    session
+        .messages
+        .push(text_message("assistant", "old answer"));
+    session
+        .messages
+        .push(text_message("user", "lookup weather"));
+    session.messages.push(assistant_tool_message("call_1"));
+    session.messages.push(tool_result_message("call_1"));
+    session
+        .messages
+        .push(excluded_message("assistant", "timeline-only"));
+    session.messages.push(text_message(
+        "user",
+        "current turn that should remain active",
+    ));
+    session
+        .messages
+        .push(text_message("assistant", "current answer"));
+    session.last_consolidated = 2;
+
+    let changed = consolidator
+        .consolidate_if_needed(&mut session, &default_request())
+        .await
+        .expect("consolidate");
+
+    assert!(changed);
+    assert_eq!(session.last_consolidated, 6);
+
+    let prompts = state.calls.lock().await;
+    let prompt = prompts
+        .last()
+        .and_then(|messages| messages.last())
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(!prompt.contains("old turn"), "{prompt}");
+    assert!(prompt.contains("lookup weather"), "{prompt}");
+    assert!(!prompt.contains("timeline-only"), "{prompt}");
+    assert!(
+        !prompt.contains("current turn that should remain active"),
+        "{prompt}"
+    );
+}
+
+#[tokio::test]
+async fn under_budget_sessions_skip_consolidation_and_restart_safe_watermarks_skip_old_turns() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(MemoryProviderState::default());
+    let provider: Arc<dyn LlmProvider> = Arc::new(SessionMemoryProvider {
+        state: state.clone(),
+    });
+    let consolidator =
+        MemoryConsolidator::new(dir.path(), provider, memory_policy(200, 100)).expect("memory");
+
+    let mut under_budget = Session::new("cli:under-budget");
+    under_budget.messages.push(text_message("user", "short"));
+    under_budget
+        .messages
+        .push(text_message("assistant", "reply"));
+
+    let changed = consolidator
+        .consolidate_if_needed(&mut under_budget, &default_request())
+        .await
+        .expect("skip consolidation");
+
+    assert!(!changed);
+    assert_eq!(under_budget.last_consolidated, 0);
+    assert!(state.calls.lock().await.is_empty());
+
+    let store = SessionStore::new(dir.path()).expect("session store");
+    let mut source = Session::new("telegram:thread-9");
+    source
+        .messages
+        .push(text_message("user", "already compacted"));
+    source
+        .messages
+        .push(text_message("assistant", "old answer"));
+    source
+        .messages
+        .push(text_message("user", "keep this unconsolidated"));
+    source
+        .messages
+        .push(text_message("assistant", "new answer"));
+    source.last_consolidated = 2;
+    store.save(&source).expect("save source");
+
+    let mut duplicated = store
+        .duplicate_session_to_web("telegram:thread-9")
+        .expect("duplicate");
+    assert_eq!(duplicated.last_consolidated, 2);
+
+    state
+        .replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::ok(save_memory_response(
+            "## 2026-04-03\n- flushed duplicate tail",
+            None,
+        )));
+
+    let changed = consolidator
+        .flush_session(&mut duplicated, &default_request(), "restart flush")
+        .await
+        .expect("flush duplicate");
+
+    assert!(changed);
+    assert_eq!(duplicated.last_consolidated, 4);
+
+    let prompts = state.calls.lock().await;
+    let prompt = prompts
+        .last()
+        .and_then(|messages| messages.last())
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(!prompt.contains("already compacted"), "{prompt}");
+    assert!(prompt.contains("keep this unconsolidated"), "{prompt}");
 }
 
 #[test]
@@ -521,6 +972,7 @@ fn duplicate_to_web_copies_history_and_source_metadata() {
         value_messages(&duplicated.messages),
         value_messages(&source.messages)
     );
+    assert_eq!(duplicated.last_consolidated, 4);
 
     let loaded = store
         .get_session_detail(&duplicated.key)
@@ -535,6 +987,7 @@ fn duplicate_to_web_copies_history_and_source_metadata() {
         value_messages(&loaded.messages),
         value_messages(&source.messages)
     );
+    assert_eq!(loaded.last_consolidated, 4);
 
     let copied_history = loaded.get_history(100);
     assert_eq!(copied_history, source.get_history(100));
@@ -688,4 +1141,5 @@ fn session_store_load_preserves_metadata_key_with_additional_colons() {
         .expect("session");
 
     assert_eq!(loaded.key, "system:wecom:chat-42");
+    assert_eq!(loaded.last_consolidated, 0);
 }

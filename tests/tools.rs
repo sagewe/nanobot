@@ -1,7 +1,11 @@
+use std::collections::HashMap;
 use std::fs;
 
 use serde_json::json;
-use sidekick::tools::{EditFileTool, ExecTool, ListDirTool, ReadFileTool, Tool};
+use sidekick::bus::MessageBus;
+use sidekick::tools::{
+    EditFileTool, ExecTool, ListDirTool, MessageTool, ReadFileTool, Tool, ToolContext,
+};
 use tempfile::tempdir;
 
 fn write_skill(root: &std::path::Path, name: &str, content: &str) {
@@ -92,6 +96,66 @@ async fn exec_runs_safe_commands() {
     let tool = ExecTool::new(dir.path().to_path_buf(), 5, false);
     let result = tool.execute(json!({"command": "echo hello"})).await;
     assert!(result.contains("hello"));
+}
+
+#[tokio::test]
+async fn message_tool_schema_includes_media() {
+    let tool = MessageTool::new(MessageBus::new(4));
+    let schema = tool.schema();
+
+    assert_eq!(
+        schema
+            .pointer("/properties/media/type")
+            .and_then(|v| v.as_str()),
+        Some("array")
+    );
+    assert_eq!(
+        schema
+            .pointer("/properties/media/items/type")
+            .and_then(|v| v.as_str()),
+        Some("string")
+    );
+}
+
+#[tokio::test]
+async fn message_tool_forwards_media_and_context_metadata() {
+    let bus = MessageBus::new(4);
+    let tool = MessageTool::new(bus.clone());
+    tool.set_context(ToolContext {
+        channel: "telegram".to_string(),
+        chat_id: "123".to_string(),
+        session_key: "telegram:123".to_string(),
+        message_id: Some("msg-1".to_string()),
+        metadata: HashMap::from([
+            ("message_thread_id".to_string(), json!("thread-9")),
+            ("reply_to_message_id".to_string(), json!("msg-0")),
+        ]),
+        reply_to_caller: false,
+        provider_request: None,
+    })
+    .await;
+
+    let result = tool
+        .execute(json!({
+            "content": "hello",
+            "media": ["/tmp/image.png", "/tmp/audio.ogg"]
+        }))
+        .await;
+
+    assert!(result.contains("Message sent"));
+
+    let outbound = bus.consume_outbound().await.expect("outbound message");
+    assert_eq!(outbound.content, "hello");
+    assert_eq!(outbound.media, vec!["/tmp/image.png", "/tmp/audio.ogg"]);
+    assert_eq!(outbound.metadata.get("message_id"), Some(&json!("msg-1")));
+    assert_eq!(
+        outbound.metadata.get("message_thread_id"),
+        Some(&json!("thread-9"))
+    );
+    assert_eq!(
+        outbound.metadata.get("reply_to_message_id"),
+        Some(&json!("msg-0"))
+    );
 }
 
 #[tokio::test]

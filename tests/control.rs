@@ -42,6 +42,20 @@ fn bootstrap_first_admin_creates_control_files_and_user_paths() {
             .join("memory")
             .exists()
     );
+    assert!(
+        store
+            .user_workspace_path(&admin.user_id)
+            .join("memory")
+            .join("MEMORY.md")
+            .exists()
+    );
+    assert!(
+        store
+            .user_workspace_path(&admin.user_id)
+            .join("memory")
+            .join("HISTORY.md")
+            .exists()
+    );
 }
 
 #[test]
@@ -55,6 +69,11 @@ fn bootstrap_migrates_legacy_config_and_workspace_into_first_admin() {
         "legacy memory",
     )
     .expect("legacy memory");
+    std::fs::write(
+        legacy_workspace.join("memory").join("HISTORY.md"),
+        "legacy history",
+    )
+    .expect("legacy history");
     let legacy_config_path = legacy_root.join("config.json");
     sidekick::config::save_config(
         &legacy_config_with_workspace(&legacy_workspace),
@@ -91,6 +110,74 @@ fn bootstrap_migrates_legacy_config_and_workspace_into_first_admin() {
         )
         .expect("migrated memory"),
         "legacy memory"
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            store
+                .user_workspace_path(&admin.user_id)
+                .join("memory")
+                .join("HISTORY.md")
+        )
+        .expect("migrated history"),
+        "legacy history"
+    );
+}
+
+#[test]
+fn bootstrap_migrates_legacy_workspace_preserving_custom_memory_content() {
+    let dir = tempdir().expect("tempdir");
+    let legacy_root = dir.path().join("legacy-preserve");
+    let legacy_workspace = legacy_root.join("workspace");
+    std::fs::create_dir_all(legacy_workspace.join("memory")).expect("legacy workspace");
+    std::fs::write(
+        legacy_workspace.join("memory").join("MEMORY.md"),
+        "custom memory",
+    )
+    .expect("legacy memory");
+    std::fs::write(
+        legacy_workspace.join("memory").join("HISTORY.md"),
+        "custom history",
+    )
+    .expect("legacy history");
+    let legacy_config_path = legacy_root.join("config.json");
+    sidekick::config::save_config(
+        &legacy_config_with_workspace(&legacy_workspace),
+        Some(&legacy_config_path),
+    )
+    .expect("save legacy config");
+
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let admin = store
+        .bootstrap_from_legacy(
+            &BootstrapAdmin {
+                username: "admin".to_string(),
+                password: "password123".to_string(),
+                display_name: "Admin".to_string(),
+            },
+            &legacy_config_path,
+            &legacy_workspace,
+        )
+        .expect("bootstrap from legacy");
+
+    assert_eq!(
+        std::fs::read_to_string(
+            store
+                .user_workspace_path(&admin.user_id)
+                .join("memory")
+                .join("MEMORY.md")
+        )
+        .expect("preserved memory"),
+        "custom memory"
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            store
+                .user_workspace_path(&admin.user_id)
+                .join("memory")
+                .join("HISTORY.md")
+        )
+        .expect("preserved history"),
+        "custom history"
     );
 }
 
