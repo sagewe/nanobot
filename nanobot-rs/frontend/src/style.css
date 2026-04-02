@@ -666,14 +666,14 @@
         width: 7px;
         height: 7px;
         border-radius: 50%;
-        background: #2ea043;
+        background: var(--success);
         flex-shrink: 0;
-        box-shadow: 0 0 0 2px rgba(46,160,67,0.18);
+        box-shadow: 0 0 0 2px rgba(120, 140, 93, 0.18);
       }
 
       :root[data-theme="dark"] .mcp-status-dot {
-        background: #56d364;
-        box-shadow: 0 0 0 2px rgba(86,211,100,0.2);
+        background: var(--success);
+        box-shadow: 0 0 0 2px rgba(120, 140, 93, 0.24);
       }
 
       .mcp-server-name {
@@ -950,13 +950,13 @@
       }
 
       .job-badge--active {
-        background: rgba(46, 160, 67, 0.12);
-        color: #2ea043;
+        background: rgba(120, 140, 93, 0.14);
+        color: var(--success);
       }
 
       :root[data-theme="dark"] .job-badge--active {
-        background: rgba(46, 160, 67, 0.2);
-        color: #56d364;
+        background: rgba(120, 140, 93, 0.2);
+        color: var(--success);
       }
 
       .job-badge--inactive {
@@ -3001,23 +3001,23 @@
         text-transform: uppercase;
         letter-spacing: 0.06em;
         line-height: 1.5;
-        background: rgba(193, 95, 60, 0.12);
+        background: rgba(217, 119, 87, 0.12);
         color: var(--accent);
       }
 
       .session-channel-badge[data-channel="weixin"] {
-        background: rgba(39, 167, 68, 0.12);
-        color: #1e8a3a;
+        background: rgba(120, 140, 93, 0.14);
+        color: var(--success);
       }
 
       .session-channel-badge[data-channel="telegram"] {
-        background: rgba(40, 142, 214, 0.12);
-        color: #1a6fa8;
+        background: rgba(106, 155, 204, 0.14);
+        color: var(--info);
       }
 
       .session-channel-badge[data-channel="wecom"] {
-        background: rgba(100, 80, 200, 0.12);
-        color: #5040a0;
+        background: rgba(177, 145, 84, 0.16);
+        color: var(--warning);
       }
 
       .session-channel-badge[data-channel="cli"] {
@@ -3025,10 +3025,10 @@
         color: #666;
       }
 
-      :root[data-theme="dark"] .session-channel-badge { background: rgba(212, 114, 74, 0.2); }
-      :root[data-theme="dark"] .session-channel-badge[data-channel="weixin"] { background: rgba(39, 167, 68, 0.18); color: #4dc96b; }
-      :root[data-theme="dark"] .session-channel-badge[data-channel="telegram"] { background: rgba(40, 142, 214, 0.18); color: #5ab0e8; }
-      :root[data-theme="dark"] .session-channel-badge[data-channel="wecom"] { background: rgba(100, 80, 200, 0.18); color: #9080d0; }
+      :root[data-theme="dark"] .session-channel-badge { background: rgba(217, 119, 87, 0.2); }
+      :root[data-theme="dark"] .session-channel-badge[data-channel="weixin"] { background: rgba(120, 140, 93, 0.2); color: var(--success); }
+      :root[data-theme="dark"] .session-channel-badge[data-channel="telegram"] { background: rgba(106, 155, 204, 0.2); color: var(--info); }
+      :root[data-theme="dark"] .session-channel-badge[data-channel="wecom"] { background: rgba(177, 145, 84, 0.22); color: var(--warning); }
       :root[data-theme="dark"] .session-channel-badge[data-channel="cli"] { background: rgba(120, 120, 120, 0.15); color: #999; }
 
       .session-item-id {

@@ -359,6 +359,25 @@ describe("tool trace output", () => {
     expect(css).not.toContain("#b85c38");
   });
 
+  it("uses restrained semantic accents and removes legacy off-brand palette leftovers", () => {
+    const sessionBadgeCss = readCssBlock("\\.session-channel-badge");
+    const weixinBadgeCss = readCssBlock("\\.session-channel-badge\\[data-channel=\"weixin\"\\]");
+    const telegramBadgeCss = readCssBlock("\\.session-channel-badge\\[data-channel=\"telegram\"\\]");
+    const darkWeixinBadgeCss = readCssBlock(":root\\[data-theme=\"dark\"\\] \\.session-channel-badge\\[data-channel=\"weixin\"\\]");
+    const css = readCss();
+
+    expect(sessionBadgeCss).toContain("background:");
+    expect(sessionBadgeCss).toContain("color: var(--accent);");
+    expect(weixinBadgeCss).toContain("color: var(--success);");
+    expect(telegramBadgeCss).toContain("color: var(--info);");
+    expect(darkWeixinBadgeCss).toContain("color: var(--success);");
+
+    expect(css).not.toContain("#56d364");
+    expect(css).not.toContain("#64b5f6");
+    expect(css).not.toContain("#5ab0e8");
+    expect(css).not.toContain("#9080d0");
+  });
+
   it("splits settings into primary controls and a dedicated advanced editor column", () => {
     const html = readHtml();
     const css = readCss();
