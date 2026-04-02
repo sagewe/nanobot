@@ -286,7 +286,7 @@ describe("tool trace output", () => {
     expect(tabBtnHoverCss).toContain("background: var(--nav-hover-bg);");
     expect(tabBtnHoverCss).toContain("color: var(--ink);");
     expect(tabBtnActiveCss).toContain("color: var(--nav-active-ink);");
-    expect(tabBtnActiveCss).toContain("background: var(--nav-active-bg);");
+    expect(tabBtnActiveCss).toContain("background: var(--nav-active-bg-strong);");
     expect(tabBtnActiveCss).toContain("font-weight: 600;");
     expect(sectionHeaderCss).toContain("display: flex;");
     expect(sectionHeaderCss).toContain("justify-content: space-between;");
@@ -295,6 +295,26 @@ describe("tool trace output", () => {
     expect(sectionActionCss).toContain("border: 1px solid var(--line);");
     expect(sectionActionCss).toContain("background: var(--nav-quiet-bg);");
     expect(sectionActionCss).toContain("color: var(--dim);");
+  });
+
+  it("reuses shared header actions and token-driven active tab states", () => {
+    const css = readCss();
+    const jobsHeaderButtonCss = readCssBlock("\\.jobs-header button");
+    const controlPanelHeaderButtonCss = readCssBlock("\\.control-panel-header button");
+    const jobsTitleCss = readCssBlock("\\.jobs-title");
+    const skillsGroupCss = readCssBlock("\\.skills-group");
+    const settingsSectionCss = readCssBlock("\\.settings-section");
+    const activeTabCss = readCssBlock("\\.tab-btn\\[data-active=\"true\"\\]");
+    const collapsedActiveCss = readCssBlock("\\.session-rail\\[data-collapsed=\"true\"\\] \\.tab-btn\\[data-active=\"true\"\\]");
+
+    expect(jobsHeaderButtonCss).toContain("border-radius: var(--nav-item-radius);");
+    expect(controlPanelHeaderButtonCss).toContain("border-radius: var(--nav-item-radius);");
+    expect(jobsTitleCss).toContain('font-family: "Poppins", Arial, sans-serif;');
+    expect(skillsGroupCss).toContain("background: var(--section-surface-bg);");
+    expect(settingsSectionCss).toContain("background: var(--section-surface-bg);");
+    expect(css).toContain("--nav-active-bg-strong:");
+    expect(activeTabCss).toContain("background: var(--nav-active-bg-strong);");
+    expect(collapsedActiveCss).toContain("box-shadow:");
   });
 
   it("keeps message rows constrained to the transcript width instead of the viewport", () => {
@@ -345,7 +365,7 @@ describe("tool trace output", () => {
     expect(controlPanelCss).not.toContain("255, 255, 255");
     expect(adminUserCardCss).toContain("background: var(--panel);");
     expect(adminUserCardCss).not.toContain("253, 252, 251");
-    expect(controlPanelButtonCss).toContain("background: transparent;");
+    expect(controlPanelButtonCss).toContain("background: var(--nav-quiet-bg);");
     expect(controlPanelButtonCss).not.toContain("rgba(193, 95, 60, 0.08)");
     expect(adminUserActionCss).toContain("background: transparent;");
     expect(adminUserActionCss).not.toContain("rgba(193, 95, 60, 0.08)");
