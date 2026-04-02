@@ -1161,6 +1161,37 @@ async fn skills_api_deletes_workspace_skills_even_if_state_is_malformed() {
 }
 
 #[tokio::test]
+async fn skills_api_rejects_path_traversal_skill_ids() {
+    let builtin = BuiltinSkillsFixture::new();
+    let dir = tempdir().expect("tempdir");
+    write_skill(
+        dir.path().join("skills").as_path(),
+        "safe-skill",
+        "---\nname: safe skill\ndescription: safe skill description\n---\n\nBody\n",
+    );
+    std::fs::create_dir_all(dir.path().join(".nanobot")).expect("nanobot dir");
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
+
+    for invalid_id in ["%2E", "%2E%2E"] {
+        let (status, payload) = json_response(
+            app.clone(),
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/skills/workspace/{invalid_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(payload["error"], json!("invalid skill id"));
+    }
+
+    assert!(dir.path().join("skills").exists());
+    assert!(dir.path().join("skills").join("safe-skill").exists());
+    assert!(dir.path().join(".nanobot").exists());
+}
+
+#[tokio::test]
 async fn skills_api_creates_updates_and_deletes_workspace_skills_preserving_raw_content() {
     let builtin = BuiltinSkillsFixture::new();
     let dir = tempdir().expect("tempdir");

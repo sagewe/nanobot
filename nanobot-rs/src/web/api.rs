@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path as FsPath, PathBuf};
+use std::path::{Component, Path as FsPath, PathBuf};
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -959,14 +959,15 @@ async fn get_skill_with_source(
 ) -> Result<Json<SkillDetailResponse>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
     let source = parse_skill_source(&source)?;
+    let id = validate_existing_skill_id(&id)?;
     match source {
         SkillSource::Builtin => {
             let managed = load_managed_skills(&state, &workspace)?;
-            let skill = managed_skill_by_id(&managed, source, &id)
+            let skill = managed_skill_by_id(&managed, source, id)
                 .ok_or_else(|| ApiError::not_found(format!("skill '{id}' not found")))?;
             Ok(Json(skill_detail_response(&skill)?))
         }
-        SkillSource::Workspace => try_load_workspace_skill_detail(&state, &workspace, &id)?
+        SkillSource::Workspace => try_load_workspace_skill_detail(&state, &workspace, id)?
             .map(Json)
             .ok_or_else(|| ApiError::not_found(format!("skill '{id}' not found"))),
     }
@@ -1002,6 +1003,7 @@ pub async fn update_workspace_skill(
     Json(request): Json<UpdateWorkspaceSkillRequest>,
 ) -> Result<Json<SkillDetailResponse>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
+    let id = validate_existing_skill_id(&id)?;
     let skill_path = require_mutable_workspace_skill(&state, &workspace, &id)?;
     fs::write(&skill_path, &request.raw_content)
         .map_err(|error| ApiError::internal(error.into()))?;
@@ -1016,6 +1018,7 @@ pub async fn update_workspace_skill_state(
     Json(request): Json<UpdateWorkspaceSkillStateRequest>,
 ) -> Result<Json<SkillDetailResponse>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
+    let id = validate_existing_skill_id(&id)?;
     let _skill_path = require_mutable_workspace_skill(&state, &workspace, &id)?;
     let state_path = workspace_skill_state_path(&workspace);
     let mut states = load_workspace_skill_state_document(&state_path)?;
@@ -1032,11 +1035,12 @@ pub async fn delete_workspace_skill(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
+    let id = validate_existing_skill_id(&id)?;
     let skill_dir = require_mutable_workspace_skill_dir(&state, &workspace, &id)?;
     let state_path = workspace_skill_state_path(&workspace);
     fs::remove_dir_all(&skill_dir).map_err(|error| ApiError::internal(error.into()))?;
     if let Some(mut states) = load_workspace_skill_state_document_for_delete(&state_path)? {
-        states.remove(&id);
+        states.remove(id);
         save_or_remove_workspace_skill_state_document(&state_path, &states)?;
     }
     Ok(Json(json!({ "ok": true })))
@@ -1072,6 +1076,17 @@ fn validate_skill_id(skill_id: &str) -> Result<&str, ApiError> {
         return Err(ApiError::bad_request("invalid skill id"));
     }
     Ok(trimmed)
+}
+
+fn validate_existing_skill_id(skill_id: &str) -> Result<&str, ApiError> {
+    if skill_id.is_empty() || skill_id.contains('/') || skill_id.contains('\\') {
+        return Err(ApiError::bad_request("invalid skill id"));
+    }
+    let mut components = FsPath::new(skill_id).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(skill_id),
+        _ => Err(ApiError::bad_request("invalid skill id")),
+    }
 }
 
 fn managed_skill_by_id(
