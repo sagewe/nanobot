@@ -261,6 +261,94 @@ describe("createSkillsController", () => {
     expect(meta.textContent).toContain("OPENAI_API_KEY");
   });
 
+  it("shows a visible source badge in the selected-skill header", async () => {
+    const workspaceSummary = buildSummary({
+      id: "workspace-weather",
+      name: "Workspace Weather",
+      source: "workspace",
+    });
+    const builtinSummary = buildSummary({
+      id: "builtin-weather",
+      name: "Builtin Weather",
+      source: "builtin",
+      readOnly: true,
+    });
+    const api = {
+      fetchSkillsList: vi.fn().mockResolvedValue({
+        workspace: [workspaceSummary],
+        builtin: [builtinSummary],
+      }),
+      fetchSkillDetail: vi.fn().mockImplementation(async (source, id) => {
+        if (source === "workspace" && id === workspaceSummary.id) {
+          return buildDetail(workspaceSummary);
+        }
+        if (source === "builtin" && id === builtinSummary.id) {
+          return buildDetail(builtinSummary);
+        }
+        throw new Error(`unexpected skill ${source}/${id}`);
+      }),
+      createWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkillState: vi.fn(),
+      deleteWorkspaceSkill: vi.fn(),
+    };
+
+    const { createSkillsController } = await import("../src/skills.js");
+    const controller = createSkillsController({
+      root: document.querySelector(".skills-pane"),
+      api,
+      setStatus: vi.fn(),
+      t: (key) => key,
+      confirmDelete: vi.fn(),
+    });
+
+    await controller.load();
+
+    let badges = [...document.querySelectorAll(".skills-detail-header .skills-detail-badge")].map((node) => node.textContent);
+    expect(badges).toContain("Workspace");
+
+    document.querySelector('#skills-builtin-list button[data-id="builtin-weather"]').click();
+    await flush();
+
+    badges = [...document.querySelectorAll(".skills-detail-header .skills-detail-badge")].map((node) => node.textContent);
+    expect(badges).toContain("Built-in");
+  });
+
+  it("shows workspace override context in the selected-skill detail summary", async () => {
+    const workspaceSummary = buildSummary({
+      id: "workspace-weather",
+      name: "Workspace Weather",
+      source: "workspace",
+      overridesBuiltin: true,
+    });
+    const api = {
+      fetchSkillsList: vi.fn().mockResolvedValue({
+        workspace: [workspaceSummary],
+        builtin: [],
+      }),
+      fetchSkillDetail: vi.fn().mockResolvedValue(buildDetail(workspaceSummary)),
+      createWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkill: vi.fn(),
+      updateWorkspaceSkillState: vi.fn(),
+      deleteWorkspaceSkill: vi.fn(),
+    };
+
+    const { createSkillsController } = await import("../src/skills.js");
+    const controller = createSkillsController({
+      root: document.querySelector(".skills-pane"),
+      api,
+      setStatus: vi.fn(),
+      t: (key) => key,
+      confirmDelete: vi.fn(),
+    });
+
+    await controller.load();
+
+    const meta = document.querySelector(".skills-detail-meta");
+
+    expect(meta.textContent).toContain("Overrides builtin");
+  });
+
   it("reapplies the first workspace selection whenever load runs", async () => {
     const firstWorkspace = buildSummary({
       id: "workspace-alpha",

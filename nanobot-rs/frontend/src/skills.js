@@ -80,7 +80,8 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
   const status = typeof setStatus === "function" ? setStatus : () => {};
   const detailSection = root.querySelector(".skills-detail");
   const detailHeader = detailSection.querySelector(".skills-detail-header");
-  const detailTitle = detailHeader.querySelector(".settings-section-title");
+  const detailHeading = detailHeader.querySelector(".settings-section-title").parentElement;
+  const detailTitle = detailHeading.querySelector(".settings-section-title");
   const createButton = root.querySelector("#skills-create-button");
   const searchInput = root.querySelector("#skills-search");
   const workspaceList = root.querySelector("#skills-workspace-list");
@@ -91,6 +92,8 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
 
   const meta = document.createElement("div");
   meta.className = "skills-detail-meta";
+  const headerBadges = document.createElement("div");
+  headerBadges.className = "skills-detail-badges";
   const warnings = document.createElement("div");
   warnings.className = "skills-detail-warnings";
   const emptyState = document.createElement("div");
@@ -106,6 +109,7 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
   const copyButton = document.createElement("button");
   copyButton.type = "button";
   actions.append(saveButton, reloadButton, deleteButton, copyButton);
+  detailHeading.append(headerBadges);
   editorLabel.before(meta);
   meta.after(warnings);
   warnings.after(emptyState);
@@ -181,6 +185,7 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
   function renderDetail(preserveEditorValue = null) {
     const detail = state.detail;
     detailTitle.textContent = detail ? detail.name : text("skill_editor_title", "Skill Editor");
+    headerBadges.innerHTML = "";
     enabledToggle.disabled = !detail || detail.readOnly;
     enabledToggle.checked = Boolean(detail?.enabled);
 
@@ -190,6 +195,7 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
     copyButton.textContent = text("skills_copy_builtin", "Create workspace copy");
 
     if (!detail) {
+      headerBadges.hidden = true;
       meta.hidden = true;
       warnings.hidden = true;
       actions.hidden = true;
@@ -203,6 +209,7 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
       return;
     }
 
+    headerBadges.hidden = false;
     meta.hidden = false;
     warnings.hidden = !detail.parseWarnings.length;
     emptyState.hidden = true;
@@ -211,13 +218,27 @@ export function createSkillsController({ root, api, setStatus, t, confirmDelete 
     editor.readOnly = detail.readOnly;
     editor.value = preserveEditorValue ?? detail.rawContent;
 
-    const details = [
+    const headerBadgeLabels = [
       detail.readOnly ? text("skills_source_builtin", "Built-in") : text("skills_source_workspace", "Workspace"),
+    ];
+    for (const label of headerBadgeLabels) {
+      const badge = document.createElement("span");
+      badge.className = "skills-detail-badge";
+      badge.textContent = label;
+      headerBadges.append(badge);
+    }
+
+    const details = [
       detail.effective ? text("skills_effective", "Effective") : text("skills_not_effective", "Not effective"),
       detail.enabled ? text("skills_enabled_state", "Enabled") : text("skills_disabled_state", "Disabled"),
       detail.available ? text("skills_available", "Available") : text("skills_unavailable", "Unavailable"),
       detail.path,
     ].filter(Boolean);
+    if (detail.overridesBuiltin) {
+      details.unshift(text("skills_overrides_builtin", "Overrides builtin"));
+    } else if (detail.shadowedByWorkspace) {
+      details.unshift(text("skills_shadowed", "Shadowed"));
+    }
     const missing = requirementList(detail.missingRequirements);
     if (missing.length) {
       details.push(`${text("skills_missing_requirements", "Missing requirements")}: ${missing.join(", ")}`);
