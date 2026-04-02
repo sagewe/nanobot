@@ -407,7 +407,7 @@ describe("tool trace output", () => {
     expect(js).toContain('t("users_action_reset_password")');
     expect(js).toContain('t("settings_saved")');
     expect(js).toContain('t("users_updated")');
-    expect(js).toContain('import TOML from "@iarna/toml"');
+    expect(js).toContain('import TOML from "./toml.js"');
     expect(js).toContain("TOML.stringify");
     expect(js).toContain("TOML.parse");
     expect(apiJs).toContain("export async function updateMyConfig(nextConfig)");
