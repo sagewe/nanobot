@@ -336,6 +336,29 @@ describe("tool trace output", () => {
     expect(css).not.toContain("#A14A2F");
   });
 
+  it("locks the quiet editorial dark palette and removes the purple assistant avatar", () => {
+    const darkThemeCss = readCssBlock(":root\\[data-theme=\"dark\"\\]");
+    const autoDarkThemeCss = readCssBlock(":root:not\\(\\[data-theme=\"light\"\\]\\):not\\(\\[data-theme=\"dark\"\\]\\)");
+    const darkAvatarCss = readCssBlock(":root\\[data-theme=\"dark\"\\] \\.msg-group\\[data-role=\"assistant\"\\] \\.msg-avatar");
+    const css = readCss();
+
+    expect(darkThemeCss).toContain("--paper: #141413;");
+    expect(darkThemeCss).toContain("--ink: #faf9f5;");
+    expect(darkThemeCss).toContain("--accent: #d97757;");
+    expect(autoDarkThemeCss).toContain("--accent: #d97757;");
+
+    expect(darkAvatarCss).not.toContain("#af8aff");
+    expect(darkAvatarCss).not.toContain("#8663ff");
+    expect(darkAvatarCss).not.toContain("#5a47d8");
+
+    expect(css).toMatch(/--hljs-keyword:\s+#d97757;/);
+    expect(css).toMatch(/--hljs-attr:\s+#6a9bcc;/);
+    expect(css).toMatch(/--hljs-string:\s+#788c5d;/);
+
+    expect(css).not.toContain("#d4724a");
+    expect(css).not.toContain("#b85c38");
+  });
+
   it("splits settings into primary controls and a dedicated advanced editor column", () => {
     const html = readHtml();
     const css = readCss();

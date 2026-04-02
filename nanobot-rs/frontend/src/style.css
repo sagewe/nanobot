@@ -1331,10 +1331,10 @@
       }
 
       .msg-group[data-role="assistant"] .msg-avatar {
-        background: radial-gradient(circle at 35% 30%, #af8aff 0%, #8663ff 45%, #5a47d8 100%);
-        border-color: rgba(125, 96, 255, 0.2);
-        box-shadow: 0 8px 20px rgba(90, 71, 216, 0.18);
-        color: #fff;
+        background: linear-gradient(180deg, #2f2d29 0%, #141413 100%);
+        border-color: rgba(20, 20, 19, 0.12);
+        box-shadow: 0 8px 20px rgba(20, 20, 19, 0.12);
+        color: #faf9f5;
         font-size: 0.6rem;
         font-weight: 700;
         letter-spacing: 0.02em;
@@ -2559,34 +2559,48 @@
       }
 
       .dark-vars {
-        --paper: #1e1c1a;
-        --ink: #e8e4de;
-        --muted: #6e6862;   /* faint text on dark */
-        --dim: #9a938d;     /* secondary text on dark */
-        --accent: #e07850;  /* brighter on dark for presence */
-        --accent-dark: #c06038;
-        --panel: rgba(30, 28, 26, 0.95);
-        --sidebar-bg: #161412; /* clearly darker than paper */
-        --line: #333028;
+        --paper: #141413;
+        --ink: #faf9f5;
+        --muted: #8f8b83;
+        --dim: #c1bdb4;
+        --accent: #d97757;
+        --accent-dark: #e08a6f;
+        --panel: rgba(20, 20, 19, 0.95);
+        --panel-soft: rgba(39, 38, 35, 0.92);
+        --sidebar-bg: #1d1c1a;
+        --line: #34322d;
+        --line-strong: rgba(250, 249, 245, 0.08);
         --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-        --input-bg: #252320;
-        --error: #f47067;
+        --input-bg: #23211f;
+        --info: #6a9bcc;
+        --success: #788c5d;
+        --warning: #b19154;
+        --danger: #cf7b70;
+        --code-bg: #23211f;
+        --error: #cf7b70;
       }
 
       @media (prefers-color-scheme: dark) {
         :root:not([data-theme="light"]):not([data-theme="dark"]) {
-          --paper: #1e1c1a;
-          --ink: #e8e4de;
-          --muted: #6e6862;
-          --dim: #9a938d;
-          --accent: #e07850;
-          --accent-dark: #c06038;
-          --panel: rgba(30, 28, 26, 0.95);
-          --sidebar-bg: #161412;
-          --line: #333028;
+          --paper: #141413;
+          --ink: #faf9f5;
+          --muted: #8f8b83;
+          --dim: #c1bdb4;
+          --accent: #d97757;
+          --accent-dark: #e08a6f;
+          --panel: rgba(20, 20, 19, 0.95);
+          --panel-soft: rgba(39, 38, 35, 0.92);
+          --sidebar-bg: #1d1c1a;
+          --line: #34322d;
+          --line-strong: rgba(250, 249, 245, 0.08);
           --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-          --input-bg: #252320;
-          --error: #f47067;
+          --input-bg: #23211f;
+          --info: #6a9bcc;
+          --success: #788c5d;
+          --warning: #b19154;
+          --danger: #cf7b70;
+          --code-bg: #23211f;
+          --error: #cf7b70;
         }
 
         :root:not([data-theme="light"]):not([data-theme="dark"]) body {
@@ -2615,8 +2629,9 @@
         }
         :root:not([data-theme="light"]):not([data-theme="dark"]) #weixin-qr-panel { background: #1e1c1a; }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-group[data-role="assistant"] .msg-avatar {
-          background: radial-gradient(circle at 35% 30%, #af8aff 0%, #8663ff 45%, #5a47d8 100%);
-          border-color: rgba(125, 96, 255, 0.24);
+          background: linear-gradient(180deg, #2a2825 0%, #141413 100%);
+          border-color: rgba(250, 249, 245, 0.08);
+          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
         }
       :root:not([data-theme="light"]):not([data-theme="dark"]) .msg-activity {
         background: rgba(37, 35, 32, 0.82);
@@ -2672,18 +2687,25 @@
       }
 
       :root[data-theme="dark"] {
-        --paper: #1e1c1a;
-        --ink: #e8e4de;
-        --muted: #7a746e;
-        --dim: #9a9490;
-        --accent: #d4724a;
-        --accent-dark: #b85c38;
-        --panel: rgba(30, 28, 26, 0.95);
-        --sidebar-bg: #1a1815;
-        --line: #333028;
+        --paper: #141413;
+        --ink: #faf9f5;
+        --muted: #8f8b83;
+        --dim: #c1bdb4;
+        --accent: #d97757;
+        --accent-dark: #e08a6f;
+        --panel: rgba(20, 20, 19, 0.95);
+        --panel-soft: rgba(39, 38, 35, 0.92);
+        --sidebar-bg: #1d1c1a;
+        --line: #34322d;
+        --line-strong: rgba(250, 249, 245, 0.08);
         --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-        --input-bg: #252320;
-        --error: #f47067;
+        --input-bg: #23211f;
+        --info: #6a9bcc;
+        --success: #788c5d;
+        --warning: #b19154;
+        --danger: #cf7b70;
+        --code-bg: #23211f;
+        --error: #cf7b70;
       }
 
       :root[data-theme="dark"] body { background: linear-gradient(160deg, #201e1b 0%, #181613 100%); }
@@ -2709,8 +2731,9 @@
       }
       :root[data-theme="dark"] #weixin-qr-panel { background: #1e1c1a; }
       :root[data-theme="dark"] .msg-group[data-role="assistant"] .msg-avatar {
-        background: radial-gradient(circle at 35% 30%, #af8aff 0%, #8663ff 45%, #5a47d8 100%);
-        border-color: rgba(125, 96, 255, 0.24);
+        background: linear-gradient(180deg, #2a2825 0%, #141413 100%);
+        border-color: rgba(250, 249, 245, 0.08);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
       }
       :root[data-theme="dark"] .msg-activity {
         background: rgba(37, 35, 32, 0.82);
@@ -3068,27 +3091,27 @@
       /* ── highlight.js token colors ───────────────────────────────────────── */
       .msg-tool-output-content.hljs,
       .msg-trace-code.hljs {
-        --hljs-string:  #2a7a3b;
-        --hljs-number:  #7b3f9e;
-        --hljs-keyword: #c15f3c;
-        --hljs-attr:    #1565c0;
-        --hljs-comment: #8a8078;
-        --hljs-literal: #b55a00;
-        --hljs-tag:     #1565c0;
-        --hljs-name:    #2a7a3b;
-        --hljs-punct:   #666;
+        --hljs-string:  #788c5d;
+        --hljs-number:  #a27b3b;
+        --hljs-keyword: #d97757;
+        --hljs-attr:    #6a9bcc;
+        --hljs-comment: #8f8b83;
+        --hljs-literal: #a27b3b;
+        --hljs-tag:     #6a9bcc;
+        --hljs-name:    #788c5d;
+        --hljs-punct:   #5f5b54;
       }
       :root[data-theme="dark"] .msg-tool-output-content.hljs,
       :root[data-theme="dark"] .msg-trace-code.hljs {
-        --hljs-string:  #81c784;
-        --hljs-number:  #ce93d8;
-        --hljs-keyword: #d4724a;
-        --hljs-attr:    #64b5f6;
-        --hljs-comment: #7a7470;
-        --hljs-literal: #ffb74d;
-        --hljs-tag:     #64b5f6;
-        --hljs-name:    #81c784;
-        --hljs-punct:   #9a9490;
+        --hljs-string:  #788c5d;
+        --hljs-number:  #b19154;
+        --hljs-keyword: #d97757;
+        --hljs-attr:    #6a9bcc;
+        --hljs-comment: #8f8b83;
+        --hljs-literal: #b19154;
+        --hljs-tag:     #6a9bcc;
+        --hljs-name:    #788c5d;
+        --hljs-punct:   #c1bdb4;
       }
       .hljs-string  { color: var(--hljs-string); }
       .hljs-number  { color: var(--hljs-number); }
