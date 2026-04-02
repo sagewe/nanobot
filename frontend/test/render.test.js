@@ -152,6 +152,12 @@ function readCssBlock(selectorPattern) {
   return match ? match[1] : "";
 }
 
+function readCssBlocks(selectorPattern) {
+  const css = readCss();
+  const matches = [...css.matchAll(new RegExp(`${selectorPattern}\\s*\\{([\\s\\S]*?)\\n\\s*\\}`, "g"))];
+  return matches.map((match) => match[1]);
+}
+
 function flush() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -303,7 +309,7 @@ describe("tool trace output", () => {
     const controlPanelHeaderButtonCss = readCssBlock("\\.control-panel-header button");
     const jobsTitleCss = readCssBlock("\\.jobs-title");
     const skillsGroupCss = readCssBlock("\\.skills-group");
-    const settingsSectionCss = readCssBlock("\\.settings-section");
+    const settingsSectionCssBlocks = readCssBlocks("\\.settings-section");
     const activeTabCss = readCssBlock("\\.tab-btn\\[data-active=\"true\"\\]");
     const collapsedActiveCss = readCssBlock("\\.session-rail\\[data-collapsed=\"true\"\\] \\.tab-btn\\[data-active=\"true\"\\]");
 
@@ -311,7 +317,8 @@ describe("tool trace output", () => {
     expect(controlPanelHeaderButtonCss).toContain("border-radius: var(--nav-item-radius);");
     expect(jobsTitleCss).toContain('font-family: "Poppins", Arial, sans-serif;');
     expect(skillsGroupCss).toContain("background: var(--section-surface-bg);");
-    expect(settingsSectionCss).toContain("background: var(--section-surface-bg);");
+    expect(settingsSectionCssBlocks).toHaveLength(1);
+    expect(settingsSectionCssBlocks[0]).toContain("background: var(--section-surface-bg);");
     expect(css).toContain("--nav-active-bg-strong:");
     expect(activeTabCss).toContain("background: var(--nav-active-bg-strong);");
     expect(collapsedActiveCss).toContain("box-shadow:");

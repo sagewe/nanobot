@@ -3320,15 +3320,6 @@
         min-width: 0;
       }
 
-      .settings-section {
-        display: grid;
-        gap: 0.9rem;
-        padding: 1rem;
-        border: 1px solid var(--line);
-        border-radius: 0.95rem;
-        background: rgba(255, 255, 255, 0.02);
-      }
-
       .settings-section-header {
         display: grid;
         gap: 0.15rem;
