@@ -264,6 +264,8 @@ describe("tool trace output", () => {
   it("defines shared navigation tokens and section primitives", () => {
     const rootCss = readCssBlock(":root");
     const tabBtnCss = readCssBlock("\\.tab-btn");
+    const tabBtnHoverCss = readCssBlock("\\.tab-btn:hover");
+    const tabBtnActiveCss = readCssBlock("\\.tab-btn\\[data-active=\"true\"\\]");
     const sectionHeaderCss = readCssBlock("\\.section-header");
     const sectionTitleGroupCss = readCssBlock("\\.section-title-group");
     const sectionActionCss = readCssBlock("\\.section-action");
@@ -273,14 +275,26 @@ describe("tool trace output", () => {
     expect(rootCss).toContain("--nav-item-pad-x:");
     expect(rootCss).toContain("--nav-hover-bg:");
     expect(rootCss).toContain("--nav-active-bg:");
+    expect(rootCss).toContain("--nav-active-ink:");
+    expect(rootCss).toContain("--nav-quiet-bg:");
     expect(rootCss).toContain("--section-surface-bg:");
+    expect(rootCss).toContain("--section-surface-border:");
 
     expect(tabBtnCss).toContain("border-radius: var(--nav-item-radius);");
     expect(tabBtnCss).toContain("padding: var(--nav-item-pad-y) var(--nav-item-pad-x);");
+    expect(tabBtnCss).toContain("background: var(--nav-quiet-bg);");
+    expect(tabBtnHoverCss).toContain("background: var(--nav-hover-bg);");
+    expect(tabBtnHoverCss).toContain("color: var(--ink);");
+    expect(tabBtnActiveCss).toContain("color: var(--nav-active-ink);");
+    expect(tabBtnActiveCss).toContain("background: var(--nav-active-bg);");
+    expect(tabBtnActiveCss).toContain("font-weight: 600;");
     expect(sectionHeaderCss).toContain("display: flex;");
     expect(sectionHeaderCss).toContain("justify-content: space-between;");
     expect(sectionTitleGroupCss).toContain("display: grid;");
     expect(sectionActionCss).toContain("border-radius: var(--nav-item-radius);");
+    expect(sectionActionCss).toContain("border: 1px solid var(--line);");
+    expect(sectionActionCss).toContain("background: var(--nav-quiet-bg);");
+    expect(sectionActionCss).toContain("color: var(--dim);");
   });
 
   it("keeps message rows constrained to the transcript width instead of the viewport", () => {
