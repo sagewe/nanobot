@@ -1005,6 +1005,162 @@ async fn skills_api_returns_detail_for_builtin_and_workspace_sources() {
 }
 
 #[tokio::test]
+async fn skills_api_supports_discovered_skill_ids_that_are_not_slug_safe() {
+    let builtin = BuiltinSkillsFixture::new();
+    let builtin_id = "Weather Tool";
+    let workspace_id = "Foo.Bar";
+    let builtin_raw =
+        "---\nname: builtin weather tool\ndescription: builtin weather tool\n---\n\nBuiltin body\n";
+    let workspace_raw =
+        "---\nname: workspace foo bar\ndescription: workspace foo bar\n---\n\nWorkspace body\n";
+    let updated_raw = "---\nname: workspace foo bar\ndescription: updated workspace foo bar\n---\n\nUpdated body\n";
+    builtin.write_skill(builtin_id, builtin_raw);
+
+    let dir = tempdir().expect("tempdir");
+    write_skill(
+        dir.path().join("skills").as_path(),
+        workspace_id,
+        workspace_raw,
+    );
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
+
+    let (builtin_status, builtin_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/skills/builtin/{}",
+                builtin_id.replace(' ', "%20")
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(builtin_status, StatusCode::OK);
+    assert_eq!(builtin_payload["id"], json!(builtin_id));
+    assert_eq!(builtin_payload["readOnly"], json!(true));
+
+    let (workspace_status, workspace_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/skills/workspace/{workspace_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(workspace_status, StatusCode::OK);
+    assert_eq!(workspace_payload["id"], json!(workspace_id));
+    assert_eq!(workspace_payload["readOnly"], json!(false));
+    assert_eq!(workspace_payload["rawContent"], json!(workspace_raw));
+
+    let (update_status, update_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri(format!("/api/skills/workspace/{workspace_id}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "rawContent": updated_raw,
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(update_status, StatusCode::OK);
+    assert_eq!(update_payload["id"], json!(workspace_id));
+    assert_eq!(update_payload["rawContent"], json!(updated_raw));
+    assert_eq!(
+        std::fs::read_to_string(
+            dir.path()
+                .join("skills")
+                .join(workspace_id)
+                .join("SKILL.md"),
+        )
+        .expect("updated skill on disk"),
+        updated_raw
+    );
+
+    let (state_status, state_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri(format!("/api/skills/workspace/{workspace_id}/state"))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"enabled":false}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(state_status, StatusCode::OK);
+    assert_eq!(state_payload["id"], json!(workspace_id));
+    assert_eq!(state_payload["enabled"], json!(false));
+
+    let state_json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join(".nanobot").join("skills-state.json"))
+            .expect("state file"),
+    )
+    .expect("state json");
+    assert_eq!(state_json[workspace_id]["enabled"], json!(false));
+
+    let (delete_status, delete_payload) = json_response(
+        app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/skills/workspace/{workspace_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(delete_status, StatusCode::OK);
+    assert_eq!(delete_payload["ok"], json!(true));
+    assert!(!dir.path().join("skills").join(workspace_id).exists());
+    assert!(
+        !dir.path()
+            .join(".nanobot")
+            .join("skills-state.json")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn skills_api_deletes_workspace_skills_even_if_state_is_malformed() {
+    let builtin = BuiltinSkillsFixture::new();
+    let dir = tempdir().expect("tempdir");
+    let workspace_id = "delete-me";
+    write_skill(
+        dir.path().join("skills").as_path(),
+        workspace_id,
+        "---\nname: delete me\ndescription: delete me description\n---\n\nBody\n",
+    );
+    std::fs::create_dir_all(dir.path().join(".nanobot")).expect("nanobot dir");
+    let malformed = "{not-json";
+    std::fs::write(
+        dir.path().join(".nanobot").join("skills-state.json"),
+        malformed,
+    )
+    .expect("write malformed state");
+    let app = agent_app_with_builtin_root(&dir, builtin.root(), Vec::new()).await;
+
+    let (delete_status, delete_payload) = json_response(
+        app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/skills/workspace/{workspace_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(delete_status, StatusCode::OK);
+    assert_eq!(delete_payload["ok"], json!(true));
+    assert!(!dir.path().join("skills").join(workspace_id).exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".nanobot").join("skills-state.json"))
+            .expect("malformed state after delete"),
+        malformed
+    );
+}
+
+#[tokio::test]
 async fn skills_api_creates_updates_and_deletes_workspace_skills_preserving_raw_content() {
     let builtin = BuiltinSkillsFixture::new();
     let dir = tempdir().expect("tempdir");

@@ -959,7 +959,6 @@ async fn get_skill_with_source(
 ) -> Result<Json<SkillDetailResponse>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
     let source = parse_skill_source(&source)?;
-    let id = validate_skill_id(&id)?.to_string();
     match source {
         SkillSource::Builtin => {
             let managed = load_managed_skills(&state, &workspace)?;
@@ -1003,7 +1002,6 @@ pub async fn update_workspace_skill(
     Json(request): Json<UpdateWorkspaceSkillRequest>,
 ) -> Result<Json<SkillDetailResponse>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
-    let id = validate_skill_id(&id)?.to_string();
     let skill_path = require_mutable_workspace_skill(&state, &workspace, &id)?;
     fs::write(&skill_path, &request.raw_content)
         .map_err(|error| ApiError::internal(error.into()))?;
@@ -1018,7 +1016,6 @@ pub async fn update_workspace_skill_state(
     Json(request): Json<UpdateWorkspaceSkillStateRequest>,
 ) -> Result<Json<SkillDetailResponse>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
-    let id = validate_skill_id(&id)?.to_string();
     let _skill_path = require_mutable_workspace_skill(&state, &workspace, &id)?;
     let state_path = workspace_skill_state_path(&workspace);
     let mut states = load_workspace_skill_state_document(&state_path)?;
@@ -1035,13 +1032,13 @@ pub async fn delete_workspace_skill(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let workspace = resolve_skills_workspace(&state, &headers).await?;
-    let id = validate_skill_id(&id)?.to_string();
     let skill_dir = require_mutable_workspace_skill_dir(&state, &workspace, &id)?;
     let state_path = workspace_skill_state_path(&workspace);
-    let mut states = load_workspace_skill_state_document(&state_path)?;
     fs::remove_dir_all(&skill_dir).map_err(|error| ApiError::internal(error.into()))?;
-    states.remove(&id);
-    save_or_remove_workspace_skill_state_document(&state_path, &states)?;
+    if let Some(mut states) = load_workspace_skill_state_document_for_delete(&state_path)? {
+        states.remove(&id);
+        save_or_remove_workspace_skill_state_document(&state_path, &states)?;
+    }
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1270,6 +1267,21 @@ fn load_workspace_skill_state_document(path: &FsPath) -> Result<Map<String, Valu
         .as_object()
         .cloned()
         .ok_or_else(|| ApiError::bad_request("skills state file must contain a JSON object"))
+}
+
+fn load_workspace_skill_state_document_for_delete(
+    path: &FsPath,
+) -> Result<Option<Map<String, Value>>, ApiError> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Some(Map::new())),
+        Err(error) => return Err(ApiError::internal(error.into())),
+    };
+    let value: Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    Ok(value.as_object().cloned())
 }
 
 fn save_workspace_skill_state_document(
