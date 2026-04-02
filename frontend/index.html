@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sidekick control room</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="sidebar-backdrop"></div>
+    <section id="login-shell" class="login-shell">
+      <div class="login-card">
+        <div class="login-kicker">Sidekick Workspace</div>
+        <h1>Sign in to your workspace</h1>
+        <p class="login-copy">
+          Each account gets its own config, sessions, scheduled jobs, MCP toggles, and workspace.
+        </p>
+        <form id="login-form" class="login-form">
+          <label>
+            <span>Username</span>
+            <input id="login-username" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="login-password" type="password" autocomplete="current-password" required />
+          </label>
+          <button id="login-button" type="submit">Enter Workspace</button>
+        </form>
+        <div id="login-error" class="login-error" role="alert"></div>
+      </div>
+    </section>
+    <main id="app" hidden>
+      <aside class="session-rail">
+          <div class="tab-bar" role="tablist">
+            <div class="tab-bar-header">
+              <h1 class="sidebar-title" data-i18n="app_name">Sidekick</h1>
+              <button id="sidebar-toggle" data-i18n-title="toggle_sidebar" title="Toggle sidebar">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+              </button>
+            </div>
+            <button class="tab-btn" data-tab="chat" data-active="true" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span class="tab-label" data-i18n="tab_chat">Chat</span>
+            </button>
+            <button class="tab-btn" data-tab="sessions" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              <span class="tab-label" data-i18n="tab_sessions">Sessions</span>
+            </button>
+            <button class="tab-btn" data-tab="channels" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+              <span class="tab-label" data-i18n="tab_channels">Channels</span>
+            </button>
+            <button class="tab-btn" data-tab="jobs" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span class="tab-label" data-i18n="tab_jobs">Jobs</span>
+            </button>
+            <button class="tab-btn" data-tab="mcp" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+              <span class="tab-label" data-i18n="tab_mcp">MCP</span>
+            </button>
+            <button class="tab-btn" data-tab="skills" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M4 7h16"/><path d="M6 11h12"/><path d="M8 15h8"/></svg>
+              <span class="tab-label" data-i18n="tab_skills">Skills</span>
+            </button>
+            <button class="tab-btn" data-tab="settings" role="tab">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              <span class="tab-label" data-i18n="tab_settings">Settings</span>
+            </button>
+            <button class="tab-btn" data-tab="users" role="tab" id="admin-users-tab" hidden>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <span class="tab-label" data-i18n="tab_users">Users</span>
+            </button>
+          </div>
+          <div class="sidebar-footer">
+            <div class="user-chip">
+              <strong id="current-user-display">Guest</strong>
+              <span id="current-user-role">guest</span>
+            </div>
+            <button id="theme-toggle" data-i18n-title="toggle_theme" title="Toggle theme">
+              <svg id="theme-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            </button>
+            <button id="wide-toggle" title="Wide layout">
+              <svg id="wide-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"></svg>
+            </button>
+            <button id="lang-toggle">En</button>
+            <button id="logout-button" title="Sign out">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            </button>
+          </div>
+        </aside>
+        <section class="shell">
+        <section class="sessions-pane" hidden>
+          <div class="sessions-search-bar">
+            <input type="search" id="sessions-search" data-i18n-placeholder="sessions_search_placeholder" placeholder="Filter sessions…" autocomplete="off" />
+          </div>
+          <div id="sessions-list" class="sessions-list"></div>
+        </section>
+        <section class="jobs-pane" hidden>
+          <div class="jobs-header">
+            <h2 class="jobs-title" data-i18n="jobs_title">Scheduled Jobs</h2>
+            <button id="jobs-refresh-btn" type="button" data-i18n-title="jobs_refresh" title="Refresh">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+          </div>
+          <div id="jobs-list" class="jobs-list"></div>
+          <details class="jobs-add-form" id="jobs-add-details">
+            <summary data-i18n="jobs_add">Add Job</summary>
+            <form id="add-job-form">
+              <label>
+                <span data-i18n="jobs_name">Name (optional)</span>
+                <input type="text" id="job-name" data-i18n-placeholder="jobs_name_placeholder" placeholder="Give this task a short name" />
+              </label>
+              <label>
+                <span data-i18n="jobs_message">Message</span>
+                <textarea id="job-message" rows="2" required></textarea>
+              </label>
+              <label>
+                <span data-i18n="jobs_schedule_type">Schedule type</span>
+                <select id="job-schedule-type">
+                  <option value="every" data-i18n="jobs_schedule_every">Every N seconds</option>
+                  <option value="cron" data-i18n="jobs_schedule_cron">Cron expression</option>
+                  <option value="at" data-i18n="jobs_schedule_at">One-time (at datetime)</option>
+                </select>
+              </label>
+              <label id="job-every-label">
+                <span data-i18n="jobs_interval">Interval</span>
+                <div class="job-interval-row">
+                  <input type="number" id="job-every-value" min="1" value="1" />
+                  <select id="job-every-unit">
+                    <option value="60" data-i18n="jobs_unit_minutes">Minutes</option>
+                    <option value="3600" selected data-i18n="jobs_unit_hours">Hours</option>
+                    <option value="86400" data-i18n="jobs_unit_days">Days</option>
+                    <option value="1" data-i18n="jobs_unit_seconds">Seconds</option>
+                  </select>
+                </div>
+              </label>
+              <label id="job-cron-label" hidden>
+                <span data-i18n="jobs_cron_expr">Cron expression</span>
+                <input type="text" id="job-cron-expr" placeholder="0 9 * * *" />
+              </label>
+              <label id="job-tz-label" hidden>
+                <span data-i18n="jobs_tz">Timezone</span>
+                <div class="job-tz-search-wrap">
+                  <input type="text" id="job-tz-search" data-i18n-placeholder="jobs_tz_search" placeholder="Filter timezones…" autocomplete="off" />
+                  <select id="job-tz" size="6">
+                    <option value="">— auto (local) —</option>
+                  </select>
+                </div>
+              </label>
+              <label id="job-at-label" hidden>
+                <span data-i18n="jobs_at">Date/time</span>
+                <input type="datetime-local" id="job-at" />
+              </label>
+              <button type="submit" data-i18n="jobs_add_submit">Add Job</button>
+            </form>
+          </details>
+        </section>
+        <section class="mcp-pane" hidden>
+          <div class="jobs-header">
+            <h2 class="jobs-title" data-i18n="mcp_title">MCP Servers</h2>
+            <button id="mcp-refresh-btn" type="button" data-i18n-title="mcp_refresh" title="Refresh">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+          </div>
+          <div id="mcp-list" class="jobs-list"></div>
+        </section>
+        <section class="skills-pane" hidden>
+          <section class="control-panel control-panel--skills">
+            <div class="control-panel-header">
+              <div>
+                <div class="session-kicker" data-i18n="tab_skills">Skills</div>
+                <h2 class="jobs-title" data-i18n="skills_title">Skills Library</h2>
+              </div>
+              <button id="skills-create-button" type="button" data-i18n="skills_create">Create Skill</button>
+            </div>
+            <div class="control-form skills-layout">
+              <aside class="skills-master">
+                <label class="skills-search">
+                  <span data-i18n="skills_search_label">Search skills</span>
+                  <input id="skills-search" type="search" data-i18n-placeholder="skills_search_placeholder" placeholder="Search skills…" autocomplete="off" />
+                </label>
+                <section class="skills-group">
+                  <div class="skills-group-header">
+                    <div class="session-kicker" data-i18n="skills_workspace_title">Workspace Skills</div>
+                  </div>
+                  <div id="skills-workspace-list" class="skills-list"></div>
+                </section>
+                <section class="skills-group">
+                  <div class="skills-group-header">
+                    <div class="session-kicker" data-i18n="skills_builtin_title">Built-in Skills</div>
+                  </div>
+                  <div id="skills-builtin-list" class="skills-list"></div>
+                </section>
+              </aside>
+              <section class="skills-detail">
+                <div class="skills-detail-header">
+                  <div>
+                    <div class="session-kicker" data-i18n="tab_skills">Skills</div>
+                    <h3 class="settings-section-title" data-i18n="skill_editor_title">Skill Editor</h3>
+                  </div>
+                  <label class="checkbox-row skill-enabled-toggle">
+                    <input id="skill-enabled-toggle" type="checkbox" />
+                    <span data-i18n="skill_enabled">Enabled</span>
+                  </label>
+                </div>
+                <label class="editor-label skills-editor">
+                  <span data-i18n="skill_editor_body">Skill definition</span>
+                  <textarea id="skill-editor" rows="18" spellcheck="false"></textarea>
+                </label>
+              </section>
+            </div>
+          </section>
+        </section>
+        <section class="settings-pane" hidden>
+          <section class="control-panel control-panel--workspace">
+            <div class="control-panel-header">
+              <div>
+                <div class="session-kicker" data-i18n="settings_workspace_kicker">Private Settings</div>
+                <h2 class="jobs-title" data-i18n="settings_workspace_title">Workspace Configuration</h2>
+              </div>
+            </div>
+            <form id="settings-form" class="control-form settings-layout">
+              <div class="settings-main">
+                <section class="settings-section">
+                  <div class="settings-section-header">
+                    <div class="session-kicker" data-i18n="settings_profile_kicker">Profile</div>
+                    <h3 class="settings-section-title" data-i18n="settings_profile_title">Base Configuration</h3>
+                  </div>
+                  <div class="control-grid control-grid--single">
+                    <label>
+                      <span data-i18n="settings_default_profile">Default profile</span>
+                      <input id="settings-default-profile" type="text" />
+                    </label>
+                  </div>
+                </section>
+                <section class="settings-section">
+                  <div class="settings-section-header">
+                    <div class="session-kicker" data-i18n="settings_channels_kicker">Channels</div>
+                    <h3 class="settings-section-title" data-i18n="settings_channels_title">Provider Access</h3>
+                  </div>
+                  <div class="settings-channel-groups">
+                    <section class="settings-channel-group">
+                      <div class="settings-channel-group-header">
+                        <div class="session-kicker" data-i18n="settings_channels_telegram">Telegram</div>
+                      </div>
+                      <div class="control-grid control-grid--single">
+                        <label>
+                          <span data-i18n="settings_telegram_token">Telegram token</span>
+                          <input id="settings-telegram-token" type="password" />
+                        </label>
+                        <label class="checkbox-row">
+                          <input id="settings-telegram-enabled" type="checkbox" />
+                          <span data-i18n="settings_telegram_enabled">Telegram enabled</span>
+                        </label>
+                      </div>
+                    </section>
+                    <section class="settings-channel-group">
+                      <div class="settings-channel-group-header">
+                        <div class="session-kicker" data-i18n="settings_channels_weixin">Weixin</div>
+                      </div>
+                      <div class="control-grid control-grid--single">
+                        <label>
+                          <span data-i18n="settings_weixin_api_base">Weixin API base</span>
+                          <input id="settings-weixin-api-base" type="text" />
+                        </label>
+                        <label class="checkbox-row">
+                          <input id="settings-weixin-enabled" type="checkbox" />
+                          <span data-i18n="settings_weixin_enabled">Weixin enabled</span>
+                        </label>
+                      </div>
+                    </section>
+                    <section class="settings-channel-group">
+                      <div class="settings-channel-group-header">
+                        <div class="session-kicker" data-i18n="settings_channels_wecom">WeCom</div>
+                      </div>
+                      <div class="control-grid control-grid--single">
+                        <label class="checkbox-row">
+                          <input id="settings-wecom-enabled" type="checkbox" />
+                          <span data-i18n="settings_wecom_enabled">WeCom enabled</span>
+                        </label>
+                        <label>
+                          <span data-i18n="settings_wecom_bot_id">WeCom bot ID</span>
+                          <input id="settings-wecom-bot-id" type="text" />
+                        </label>
+                        <label>
+                          <span data-i18n="settings_wecom_secret">WeCom secret</span>
+                          <input id="settings-wecom-secret" type="password" />
+                        </label>
+                      </div>
+                    </section>
+                    <section class="settings-channel-group">
+                      <div class="settings-channel-group-header">
+                        <div class="session-kicker" data-i18n="settings_channels_feishu">Feishu</div>
+                      </div>
+                      <div class="control-grid control-grid--single">
+                        <label class="checkbox-row">
+                          <input id="settings-feishu-enabled" type="checkbox" />
+                          <span data-i18n="settings_feishu_enabled">Feishu enabled</span>
+                        </label>
+                        <label>
+                          <span data-i18n="settings_feishu_app_id">Feishu app ID</span>
+                          <input id="settings-feishu-app-id" type="text" />
+                        </label>
+                        <label>
+                          <span data-i18n="settings_feishu_app_secret">Feishu app secret</span>
+                          <input id="settings-feishu-app-secret" type="password" />
+                        </label>
+                        <label>
+                          <span data-i18n="settings_feishu_api_base">Feishu API base</span>
+                          <input id="settings-feishu-api-base" type="text" />
+                        </label>
+                        <label>
+                          <span data-i18n="settings_feishu_ws_base">Feishu WebSocket base</span>
+                          <input id="settings-feishu-ws-base" type="text" />
+                        </label>
+                      </div>
+                    </section>
+                  </div>
+                </section>
+              </div>
+              <aside class="settings-advanced">
+                <div class="settings-advanced-header">
+                  <div>
+                    <div class="session-kicker" data-i18n="settings_advanced_kicker">Advanced</div>
+                    <h3 class="settings-section-title" data-i18n="settings_advanced_title">Advanced TOML</h3>
+                  </div>
+                  <button id="settings-refresh-button" type="button" data-i18n="settings_reload">Reload</button>
+                </div>
+                <label class="editor-label settings-editor">
+                  <span data-i18n="settings_raw_config">Raw TOML</span>
+                  <textarea id="config-editor" rows="18" spellcheck="false"></textarea>
+                </label>
+                <div class="control-actions">
+                  <button id="save-config-button" type="submit" data-i18n="settings_save">Save Configuration</button>
+                </div>
+              </aside>
+            </form>
+          </section>
+          <section class="control-panel">
+            <div class="control-panel-header">
+              <div>
+                <div class="session-kicker" data-i18n="settings_password_kicker">Security</div>
+                <h2 class="jobs-title" data-i18n="settings_password_title">Change Password</h2>
+              </div>
+            </div>
+            <form id="change-password-form" class="control-form compact-form">
+              <label>
+                <span data-i18n="settings_current_password">Current password</span>
+                <input id="current-password-input" type="password" autocomplete="current-password" />
+              </label>
+              <label>
+                <span data-i18n="settings_new_password">New password</span>
+                <input id="new-password-input" type="password" autocomplete="new-password" />
+              </label>
+              <div class="control-actions">
+                <button type="submit" data-i18n="settings_update_password">Update Password</button>
+              </div>
+            </form>
+          </section>
+        </section>
+        <section class="users-pane" hidden>
+          <div class="users-pane-header">
+            <div class="session-kicker" data-i18n="users_kicker">Admin</div>
+            <h2 class="jobs-title" data-i18n="users_title">Users</h2>
+          </div>
+          <div class="users-layout">
+            <section class="control-panel users-create-card">
+              <div class="control-panel-header users-section-header">
+                <div>
+                  <div class="session-kicker" data-i18n="users_create_kicker">Create</div>
+                  <h3 class="settings-section-title" data-i18n="users_create_title">Create User</h3>
+                </div>
+              </div>
+              <form id="create-user-form" class="control-form compact-form users-create-form">
+                <label>
+                  <span data-i18n="users_username">Username</span>
+                  <input id="create-username" type="text" autocomplete="off" />
+                </label>
+                <label>
+                  <span data-i18n="users_display_name">Display name</span>
+                  <input id="create-display-name" type="text" autocomplete="off" />
+                </label>
+                <label>
+                  <span data-i18n="users_password">Password</span>
+                  <input id="create-password" type="password" autocomplete="new-password" />
+                </label>
+                <label>
+                  <span data-i18n="users_role">Role</span>
+                  <select id="create-role">
+                    <option value="user" data-i18n="users_role_user">user</option>
+                    <option value="admin" data-i18n="users_role_admin">admin</option>
+                  </select>
+                </label>
+                <div class="control-actions">
+                  <button type="submit" data-i18n="users_create_submit">Create User</button>
+                </div>
+              </form>
+            </section>
+            <section class="control-panel users-list-card">
+              <div class="control-panel-header users-list-header">
+                <div>
+                  <div class="session-kicker" data-i18n="users_list_kicker">Directory</div>
+                  <h3 class="settings-section-title" data-i18n="users_list_title">Current Users</h3>
+                </div>
+                <button id="users-refresh-button" type="button" data-i18n="users_refresh">Refresh</button>
+              </div>
+              <div id="admin-users-list" class="admin-users-list"></div>
+            </section>
+          </div>
+        </section>
+        <section class="channels-pane" hidden>
+          <section id="weixin-account-panel" class="account-panel">
+            <div class="account-panel-header">
+              <div class="session-kicker" data-i18n="weixin">Weixin</div>
+              <div class="account-actions">
+                <button id="weixin-login-button" type="button" data-i18n-title="login_to_weixin" title="Login to Weixin">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                </button>
+                <button id="weixin-logout-button" type="button" data-i18n-title="logout" title="Logout">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="account-panel-info">
+              <div class="account-status">
+                <strong id="weixin-status-label" data-i18n="checking_account">Checking account…</strong>
+                <span id="weixin-user-label" data-i18n="login_from_console">Login from the embedded console.</span>
+              </div>
+            </div>
+            <div id="weixin-qr-panel" hidden>
+              <img id="weixin-qr-image" data-i18n-alt="weixin_qr_alt" alt="Weixin login QR code" />
+              <div id="weixin-qr-note" class="account-muted" data-i18n="scan_to_confirm">Scan in Weixin to confirm login.</div>
+            </div>
+          </section>
+        </section>
+        <section class="conversation-pane">
+          <div class="session-header">
+            <button id="mobile-menu-btn" aria-label="Open sidebar">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <select id="session-select" data-i18n-aria-label="select_session" aria-label="Select session" style="display:none"></select>
+            <select id="profile-select" hidden></select>
+          </div>
+          <div id="transcript-search" hidden>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="search-input" type="text" autocomplete="off" spellcheck="false" data-i18n-placeholder="search_placeholder">
+            <span id="search-count"></span>
+            <button id="search-prev" type="button" aria-label="Previous match"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
+            <button id="search-next" type="button" aria-label="Next match"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+            <button id="search-close" type="button" aria-label="Close search"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <section id="transcript" aria-live="polite"></section>
+          <div id="status" role="status"></div>
+          <form id="composer">
+            <div id="slash-menu" hidden>
+              <div id="slash-menu-list" role="listbox" aria-label="Slash commands"></div>
+            </div>
+            <div class="composer-card">
+              <textarea id="message-input" rows="1" data-i18n-placeholder="input_placeholder" placeholder="Ask Sidekick to inspect, edit, or research. (Enter to send, Ctrl+Enter for newline)"></textarea>
+              <div class="composer-toolbar">
+                <div class="composer-toolbar-left">
+                  <button id="export-button" type="button" data-i18n-title="export_conversation" title="Export">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </button>
+                  <button id="duplicate-session-button" type="button" data-i18n="duplicate_to_web" hidden>Duplicate to Web</button>
+                </div>
+                <div class="composer-toolbar-right">
+                  <button id="profile-picker-btn" type="button" class="profile-picker-btn" aria-haspopup="listbox">
+                    <span id="profile-picker-label">–</span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
+                  <button id="send-button" type="submit" data-i18n-title="send_button" title="Send (Enter)">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+    <div id="profile-picker-menu" class="profile-picker-menu" role="listbox" hidden></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
