@@ -1,16 +1,23 @@
       :root {
         --paper: #faf9f5;
-        --ink: #2c2c2c;
-        --muted: #8c857f;   /* faint text — contrast ≥3:1 on paper */
-        --dim: #5e5854;     /* secondary text — contrast ≥5:1 on paper */
-        --accent: #C15F3C;
-        --accent-dark: #A14A2F;
-        --panel: rgba(253, 252, 251, 0.92);
-        --sidebar-bg: #f0efed;
-        --line: #e8e6e3;
-        --shadow: 0 8px 32px rgba(44, 44, 44, 0.1);
-        --input-bg: #fffef9; /* warm white, blends with paper */
-        --error: #d73a49;
+        --ink: #141413;
+        --muted: #b0aea5;
+        --dim: #5f5b54;
+        --accent: #d97757;
+        --accent-dark: #c96b4d;
+        --panel: rgba(250, 249, 245, 0.92);
+        --panel-soft: rgba(232, 230, 220, 0.52);
+        --sidebar-bg: #ece9df;
+        --line: #e8e6dc;
+        --line-strong: rgba(20, 20, 19, 0.1);
+        --shadow: 0 8px 32px rgba(20, 20, 19, 0.08);
+        --input-bg: #fdfbf6;
+        --info: #6a9bcc;
+        --success: #788c5d;
+        --warning: #a27b3b;
+        --danger: #c56b5d;
+        --code-bg: #f1eee5;
+        --error: #c56b5d;
       }
 
       * {
@@ -28,7 +35,7 @@
         flex-direction: column;
         overflow: hidden;
         color: var(--ink);
-        background: linear-gradient(160deg, #fdfcfb 0%, #f5f4ed 100%);
+        background: linear-gradient(160deg, #faf9f5 0%, #f1eee5 100%);
         font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
       }
 
@@ -38,18 +45,18 @@
         place-items: center;
         padding: 2rem;
         background:
-          radial-gradient(circle at top left, rgba(193, 95, 60, 0.16), transparent 32%),
-          radial-gradient(circle at bottom right, rgba(44, 44, 44, 0.08), transparent 30%),
-          linear-gradient(160deg, #fdfcfb 0%, #f5f4ed 100%);
+          radial-gradient(circle at top left, rgba(217, 119, 87, 0.08), transparent 34%),
+          radial-gradient(circle at bottom right, rgba(20, 20, 19, 0.05), transparent 30%),
+          linear-gradient(160deg, #faf9f5 0%, #f1eee5 100%);
       }
 
       .login-card {
         width: min(28rem, 100%);
         padding: 1.75rem;
-        border: 1px solid rgba(193, 95, 60, 0.18);
+        border: 1px solid rgba(20, 20, 19, 0.08);
         border-radius: 1.25rem;
-        background: rgba(255, 254, 249, 0.92);
-        box-shadow: 0 22px 60px rgba(44, 44, 44, 0.12);
+        background: rgba(250, 249, 245, 0.92);
+        box-shadow: 0 22px 60px rgba(20, 20, 19, 0.1);
         backdrop-filter: blur(16px);
       }
 
@@ -110,7 +117,7 @@
       .control-form input:focus,
       .control-form select:focus,
       .control-form textarea:focus {
-        outline: 2px solid rgba(193, 95, 60, 0.22);
+        outline: 2px solid rgba(217, 119, 87, 0.18);
         border-color: var(--accent);
       }
 
@@ -122,7 +129,7 @@
         border-radius: 0.85rem;
         padding: 0.72rem 1rem;
         background: var(--accent);
-        color: #fffaf4;
+        color: #faf9f5;
         cursor: pointer;
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.78rem;
@@ -2527,21 +2534,28 @@
 
       :root[data-theme="light"] {
         --paper: #faf9f5;
-        --ink: #2c2c2c;
-        --muted: #8c857f;
-        --dim: #5e5854;
-        --accent: #C15F3C;
-        --accent-dark: #A14A2F;
-        --panel: rgba(253, 252, 251, 0.92);
-        --sidebar-bg: #f0efed;
-        --line: #e8e6e3;
-        --shadow: 0 8px 32px rgba(44, 44, 44, 0.1);
-        --input-bg: #fffef9;
-        --error: #d73a49;
+        --ink: #141413;
+        --muted: #b0aea5;
+        --dim: #5f5b54;
+        --accent: #d97757;
+        --accent-dark: #c96b4d;
+        --panel: rgba(250, 249, 245, 0.92);
+        --panel-soft: rgba(232, 230, 220, 0.52);
+        --sidebar-bg: #ece9df;
+        --line: #e8e6dc;
+        --line-strong: rgba(20, 20, 19, 0.1);
+        --shadow: 0 8px 32px rgba(20, 20, 19, 0.08);
+        --input-bg: #fdfbf6;
+        --info: #6a9bcc;
+        --success: #788c5d;
+        --warning: #a27b3b;
+        --danger: #c56b5d;
+        --code-bg: #f1eee5;
+        --error: #c56b5d;
       }
 
       :root[data-theme="light"] body {
-        background: linear-gradient(160deg, #fdfcfb 0%, #f5f4ed 100%);
+        background: linear-gradient(160deg, #faf9f5 0%, #f1eee5 100%);
       }
 
       .dark-vars {

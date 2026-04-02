@@ -312,6 +312,30 @@ describe("tool trace output", () => {
     expect(adminUserActionCss).not.toContain("rgba(193, 95, 60, 0.08)");
   });
 
+  it("locks the quiet editorial light palette and calmer login copy", () => {
+    const css = readCss();
+    const lightThemeCss = readCssBlock(":root\\[data-theme=\"light\"\\]");
+    const loginShellCss = readCssBlock("\\.login-shell");
+    const loginCardCss = readCssBlock("\\.login-card");
+    const html = readHtml();
+
+    expect(lightThemeCss).toContain("--paper: #faf9f5;");
+    expect(lightThemeCss).toContain("--ink: #141413;");
+    expect(lightThemeCss).toContain("--accent: #d97757;");
+    expect(lightThemeCss).toContain("--line: #e8e6dc;");
+    expect(lightThemeCss).not.toContain("#C15F3C");
+
+    expect(loginShellCss).toContain("radial-gradient");
+    expect(loginShellCss).not.toContain("rgba(193, 95, 60, 0.16)");
+    expect(loginCardCss).not.toContain("rgba(193, 95, 60, 0.18)");
+
+    expect(html).toContain("Nanobot Workspace");
+    expect(html).toContain("Enter Workspace");
+    expect(html).not.toContain("Enter Control Plane");
+
+    expect(css).not.toContain("#A14A2F");
+  });
+
   it("splits settings into primary controls and a dedicated advanced editor column", () => {
     const html = readHtml();
     const css = readCss();
