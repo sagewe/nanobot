@@ -1,7 +1,7 @@
 use std::process::Command;
 
-use sidekick::config::{load_config, save_config};
 use serde_json::Value;
+use sidekick::config::{load_config, save_config};
 use tempfile::tempdir;
 
 #[test]
@@ -212,40 +212,8 @@ fn users_commands_manage_accounts_and_configs() {
 }
 
 #[test]
-fn users_migrate_legacy_moves_config_and_workspace_into_first_admin() {
+fn users_migrate_legacy_subcommand_is_rejected() {
     let dir = tempdir().expect("tempdir");
-    let legacy_workspace = dir.path().join("workspace");
-    std::fs::create_dir_all(legacy_workspace.join("memory")).expect("legacy workspace");
-    std::fs::write(
-        legacy_workspace.join("memory").join("note.txt"),
-        "remember this",
-    )
-    .expect("legacy note");
-    let legacy_config = serde_json::json!({
-        "agents": {
-            "defaults": {
-                "workspace": legacy_workspace.to_string_lossy(),
-                "defaultProfile": "openai:gpt-4.1-mini"
-            },
-            "profiles": {
-                "openai:gpt-4.1-mini": {
-                    "provider": "openai",
-                    "model": "gpt-4.1-mini",
-                    "request": {}
-                }
-            }
-        },
-        "providers": {
-            "openai": {}
-        },
-        "channels": {},
-        "tools": {}
-    });
-    std::fs::write(
-        dir.path().join("config.toml"),
-        toml::to_string_pretty(&legacy_config).expect("serialize legacy config"),
-    )
-    .expect("legacy config");
 
     let output = Command::new(env!("CARGO_BIN_EXE_sidekick"))
         .arg("--root")
@@ -256,102 +224,19 @@ fn users_migrate_legacy_moves_config_and_workspace_into_first_admin() {
         .arg("alice")
         .arg("--admin-password")
         .arg("password123")
-        .arg("--admin-display-name")
-        .arg("Alice")
         .output()
         .expect("run users migrate-legacy");
 
     assert!(
-        output.status.success(),
+        !output.status.success(),
         "stdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-
-    let users_raw =
-        std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
-    let users_value: Value = serde_json::from_str(&users_raw).expect("parse users");
-    let users = users_value["users"].as_array().expect("users array");
-    assert_eq!(users.len(), 1);
-    let user_id = users[0]["user_id"].as_str().expect("user id");
-    let migrated_workspace = dir
-        .path()
-        .join("users")
-        .join(user_id)
-        .join("workspace")
-        .join("memory")
-        .join("note.txt");
-    assert_eq!(
-        std::fs::read_to_string(migrated_workspace).expect("migrated note"),
-        "remember this"
-    );
-    assert!(dir.path().join("control").join("migration.json").exists());
-    assert!(dir.path().join("users").join(user_id).join("config.toml").exists());
-    assert!(!dir.path().join("users").join(user_id).join("config.json").exists());
-}
-
-#[test]
-fn users_migrate_legacy_falls_back_to_config_json_when_toml_is_missing() {
-    let dir = tempdir().expect("tempdir");
-    let legacy_workspace = dir.path().join("workspace");
-    std::fs::create_dir_all(legacy_workspace.join("memory")).expect("legacy workspace");
-    std::fs::write(
-        legacy_workspace.join("memory").join("note.txt"),
-        "remember this",
-    )
-    .expect("legacy note");
-    std::fs::write(
-        dir.path().join("config.json"),
-        serde_json::json!({
-            "agents": {
-                "defaults": {
-                    "workspace": legacy_workspace.to_string_lossy(),
-                    "defaultProfile": "openai:gpt-4.1-mini"
-                },
-                "profiles": {
-                    "openai:gpt-4.1-mini": {
-                        "provider": "openai",
-                        "model": "gpt-4.1-mini",
-                        "request": {}
-                    }
-                }
-            },
-            "providers": {
-                "openai": {}
-            },
-            "channels": {},
-            "tools": {}
-        })
-        .to_string(),
-    )
-    .expect("legacy config");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_sidekick"))
-        .arg("--root")
-        .arg(dir.path())
-        .arg("users")
-        .arg("migrate-legacy")
-        .arg("--admin-username")
-        .arg("alice")
-        .arg("--admin-password")
-        .arg("password123")
-        .arg("--admin-display-name")
-        .arg("Alice")
-        .output()
-        .expect("run users migrate-legacy");
-
     assert!(
-        output.status.success(),
+        String::from_utf8_lossy(&output.stderr).contains("migrate-legacy"),
         "stdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-
-    let users_raw =
-        std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
-    let users_value: Value = serde_json::from_str(&users_raw).expect("parse users");
-    let users = users_value["users"].as_array().expect("users array");
-    assert_eq!(users.len(), 1);
-    let user_id = users[0]["user_id"].as_str().expect("user id");
-    assert!(dir.path().join("users").join(user_id).join("config.toml").exists());
 }

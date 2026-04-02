@@ -7,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::agent::AgentLoop;
 use crate::bus::{InboundMessage, MessageBus};
-use crate::config::{Config, default_workspace_path, legacy_config_root};
+use crate::config::{Config, default_workspace_path};
 use crate::control::{BootstrapAdmin, ControlStore, Role};
 use crate::mcp::connect_mcp_servers;
 use crate::providers::build_provider_from_config;
@@ -15,8 +15,7 @@ use crate::web;
 
 pub const DEFAULT_WEB_HOST: &str = "127.0.0.1";
 pub const DEFAULT_WEB_PORT: u16 = 3456;
-const ONBOARD_TEMPLATE_SUMMARY: &str =
-    "Template includes multi-profile support for codex, telegram, weixin, wecom, feishu, and embedded web.";
+const ONBOARD_TEMPLATE_SUMMARY: &str = "Template includes multi-profile support for codex, telegram, weixin, wecom, feishu, and embedded web.";
 
 #[derive(Debug, Parser)]
 #[command(name = "sidekick")]
@@ -108,18 +107,6 @@ pub enum UsersCommand {
         #[arg(long)]
         username: String,
     },
-    MigrateLegacy {
-        #[arg(long)]
-        admin_username: String,
-        #[arg(long)]
-        admin_password: String,
-        #[arg(long, default_value = "")]
-        admin_display_name: String,
-        #[arg(long)]
-        legacy_config: Option<PathBuf>,
-        #[arg(long)]
-        legacy_workspace: Option<PathBuf>,
-    },
 }
 
 pub async fn run() -> Result<()> {
@@ -154,23 +141,12 @@ async fn onboard(
     } else {
         admin_display_name
     };
-    let mut legacy_config = legacy_root_config_path(&root);
-    let mut legacy_workspace = root.join("workspace");
-    if !(legacy_config.exists() || legacy_workspace.exists()) && root == default_control_root() {
-        let legacy_root = legacy_config_root();
-        legacy_config = legacy_root_config_path(&legacy_root);
-        legacy_workspace = legacy_root.join("workspace");
-    }
     let admin = BootstrapAdmin {
         username: admin_username,
         password: admin_password,
         display_name,
     };
-    let user = if legacy_config.exists() || legacy_workspace.exists() {
-        store.bootstrap_from_legacy(&admin, &legacy_config, &legacy_workspace)?
-    } else {
-        store.bootstrap_first_admin(&admin)?
-    };
+    let user = store.bootstrap_first_admin(&admin)?;
     println!("Initialized multi-user control plane at {}", root.display());
     println!("Created first admin user {}", user.username);
     println!("{ONBOARD_TEMPLATE_SUMMARY}");
@@ -438,41 +414,6 @@ async fn users(root: PathBuf, action: UsersCommand) -> Result<()> {
             println!("config valid for {}", user.username);
             Ok(())
         }
-        UsersCommand::MigrateLegacy {
-            admin_username,
-            admin_password,
-            admin_display_name,
-            legacy_config,
-            legacy_workspace,
-        } => {
-            let display_name = if admin_display_name.trim().is_empty() {
-                admin_username.clone()
-            } else {
-                admin_display_name
-            };
-            let legacy_config = legacy_config.unwrap_or_else(|| legacy_root_config_path(&root));
-            let legacy_workspace = legacy_workspace.unwrap_or_else(|| root.join("workspace"));
-            if !legacy_config.exists() {
-                bail!("legacy config {} does not exist", legacy_config.display());
-            }
-            if !legacy_workspace.exists() {
-                bail!(
-                    "legacy workspace {} does not exist",
-                    legacy_workspace.display()
-                );
-            }
-            let user = store.bootstrap_from_legacy(
-                &BootstrapAdmin {
-                    username: admin_username,
-                    password: admin_password,
-                    display_name,
-                },
-                &legacy_config,
-                &legacy_workspace,
-            )?;
-            println!("migrated legacy install into {}", user.username);
-            Ok(())
-        }
     }
 }
 
@@ -493,14 +434,6 @@ fn default_control_root() -> PathBuf {
         .parent()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-}
-
-fn legacy_root_config_path(root: &PathBuf) -> PathBuf {
-    let toml_path = root.join("config.toml");
-    if toml_path.exists() {
-        return toml_path;
-    }
-    root.join("config.json")
 }
 
 fn parse_session(session: &str) -> (String, String) {
@@ -583,5 +516,21 @@ mod tests {
         assert!(workspace.join("USER.md").exists());
         assert!(workspace.join("TOOLS.md").exists());
         assert!(workspace.join("memory").join("MEMORY.md").exists());
+    }
+
+    #[test]
+    fn users_migrate_legacy_subcommand_is_rejected() {
+        let error = App::try_parse_from([
+            "sidekick",
+            "users",
+            "migrate-legacy",
+            "--admin-username",
+            "alice",
+            "--admin-password",
+            "password123",
+        ])
+        .expect_err("migrate-legacy should not parse");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
     }
 }
