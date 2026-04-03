@@ -96,9 +96,11 @@
           <div id="sessions-list" class="sessions-list"></div>
         </section>
         <section class="jobs-pane" hidden>
-          <div class="jobs-header">
-            <h2 class="jobs-title" data-i18n="jobs_title">Scheduled Jobs</h2>
-            <button id="jobs-refresh-btn" type="button" data-i18n-title="jobs_refresh" title="Refresh">
+          <div class="jobs-header section-header">
+            <div class="section-title-group">
+              <h2 class="jobs-title" data-i18n="jobs_title">Scheduled Jobs</h2>
+            </div>
+            <button id="jobs-refresh-btn" type="button" class="section-action" data-i18n-title="jobs_refresh" title="Refresh">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
             </button>
           </div>
@@ -156,22 +158,24 @@
           </details>
         </section>
         <section class="mcp-pane" hidden>
-          <div class="jobs-header">
-            <h2 class="jobs-title" data-i18n="mcp_title">MCP Servers</h2>
-            <button id="mcp-refresh-btn" type="button" data-i18n-title="mcp_refresh" title="Refresh">
+          <div class="jobs-header section-header">
+            <div class="section-title-group">
+              <h2 class="jobs-title" data-i18n="mcp_title">MCP Servers</h2>
+            </div>
+            <button id="mcp-refresh-btn" type="button" class="section-action" data-i18n-title="mcp_refresh" title="Refresh">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
             </button>
           </div>
           <div id="mcp-list" class="jobs-list"></div>
         </section>
         <section class="skills-pane" hidden>
-          <section class="control-panel control-panel--skills">
-            <div class="control-panel-header">
-              <div>
-                <div class="session-kicker" data-i18n="tab_skills">Skills</div>
+          <section class="control-panel control-panel--skills section-surface">
+            <div class="control-panel-header section-header">
+              <div class="section-title-group">
+                <div class="session-kicker section-eyebrow" data-i18n="tab_skills">Skills</div>
                 <h2 class="jobs-title" data-i18n="skills_title">Skills Library</h2>
               </div>
-              <button id="skills-create-button" type="button" data-i18n="skills_create">Create Skill</button>
+              <button id="skills-create-button" type="button" class="section-action" data-i18n="skills_create">Create Skill</button>
             </div>
             <div class="control-form skills-layout">
               <aside class="skills-master">
@@ -179,23 +183,23 @@
                   <span data-i18n="skills_search_label">Search skills</span>
                   <input id="skills-search" type="search" data-i18n-placeholder="skills_search_placeholder" placeholder="Search skills…" autocomplete="off" />
                 </label>
-                <section class="skills-group">
-                  <div class="skills-group-header">
-                    <div class="session-kicker" data-i18n="skills_workspace_title">Workspace Skills</div>
+                <section class="skills-group section-surface">
+                  <div class="skills-group-header section-title-group">
+                    <div class="session-kicker section-eyebrow" data-i18n="skills_workspace_title">Workspace Skills</div>
                   </div>
                   <div id="skills-workspace-list" class="skills-list"></div>
                 </section>
-                <section class="skills-group">
-                  <div class="skills-group-header">
-                    <div class="session-kicker" data-i18n="skills_builtin_title">Built-in Skills</div>
+                <section class="skills-group section-surface">
+                  <div class="skills-group-header section-title-group">
+                    <div class="session-kicker section-eyebrow" data-i18n="skills_builtin_title">Built-in Skills</div>
                   </div>
                   <div id="skills-builtin-list" class="skills-list"></div>
                 </section>
               </aside>
-              <section class="skills-detail">
-                <div class="skills-detail-header">
-                  <div>
-                    <div class="session-kicker" data-i18n="tab_skills">Skills</div>
+              <section class="skills-detail section-surface">
+                <div class="skills-detail-header section-header">
+                  <div class="section-title-group">
+                    <div class="session-kicker section-eyebrow" data-i18n="tab_skills">Skills</div>
                     <h3 class="settings-section-title" data-i18n="skill_editor_title">Skill Editor</h3>
                   </div>
                   <label class="checkbox-row skill-enabled-toggle">
@@ -212,18 +216,18 @@
           </section>
         </section>
         <section class="settings-pane" hidden>
-          <section class="control-panel control-panel--workspace">
-            <div class="control-panel-header">
-              <div>
-                <div class="session-kicker" data-i18n="settings_workspace_kicker">Private Settings</div>
+          <section class="control-panel control-panel--workspace section-surface">
+            <div class="control-panel-header section-header">
+              <div class="section-title-group">
+                <div class="session-kicker section-eyebrow" data-i18n="settings_workspace_kicker">Private Settings</div>
                 <h2 class="jobs-title" data-i18n="settings_workspace_title">Workspace Configuration</h2>
               </div>
             </div>
             <form id="settings-form" class="control-form settings-layout">
               <div class="settings-main">
-                <section class="settings-section">
-                  <div class="settings-section-header">
-                    <div class="session-kicker" data-i18n="settings_profile_kicker">Profile</div>
+                <section class="settings-section section-surface">
+                  <div class="settings-section-header section-header section-title-group">
+                    <div class="session-kicker section-eyebrow" data-i18n="settings_profile_kicker">Profile</div>
                     <h3 class="settings-section-title" data-i18n="settings_profile_title">Base Configuration</h3>
                   </div>
                   <div class="control-grid control-grid--single">
@@ -233,15 +237,15 @@
                     </label>
                   </div>
                 </section>
-                <section class="settings-section">
-                  <div class="settings-section-header">
-                    <div class="session-kicker" data-i18n="settings_channels_kicker">Channels</div>
+                <section class="settings-section section-surface">
+                  <div class="settings-section-header section-header section-title-group">
+                    <div class="session-kicker section-eyebrow" data-i18n="settings_channels_kicker">Channels</div>
                     <h3 class="settings-section-title" data-i18n="settings_channels_title">Provider Access</h3>
                   </div>
                   <div class="settings-channel-groups">
-                    <section class="settings-channel-group">
-                      <div class="settings-channel-group-header">
-                        <div class="session-kicker" data-i18n="settings_channels_telegram">Telegram</div>
+                    <section class="settings-channel-group section-surface">
+                      <div class="settings-channel-group-header section-title-group">
+                        <div class="session-kicker section-eyebrow" data-i18n="settings_channels_telegram">Telegram</div>
                       </div>
                       <div class="control-grid control-grid--single">
                         <label>
@@ -254,9 +258,9 @@
                         </label>
                       </div>
                     </section>
-                    <section class="settings-channel-group">
-                      <div class="settings-channel-group-header">
-                        <div class="session-kicker" data-i18n="settings_channels_weixin">Weixin</div>
+                    <section class="settings-channel-group section-surface">
+                      <div class="settings-channel-group-header section-title-group">
+                        <div class="session-kicker section-eyebrow" data-i18n="settings_channels_weixin">Weixin</div>
                       </div>
                       <div class="control-grid control-grid--single">
                         <label>
@@ -269,9 +273,9 @@
                         </label>
                       </div>
                     </section>
-                    <section class="settings-channel-group">
-                      <div class="settings-channel-group-header">
-                        <div class="session-kicker" data-i18n="settings_channels_wecom">WeCom</div>
+                    <section class="settings-channel-group section-surface">
+                      <div class="settings-channel-group-header section-title-group">
+                        <div class="session-kicker section-eyebrow" data-i18n="settings_channels_wecom">WeCom</div>
                       </div>
                       <div class="control-grid control-grid--single">
                         <label class="checkbox-row">
@@ -288,9 +292,9 @@
                         </label>
                       </div>
                     </section>
-                    <section class="settings-channel-group">
-                      <div class="settings-channel-group-header">
-                        <div class="session-kicker" data-i18n="settings_channels_feishu">Feishu</div>
+                    <section class="settings-channel-group section-surface">
+                      <div class="settings-channel-group-header section-title-group">
+                        <div class="session-kicker section-eyebrow" data-i18n="settings_channels_feishu">Feishu</div>
                       </div>
                       <div class="control-grid control-grid--single">
                         <label class="checkbox-row">
@@ -319,12 +323,12 @@
                 </section>
               </div>
               <aside class="settings-advanced">
-                <div class="settings-advanced-header">
-                  <div>
-                    <div class="session-kicker" data-i18n="settings_advanced_kicker">Advanced</div>
+                <div class="settings-advanced-header section-header">
+                  <div class="section-title-group">
+                    <div class="session-kicker section-eyebrow" data-i18n="settings_advanced_kicker">Advanced</div>
                     <h3 class="settings-section-title" data-i18n="settings_advanced_title">Advanced TOML</h3>
                   </div>
-                  <button id="settings-refresh-button" type="button" data-i18n="settings_reload">Reload</button>
+                  <button id="settings-refresh-button" type="button" class="section-action" data-i18n="settings_reload">Reload</button>
                 </div>
                 <label class="editor-label settings-editor">
                   <span data-i18n="settings_raw_config">Raw TOML</span>
@@ -336,10 +340,10 @@
               </aside>
             </form>
           </section>
-          <section class="control-panel">
-            <div class="control-panel-header">
-              <div>
-                <div class="session-kicker" data-i18n="settings_password_kicker">Security</div>
+          <section class="control-panel section-surface">
+            <div class="control-panel-header section-header">
+              <div class="section-title-group">
+                <div class="session-kicker section-eyebrow" data-i18n="settings_password_kicker">Security</div>
                 <h2 class="jobs-title" data-i18n="settings_password_title">Change Password</h2>
               </div>
             </div>
@@ -359,15 +363,15 @@
           </section>
         </section>
         <section class="users-pane" hidden>
-          <div class="users-pane-header">
-            <div class="session-kicker" data-i18n="users_kicker">Admin</div>
+          <div class="users-pane-header section-title-group">
+            <div class="session-kicker section-eyebrow" data-i18n="users_kicker">Admin</div>
             <h2 class="jobs-title" data-i18n="users_title">Users</h2>
           </div>
           <div class="users-layout">
-            <section class="control-panel users-create-card">
-              <div class="control-panel-header users-section-header">
-                <div>
-                  <div class="session-kicker" data-i18n="users_create_kicker">Create</div>
+            <section class="control-panel users-create-card section-surface">
+              <div class="control-panel-header users-section-header section-header">
+                <div class="section-title-group">
+                  <div class="session-kicker section-eyebrow" data-i18n="users_create_kicker">Create</div>
                   <h3 class="settings-section-title" data-i18n="users_create_title">Create User</h3>
                 </div>
               </div>
@@ -396,13 +400,13 @@
                 </div>
               </form>
             </section>
-            <section class="control-panel users-list-card">
-              <div class="control-panel-header users-list-header">
-                <div>
-                  <div class="session-kicker" data-i18n="users_list_kicker">Directory</div>
+            <section class="control-panel users-list-card section-surface">
+              <div class="control-panel-header users-list-header section-header">
+                <div class="section-title-group">
+                  <div class="session-kicker section-eyebrow" data-i18n="users_list_kicker">Directory</div>
                   <h3 class="settings-section-title" data-i18n="users_list_title">Current Users</h3>
                 </div>
-                <button id="users-refresh-button" type="button" data-i18n="users_refresh">Refresh</button>
+                <button id="users-refresh-button" type="button" class="section-action" data-i18n="users_refresh">Refresh</button>
               </div>
               <div id="admin-users-list" class="admin-users-list"></div>
             </section>

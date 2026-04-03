@@ -152,6 +152,12 @@ function readCssBlock(selectorPattern) {
   return match ? match[1] : "";
 }
 
+function readCssBlocks(selectorPattern) {
+  const css = readCss();
+  const matches = [...css.matchAll(new RegExp(`${selectorPattern}\\s*\\{([\\s\\S]*?)\\n\\s*\\}`, "g"))];
+  return matches.map((match) => match[1]);
+}
+
 function flush() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -261,6 +267,87 @@ describe("tool trace output", () => {
     expect(fadeCss).not.toContain("-webkit-backdrop-filter:");
   });
 
+  it("defines shared navigation tokens and section primitives", () => {
+    const rootCss = readCssBlock(":root");
+    const tabBtnCss = readCssBlock("\\.tab-btn");
+    const tabBtnHoverCss = readCssBlock("\\.tab-btn:hover");
+    const tabBtnFocusCss = readCssBlock("\\.tab-btn:focus-visible");
+    const tabBtnActiveCss = readCssBlock("\\.tab-btn\\[data-active=\"true\"\\]");
+    const sectionHeaderCss = readCssBlock("\\.section-header");
+    const sectionTitleGroupCss = readCssBlock("\\.section-title-group");
+    const sectionActionCss = readCssBlock("\\.section-action");
+    const sectionActionHoverCss = readCssBlock("\\.section-action:hover");
+    const sectionActionFocusCss = readCssBlock("\\.section-action:focus");
+
+    expect(rootCss).toContain("--nav-item-radius:");
+    expect(rootCss).toContain("--nav-item-pad-y:");
+    expect(rootCss).toContain("--nav-item-pad-x:");
+    expect(rootCss).toContain("--nav-hover-bg:");
+    expect(rootCss).toContain("--nav-active-bg:");
+    expect(rootCss).toContain("--nav-active-ink:");
+    expect(rootCss).toContain("--nav-quiet-bg:");
+    expect(rootCss).toContain("--section-surface-bg:");
+    expect(rootCss).toContain("--section-surface-border:");
+
+    expect(tabBtnCss).toContain("border-radius: var(--nav-item-radius);");
+    expect(tabBtnCss).toContain("padding: var(--nav-item-pad-y) var(--nav-item-pad-x);");
+    expect(tabBtnCss).toContain("background: var(--nav-quiet-bg);");
+    expect(tabBtnHoverCss).toContain("background: var(--nav-hover-bg);");
+    expect(tabBtnHoverCss).toContain("color: var(--ink);");
+    expect(tabBtnFocusCss).toContain("outline: 2px solid rgba(217, 119, 87, 0.18);");
+    expect(tabBtnFocusCss).toContain("outline-offset: 2px;");
+    expect(tabBtnFocusCss).toContain("background: var(--nav-hover-bg);");
+    expect(tabBtnFocusCss).toContain("color: var(--ink);");
+    expect(tabBtnFocusCss).toContain("box-shadow: inset 0 0 0 1px rgba(217, 119, 87, 0.24);");
+    expect(tabBtnActiveCss).toContain("color: var(--nav-active-ink);");
+    expect(tabBtnActiveCss).toContain("background: var(--nav-active-bg-strong);");
+    expect(tabBtnActiveCss).toContain("font-weight: 600;");
+    expect(sectionHeaderCss).toContain("display: flex;");
+    expect(sectionHeaderCss).toContain("justify-content: space-between;");
+    expect(sectionTitleGroupCss).toContain("display: grid;");
+    expect(sectionActionCss).toContain("border-radius: var(--nav-item-radius);");
+    expect(sectionActionCss).toContain("border: 1px solid var(--line);");
+    expect(sectionActionCss).toContain("background: var(--nav-quiet-bg);");
+    expect(sectionActionCss).toContain("color: var(--dim);");
+    expect(sectionActionCss).toContain("padding:");
+    expect(sectionActionCss).toContain("font-family: \"IBM Plex Mono\", \"SFMono-Regular\", Consolas, monospace;");
+    expect(sectionActionCss).toContain("font-size: 0.78rem;");
+    expect(sectionActionCss).toContain("cursor: pointer;");
+    expect(sectionActionCss).toContain("transition:");
+    expect(sectionActionHoverCss).toContain("background: var(--nav-hover-bg);");
+    expect(sectionActionHoverCss).toContain("border-color: var(--accent);");
+    expect(sectionActionHoverCss).toContain("color: var(--accent);");
+    expect(sectionActionFocusCss).toContain("outline:");
+    expect(sectionActionFocusCss).toContain("outline-offset:");
+  });
+
+  it("reuses shared header actions and token-driven active tab states", () => {
+    const css = readCss();
+    const sectionActionCss = readCssBlock("\\.section-action");
+    const jobsHeaderButtonCss = readCssBlock("\\.jobs-header \\.section-action");
+    const jobsTitleCss = readCssBlock("\\.jobs-title");
+    const skillsGroupCss = readCssBlock("\\.skills-group");
+    const settingsSectionCssBlocks = readCssBlocks("\\.settings-section");
+    const activeTabCss = readCssBlock("\\.tab-btn\\[data-active=\"true\"\\]");
+    const collapsedActiveCss = readCssBlock("\\.session-rail\\[data-collapsed=\"true\"\\] \\.tab-btn\\[data-active=\"true\"\\]");
+
+    expect(sectionActionCss).toContain("border-radius: var(--nav-item-radius);");
+    expect(sectionActionCss).toContain("padding: 0.72rem 1rem;");
+    expect(sectionActionCss).toContain("font-family: \"IBM Plex Mono\", \"SFMono-Regular\", Consolas, monospace;");
+    expect(sectionActionCss).toContain("font-size: 0.78rem;");
+    expect(sectionActionCss).toContain("cursor: pointer;");
+    expect(jobsHeaderButtonCss).toContain("padding: 0;");
+    expect(jobsHeaderButtonCss).toContain("width: 2rem;");
+    expect(jobsHeaderButtonCss).toContain("height: 2rem;");
+    expect(jobsTitleCss).toContain('font-family: "Poppins", Arial, sans-serif;');
+    expect(skillsGroupCss).toContain("background: var(--section-surface-bg);");
+    expect(settingsSectionCssBlocks).toHaveLength(1);
+    expect(settingsSectionCssBlocks[0]).toContain("background: var(--section-surface-bg);");
+    expect(css).toContain("--nav-active-bg-strong:");
+    expect(activeTabCss).toContain("background: var(--nav-active-bg-strong);");
+    expect(collapsedActiveCss).toContain("box-shadow:");
+  });
+
   it("keeps message rows constrained to the transcript width instead of the viewport", () => {
     const groupCss = readCssBlock("\\.msg-group");
     const bodyCss = readCssBlock("\\.msg-body");
@@ -302,15 +389,15 @@ describe("tool trace output", () => {
   it("reuses the jobs panel palette for settings and users surfaces", () => {
     const controlPanelCss = readCssBlock("\\.control-panel");
     const adminUserCardCss = readCssBlock("\\.admin-user-card");
-    const controlPanelButtonCss = readCssBlock("\\.control-panel-header button");
+    const sectionActionCss = readCssBlock("\\.section-action");
     const adminUserActionCss = readCssBlock("\\.admin-user-actions button");
 
     expect(controlPanelCss).toContain("background: var(--panel);");
     expect(controlPanelCss).not.toContain("255, 255, 255");
     expect(adminUserCardCss).toContain("background: var(--panel);");
     expect(adminUserCardCss).not.toContain("253, 252, 251");
-    expect(controlPanelButtonCss).toContain("background: transparent;");
-    expect(controlPanelButtonCss).not.toContain("rgba(193, 95, 60, 0.08)");
+    expect(sectionActionCss).toContain("background: var(--nav-quiet-bg);");
+    expect(sectionActionCss).not.toContain("rgba(193, 95, 60, 0.08)");
     expect(adminUserActionCss).toContain("background: transparent;");
     expect(adminUserActionCss).not.toContain("rgba(193, 95, 60, 0.08)");
   });
@@ -391,13 +478,29 @@ describe("tool trace output", () => {
     expect(html).toContain('id="settings-form" class="control-form settings-layout"');
     expect(html).toContain('class="settings-main"');
     expect(html).toContain('class="settings-advanced"');
-    expect(html).toContain('class="settings-advanced-header"');
+    expect(html).toContain('class="settings-advanced-header section-header"');
+    expect(html).toContain('id="settings-refresh-button" type="button" class="section-action"');
     expect(settingsLayoutCss).toContain("grid-template-columns:");
     expect(settingsMainCss).toContain("display: grid;");
     expect(settingsAdvancedCss).toContain("grid-template-rows:");
     expect(css).toContain("@media (max-width: 1100px)");
     expect(css).toContain(".settings-layout");
     expect(css).toContain("grid-template-columns: 1fr;");
+  });
+
+  it("marks tab-adjacent panes with shared section semantics", () => {
+    const html = readHtml();
+
+    expect(html).toContain('class="jobs-header section-header"');
+    expect(html).toContain('id="jobs-refresh-btn" type="button" class="section-action"');
+    expect(html).toContain('id="mcp-refresh-btn" type="button" class="section-action"');
+    expect(html).toContain('class="control-panel control-panel--skills section-surface"');
+    expect(html).toContain('class="skills-group section-surface"');
+    expect(html).toContain('class="skills-detail section-surface"');
+    expect(html).toContain('class="users-pane-header section-title-group"');
+    expect(html).toMatch(/<div class="jobs-header section-header">[\s\S]*?<div class="section-title-group">[\s\S]*?<h2 class="jobs-title" data-i18n="jobs_title">Scheduled Jobs<\/h2>[\s\S]*?<button id="jobs-refresh-btn" type="button" class="section-action"/);
+    expect(html).toMatch(/<div class="jobs-header section-header">[\s\S]*?<div class="section-title-group">[\s\S]*?<h2 class="jobs-title" data-i18n="mcp_title">MCP Servers<\/h2>[\s\S]*?<button id="mcp-refresh-btn" type="button" class="section-action"/);
+    expect(html).toContain('class="session-kicker section-eyebrow"');
   });
 
   it("adds a static skills shell with responsive master-detail scaffolding", async () => {
@@ -450,7 +553,7 @@ describe("tool trace output", () => {
     const { TRANSLATIONS } = await import("../src/i18n.js");
 
     expect(html).toContain('class="settings-channel-groups"');
-    expect(html).toContain('class="settings-channel-group"');
+    expect(html).toContain('class="settings-channel-group section-surface"');
     expect(html).toContain('data-i18n="settings_channels_telegram"');
     expect(html).toContain('data-i18n="settings_channels_weixin"');
     expect(html).toContain('data-i18n="settings_channels_wecom"');
@@ -651,10 +754,10 @@ describe("tool trace output", () => {
     const usersLayoutCss = readCssBlock("\\.users-layout");
     const usersCreateFormCss = readCssBlock("\\.users-create-form");
 
-    expect(html).toContain('class="users-pane-header"');
+    expect(html).toContain('class="users-pane-header section-title-group"');
     expect(html).toContain('class="users-layout"');
-    expect(html).toContain('class="control-panel users-create-card"');
-    expect(html).toContain('class="control-panel users-list-card"');
+    expect(html).toContain('class="control-panel users-create-card section-surface"');
+    expect(html).toContain('class="control-panel users-list-card section-surface"');
     expect(html).toContain('id="create-user-form" class="control-form compact-form users-create-form"');
     expect(usersLayoutCss).toContain("display: grid;");
     expect(usersCreateFormCss).toContain("max-width:");
