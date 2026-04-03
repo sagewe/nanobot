@@ -2,13 +2,28 @@
 
 Use this after a config change, provider switch, or fresh checkout to confirm the current Rust runtime is actually alive. It covers the real surfaces that exist today: `gateway` with embedded web, Telegram, WeCom, Weixin, and the Codex provider.
 
+## Preflight
+
+From the repository root, confirm the runtime can resolve its control-plane paths and auth state:
+
+```bash
+cargo run --release -- status
+```
+
+Optional operator checks after bootstrapping:
+
+```bash
+cargo run --release -- channels status --user alice
+cargo run --release -- provider login codex --user alice
+```
+
 ## Baseline
 
 - Config lives in `~/.sidekick/config.toml` by default.
 - Workspace lives in `~/.sidekick/workspace` by default.
 - Embedded web listens on `http://127.0.0.1:3456` unless overridden.
 - `cargo run --release -- web` still exists as a standalone UI; the smoke path below uses `gateway` because that is the production path for embedded web plus channels.
-- The current smoke surface is mostly text-only. Media is not part of this checklist.
+- The smoke path below is still text-first even though some channels now preserve richer reply and media context. Media is not required for a basic health check.
 
 ## 1. Gateway + Embedded Web
 
@@ -41,7 +56,7 @@ Smoke steps:
 2. Create a new `web` session if needed.
 3. Send `Reply with exactly OK.`
 4. Expect the assistant reply to be exactly `OK`.
-5. If you opened a read-only session from another channel, use `Duplicate to Web` before sending.
+5. If you opened a session from another channel, send from it directly and expect the browser to continue in a new `web` session with copied history. Use `Duplicate to Web` only if you want that fork before typing.
 
 Failure triage:
 
@@ -49,7 +64,7 @@ Failure triage:
 - No `channels started` line: config was not loaded or the channel is disabled.
 - Web request fails: look for `web session <id> failed` in the logs.
 - Sign-in succeeds but the UI returns to the login screen: the browser session was not established; delete stale site cookies, then sign in again.
-- Read-only session refuses input: duplicate the session into `web` first.
+- Cross-channel send stays blocked: check whether the selected session detail actually reports duplicate capability, then look for `duplicate` or `web session <id> failed` errors in the logs.
 
 ## 2. Telegram
 
@@ -69,7 +84,7 @@ What success looks like:
 
 Current behavior:
 
-- Telegram is text-only for this runtime smoke.
+- Telegram smoke remains text-first for simplicity.
 - `_progress` and `_tool_hint` messages are filtered before send.
 - Telegram is intentionally quiet on success; the main signal is the reply appearing in chat.
 
@@ -138,8 +153,8 @@ What success looks like:
 
 Current behavior:
 
-- Weixin currently handles text messages in and out.
-- Non-text messages are ignored.
+- Weixin smoke remains text-first.
+- Non-text inbound items are summarized instead of being dropped silently.
 - If the account is missing or expired, the runtime keeps waiting for a fresh login rather than crashing.
 
 Failure triage:

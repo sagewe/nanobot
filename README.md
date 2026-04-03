@@ -31,11 +31,18 @@ cargo run --release -- onboard \
   --admin-password change-me
 ```
 
+For a guided, line-oriented setup flow:
+
+```bash
+cargo run --release -- onboard --wizard
+```
+
 This bootstraps a multi-user control plane under `~/.sidekick`:
 
 - `control/` holds system state, users, audit logs, and web sessions
 - `users/<user_id>/config.toml` is the per-user runtime config
 - `users/<user_id>/workspace/` is the per-user workspace
+- `users/<user_id>/workspace/memory/{MEMORY.md,HISTORY.md}` stores durable memory summaries
 
 After bootstrapping, edit the generated user config, then start the main runtime:
 
@@ -44,6 +51,12 @@ cargo run --release -- gateway
 ```
 
 Open the embedded web UI at `http://127.0.0.1:3456`.
+
+To inspect the resolved config path, workspace path, default profile, control-plane state, and Codex readiness:
+
+```bash
+cargo run --release -- status
+```
 
 For a direct CLI request, pass the bootstrapped username explicitly:
 
@@ -55,6 +68,14 @@ For an interactive CLI session:
 
 ```bash
 cargo run --release -- agent --user alice --session cli:dev
+```
+
+Useful operator commands:
+
+```bash
+cargo run --release -- channels status --user alice
+cargo run --release -- channels login weixin --user alice
+cargo run --release -- provider login codex --user alice
 ```
 
 ## Configuration
@@ -109,13 +130,19 @@ cargo run --release -- web
 
 But the main operational path is `gateway`, because it combines embedded web with the active channel runtime.
 
-The browser UI can inspect grouped sessions across channels. `web` sessions are writable. Sessions from other channels are read-only in the browser until duplicated into a writable `web` session.
+The browser UI can inspect grouped sessions across channels.
+
+- `web` sessions are writable directly.
+- Non-`web` sessions remain read-only as stored sessions.
+- Sending from a non-`web` session in the browser automatically continues the conversation in a new writable `web` copy.
+- The explicit `Duplicate to Web` action still exists if you want to fork before typing.
 
 Current web auth behavior:
 
 - The embedded web UI authenticates with the `sidekick_session` cookie only.
 - If the web UI loses auth during bootstrap, it returns to the sign-in screen instead of leaving a half-authenticated shell visible.
 - Empty sessions now render as an empty transcript until the first real message is sent.
+- The embedded web UI now includes a `Skills` tab for inspecting builtin skills and managing workspace `SKILL.md` files.
 
 Feishu currently supports long-connection inbound messaging, sender allowlists, group `mention` and `open` policy handling, reply-to-message routing, reaction emoji acknowledgements, and outbound `text`, `post`, and `interactive` delivery.
 
@@ -154,8 +181,8 @@ to switch the current session.
 
 - The runtime is still evolving.
 - Most channel paths are text-first.
-- Weixin currently handles text messages only.
-- Non-`web` sessions are read-only in the browser until duplicated into a writable `web` session.
+- Weixin outbound replies are still text-first; non-text inbound items are summarized rather than uploaded back as media.
+- Browser-authored continuation of a non-`web` session always forks into a `web` session instead of writing back to the original channel history.
 
 ## Development
 

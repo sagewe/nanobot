@@ -252,14 +252,15 @@ fn page_shell_supports_persisted_cross_channel_selection_and_legacy_migration() 
 }
 
 #[test]
-fn page_shell_disables_composer_for_read_only_sessions_and_exposes_duplicate_action() {
+fn page_shell_allows_submit_for_duplicable_read_only_sessions() {
     let html = sidekick::web::page::render_index_html();
 
     assert!(html.contains(
         "const duplicateButton = document.getElementById(\"duplicate-session-button\");"
     ));
-    assert!(html.contains("messageInput.disabled = readOnly;"));
-    assert!(html.contains("sendButton.disabled = isBusy || currentSessionReadOnly;"));
+    assert!(html.contains("messageInput.disabled = readOnly && !canDuplicate;"));
+    assert!(html.contains("sendButton.disabled = isBusy || (currentSessionReadOnly && !currentSessionCanDuplicate);"));
+    assert!(html.contains("if (currentSessionReadOnly && !currentSessionCanDuplicate) {"));
     assert!(html.contains("duplicateButton.hidden = !canDuplicate;"));
     assert!(html.contains("Duplicate to Web"));
 }

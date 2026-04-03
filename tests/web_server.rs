@@ -3004,20 +3004,32 @@ async fn real_agentchatservice_surfaces_weixin_runtime_init_failures_as_internal
 }
 
 #[tokio::test]
-async fn chat_endpoint_rejects_non_web_sessions_until_duplicated() {
+async fn chat_endpoint_auto_duplicates_non_web_sessions_into_web() {
     let dir = tempdir().expect("tempdir");
     let mut telegram = Session::new("telegram:outside");
-    telegram.active_profile = Some("openai:gpt-4.1-mini".to_string());
-    telegram.messages = vec![text_message("assistant", "not web")];
+    telegram.active_profile = Some("openai:mock-model".to_string());
+    telegram.messages = vec![
+        text_message("user", "hello from telegram"),
+        text_message("assistant", "reply from telegram"),
+    ];
     save_session(dir.path(), &telegram);
 
-    let app = agent_app(&dir, Vec::new()).await;
+    let app = agent_app(
+        &dir,
+        vec![LlmResponse {
+            content: Some("continued in web".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            extra: Map::new(),
+        }],
+    )
+    .await;
     let addr = spawn_test_server(app).await;
 
     let response = reqwest::Client::new()
         .post(format!("http://{addr}/api/chat"))
         .json(&serde_json::json!({
-            "message": "hello",
+            "message": "hello from browser",
             "channel": "telegram",
             "sessionId": "outside"
         }))
@@ -3027,18 +3039,71 @@ async fn chat_endpoint_rejects_non_web_sessions_until_duplicated() {
     let status = response.status();
     let payload: serde_json::Value = response.json().await.expect("non-web payload");
 
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert_eq!(payload["channel"], "web");
+    assert_ne!(payload["sessionId"], "outside");
+    assert_eq!(payload["reply"], "continued in web");
+    assert_eq!(payload["activeProfile"], "openai:mock-model");
+
+    let store = SessionStore::new(dir.path()).expect("session store");
+    let original = store
+        .load("telegram:outside")
+        .expect("load original")
+        .expect("original session");
+    assert_eq!(original.messages.len(), 2);
+    assert_eq!(original.messages[0].content.as_str(), Some("hello from telegram"));
+    assert!(
+        store
+            .load(&format!(
+                "web:{}",
+                payload["sessionId"].as_str().expect("new session id")
+            ))
+            .expect("load duplicated")
+            .is_some()
+    );
+
+    let duplicated = store
+        .load(&format!(
+            "web:{}",
+            payload["sessionId"].as_str().expect("new session id")
+        ))
+        .expect("load duplicated")
+        .expect("duplicated session");
+    assert_eq!(
+        duplicated.source_session_key.as_deref(),
+        Some("telegram:outside")
+    );
+    assert_eq!(duplicated.messages.len(), 4);
+    assert_eq!(duplicated.messages[0].content.as_str(), Some("hello from telegram"));
+    assert_eq!(duplicated.messages[1].content.as_str(), Some("reply from telegram"));
+    assert_eq!(duplicated.messages[2].content.as_str(), Some("hello from browser"));
+    assert_eq!(duplicated.messages[3].content.as_str(), Some("continued in web"));
+}
+
+#[tokio::test]
+async fn chat_endpoint_without_session_id_still_rejects_non_web_sends() {
+    let dir = tempdir().expect("tempdir");
+    let app = agent_app(&dir, Vec::new()).await;
+    let addr = spawn_test_server(app).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/api/chat"))
+        .json(&serde_json::json!({
+            "message": "hello",
+            "channel": "telegram"
+        }))
+        .send()
+        .await
+        .expect("send non-web chat request without session");
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("non-web payload");
+
     assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
     assert!(
         payload["error"]
             .as_str()
             .unwrap_or_default()
-            .contains("duplicate")
-    );
-    assert!(
-        payload["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("read-only")
+            .contains("existing session")
     );
 }
 

@@ -517,15 +517,19 @@ pub async fn chat(
         }
         None => {
             return Err(ApiError::bad_request(
-                "session is read-only; duplicate it into web before sending",
+                "non-web browser continuation requires an existing session",
             ));
         }
     };
-    if channel != "web" {
-        return Err(ApiError::bad_request(
-            "session is read-only; duplicate it into web before sending",
-        ));
-    }
+    let (channel, session_id) = if channel == "web" {
+        (channel, session_id)
+    } else {
+        let duplicated = chat_service
+            .duplicate_session(&channel, &session_id)
+            .await
+            .map_err(|error| map_duplicate_error(error, &channel, &session_id))?;
+        (duplicated.channel, duplicated.session_id)
+    };
     let chat = chat_service
         .chat(message, &channel, &session_id)
         .await

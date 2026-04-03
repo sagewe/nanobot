@@ -205,7 +205,7 @@ function stopBusyTimer() {
 
 function setBusy(busy) {
   isBusy = busy;
-  sendButton.disabled = busy || currentSessionReadOnly;
+  sendButton.disabled = busy || (currentSessionReadOnly && !currentSessionCanDuplicate);
   sessionSelect.disabled = busy;
   duplicateButton.disabled = busy;
 }
@@ -213,8 +213,8 @@ function setBusy(busy) {
 function setComposerAccess(readOnly, canDuplicate) {
   currentSessionReadOnly = readOnly;
   currentSessionCanDuplicate = canDuplicate;
-  messageInput.disabled = readOnly;
-  sendButton.disabled = isBusy || currentSessionReadOnly;
+  messageInput.disabled = readOnly && !canDuplicate;
+  sendButton.disabled = isBusy || (currentSessionReadOnly && !currentSessionCanDuplicate);
   duplicateButton.hidden = !canDuplicate;
   duplicateButton.disabled = isBusy;
 }
@@ -1184,7 +1184,7 @@ composer.addEventListener("submit", async (event) => {
     messageInput.focus();
     return;
   }
-  if (currentSessionReadOnly) {
+  if (currentSessionReadOnly && !currentSessionCanDuplicate) {
     setStatus(t("readonly_session"), "error");
     return;
   }
@@ -1205,14 +1205,19 @@ composer.addEventListener("submit", async (event) => {
       await refreshSessions();
       await selectSession(created.channel || "web", created.sessionId);
     }
+    const sourceChannel = currentChannel;
     const payload = await sendChat(message, currentChannel, currentSessionId);
+    const switchedIntoWeb =
+      sourceChannel &&
+      sourceChannel !== "web" &&
+      (payload.channel || sourceChannel) === "web";
     setSelectedSession(payload.channel || currentChannel, payload.sessionId);
     await refreshSessions();
     await selectSession(payload.channel || currentChannel, payload.sessionId || currentSessionId);
     if (payload.persisted === false) {
       appendEphemeralExchange(message, payload);
     }
-    setStatus("", "idle");
+    setStatus(switchedIntoWeb ? t("continued_in_web") : "", "idle");
   } catch (error) {
     if (!messageInput.value.trim()) {
       messageInput.value = draft;
