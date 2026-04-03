@@ -1,4 +1,4 @@
 import "./browser-globals.js";
-import TOML from "@iarna/toml";
+import * as TOML from "smol-toml";
 
 export default TOML;

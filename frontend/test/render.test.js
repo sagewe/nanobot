@@ -584,7 +584,7 @@ describe("tool trace output", () => {
     expect(js).toContain("TOML.parse");
     expect(apiJs).toContain("export async function updateMyConfig(nextConfig)");
     expect(apiJs).toContain("body: JSON.stringify(nextConfig)");
-    expect(packageJson).toContain('"@iarna/toml"');
+    expect(packageJson).toContain('"smol-toml"');
   });
 
   it("surfaces Feishu structured settings in the workspace form", () => {
@@ -610,7 +610,7 @@ describe("tool trace output", () => {
     apiMocks.fetchCurrentUser.mockRejectedValueOnce(new Error("login required"));
     apiMocks.updateMyConfig.mockResolvedValueOnce({ ok: true });
 
-    const { default: TOML } = await import("@iarna/toml");
+    const { default: TOML } = await import("../src/toml.js");
     await import("../src/main.js");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -654,7 +654,7 @@ describe("tool trace output", () => {
     apiMocks.fetchCurrentUser.mockRejectedValueOnce(new Error("login required"));
     apiMocks.updateMyConfig.mockResolvedValueOnce({ ok: true });
 
-    const { default: TOML } = await import("@iarna/toml");
+    const { default: TOML } = await import("../src/toml.js");
     await import("../src/main.js");
     await new Promise((resolve) => setTimeout(resolve, 0));
 

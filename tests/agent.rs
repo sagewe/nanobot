@@ -945,6 +945,10 @@ impl MemoryProviderReply {
     fn ok(response: LlmResponse) -> Self {
         Self::Response(response)
     }
+
+    fn err(message: impl Into<String>) -> Self {
+        Self::Error(message.into())
+    }
 }
 
 #[derive(Default)]
@@ -1804,6 +1808,41 @@ async fn memory_consolidator_keeps_watermark_when_memory_persistence_fails() {
             .expect("history")
             .contains("failed write")
     );
+}
+
+#[tokio::test]
+async fn memory_consolidator_surfaces_provider_errors_without_advancing_watermark() {
+    let dir = tempdir().expect("tempdir");
+    let state = Arc::new(MemoryProviderState::default());
+    state
+        .consolidation_replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::err("provider consolidation failed"));
+    state
+        .consolidation_replies
+        .lock()
+        .await
+        .push_back(MemoryProviderReply::err("provider consolidation failed"));
+    let provider: Arc<dyn LlmProvider> = Arc::new(MemoryRecordingProvider {
+        state: state.clone(),
+    });
+    let consolidator =
+        MemoryConsolidator::new(dir.path(), provider, memory_policy(1, 0)).expect("memory");
+    let mut session = Session::new("cli:memory-provider-error");
+    session.messages.push(text_message("user", "remember this"));
+    session.messages.push(text_message("assistant", "noted"));
+
+    let err = consolidator
+        .flush_session(&mut session, &default_request(), "manual flush")
+        .await
+        .expect_err("flush should fail");
+
+    assert!(
+        err.to_string().contains("provider consolidation failed"),
+        "{err}"
+    );
+    assert_eq!(session.last_consolidated, 0);
 }
 
 #[tokio::test]
