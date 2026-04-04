@@ -352,6 +352,88 @@ async fn protected_multiuser_routes_require_authentication() {
 }
 
 #[tokio::test]
+async fn unauthenticated_workspace_pages_redirect_to_root() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+
+    for path in ["/workspace", "/app"] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "{path}");
+        assert_eq!(
+            response
+                .headers()
+                .get("location")
+                .and_then(|value| value.to_str().ok()),
+            Some("/"),
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn authenticated_root_redirects_to_workspace_page() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response
+            .headers()
+            .get("location")
+            .and_then(|value| value.to_str().ok()),
+        Some("/workspace")
+    );
+}
+
+#[tokio::test]
+async fn authenticated_workspace_and_app_routes_serve_the_frontend_shell() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    for path in ["/workspace", "/app"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("cookie", cookie.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains("id=\"login-shell\""), "{path}");
+        assert!(html.contains("id=\"workspace-shell\""), "{path}");
+        assert!(html.contains("id=\"app\""), "{path}");
+    }
+}
+
+#[tokio::test]
 async fn login_sets_cookie_and_me_returns_authenticated_user() {
     let (state, _dir) = multiuser_state();
     let app = web::build_router(state);
@@ -884,7 +966,12 @@ async fn me_config_returns_the_authenticated_users_private_config() {
         payload
             .pointer("/agents/defaults/workspace")
             .and_then(serde_json::Value::as_str),
-        Some(store.workspace_dir(&workspace.workspace_id).to_string_lossy().as_ref())
+        Some(
+            store
+                .workspace_dir(&workspace.workspace_id)
+                .to_string_lossy()
+                .as_ref()
+        )
     );
 }
 

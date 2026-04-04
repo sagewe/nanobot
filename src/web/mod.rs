@@ -439,6 +439,8 @@ impl AppState {
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(page::index_handler))
+        .route("/workspace", get(page::workspace_handler))
+        .route("/app", get(page::app_handler))
         .route("/assets/{*path}", get(page::static_handler))
         .route("/healthz", get(api::healthz))
         .route("/api/auth/login", post(api::login))
