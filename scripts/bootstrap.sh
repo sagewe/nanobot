@@ -31,6 +31,6 @@ cargo fetch
 cat <<'EOF'
 bootstrap complete
 next steps:
-  just test
-  just gateway
+  mise exec -- just test
+  mise exec -- just gateway
 EOF

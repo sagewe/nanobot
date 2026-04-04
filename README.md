@@ -197,14 +197,14 @@ mise install
 Prepare dependencies:
 
 ```bash
-just bootstrap
+mise exec -- just bootstrap
 ```
 
 Common development commands:
 
 ```bash
-just test
-just gateway
+mise exec -- just test
+mise exec -- just gateway
 ```
 
 `build.rs` still provides a fallback frontend install/build path during direct Cargo builds, so the lower-level commands below remain useful when you want to drive pieces manually.
