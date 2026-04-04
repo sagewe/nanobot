@@ -666,6 +666,62 @@
         scrollbar-color: var(--line) transparent;
       }
 
+      .channels-layout {
+        display: grid;
+        grid-template-columns: minmax(26rem, 1.4fr) minmax(18rem, 0.9fr);
+        gap: 1rem;
+        align-items: start;
+      }
+
+      .channels-config-card {
+        position: relative;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at top right, rgba(217, 119, 87, 0.12), transparent 28%),
+          radial-gradient(circle at bottom left, rgba(106, 155, 204, 0.12), transparent 32%),
+          var(--panel);
+      }
+
+      .channels-copy {
+        margin: -0.2rem 0 1rem;
+        max-width: 38rem;
+        color: var(--dim);
+        line-height: 1.6;
+        font-family: "Lora", Georgia, serif;
+      }
+
+      .channels-settings-form {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .channels-layout .account-panel {
+        max-width: none;
+      }
+
+      .channels-weixin-card {
+        background:
+          radial-gradient(circle at top left, rgba(120, 140, 93, 0.12), transparent 30%),
+          radial-gradient(circle at bottom right, rgba(106, 155, 204, 0.1), transparent 34%),
+          #fdfcfb;
+      }
+
+      .channels-copy--compact {
+        margin: -0.2rem 0 0;
+        max-width: 28rem;
+      }
+
+      .channels-weixin-config {
+        padding: 1rem;
+        border: 1px solid var(--section-surface-border);
+        border-radius: 0.95rem;
+        background: var(--section-surface-bg);
+      }
+
+      .channels-actions {
+        justify-content: flex-start;
+      }
+
       /* ── MCP pane ────────────────────────────────────────────────────────── */
       .mcp-pane {
         flex: 1;
@@ -3579,6 +3635,10 @@
       }
 
       @media (max-width: 1100px) {
+        .channels-layout {
+          grid-template-columns: 1fr;
+        }
+
         .skills-layout {
           grid-template-columns: 1fr;
         }

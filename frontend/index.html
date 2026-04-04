@@ -237,90 +237,6 @@
                     </label>
                   </div>
                 </section>
-                <section class="settings-section section-surface">
-                  <div class="settings-section-header section-header section-title-group">
-                    <div class="session-kicker section-eyebrow" data-i18n="settings_channels_kicker">Channels</div>
-                    <h3 class="settings-section-title" data-i18n="settings_channels_title">Provider Access</h3>
-                  </div>
-                  <div class="settings-channel-groups">
-                    <section class="settings-channel-group section-surface">
-                      <div class="settings-channel-group-header section-title-group">
-                        <div class="session-kicker section-eyebrow" data-i18n="settings_channels_telegram">Telegram</div>
-                      </div>
-                      <div class="control-grid control-grid--single">
-                        <label>
-                          <span data-i18n="settings_telegram_token">Telegram token</span>
-                          <input id="settings-telegram-token" type="password" />
-                        </label>
-                        <label class="checkbox-row">
-                          <input id="settings-telegram-enabled" type="checkbox" />
-                          <span data-i18n="settings_telegram_enabled">Telegram enabled</span>
-                        </label>
-                      </div>
-                    </section>
-                    <section class="settings-channel-group section-surface">
-                      <div class="settings-channel-group-header section-title-group">
-                        <div class="session-kicker section-eyebrow" data-i18n="settings_channels_weixin">Weixin</div>
-                      </div>
-                      <div class="control-grid control-grid--single">
-                        <label>
-                          <span data-i18n="settings_weixin_api_base">Weixin API base</span>
-                          <input id="settings-weixin-api-base" type="text" />
-                        </label>
-                        <label class="checkbox-row">
-                          <input id="settings-weixin-enabled" type="checkbox" />
-                          <span data-i18n="settings_weixin_enabled">Weixin enabled</span>
-                        </label>
-                      </div>
-                    </section>
-                    <section class="settings-channel-group section-surface">
-                      <div class="settings-channel-group-header section-title-group">
-                        <div class="session-kicker section-eyebrow" data-i18n="settings_channels_wecom">WeCom</div>
-                      </div>
-                      <div class="control-grid control-grid--single">
-                        <label class="checkbox-row">
-                          <input id="settings-wecom-enabled" type="checkbox" />
-                          <span data-i18n="settings_wecom_enabled">WeCom enabled</span>
-                        </label>
-                        <label>
-                          <span data-i18n="settings_wecom_bot_id">WeCom bot ID</span>
-                          <input id="settings-wecom-bot-id" type="text" />
-                        </label>
-                        <label>
-                          <span data-i18n="settings_wecom_secret">WeCom secret</span>
-                          <input id="settings-wecom-secret" type="password" />
-                        </label>
-                      </div>
-                    </section>
-                    <section class="settings-channel-group section-surface">
-                      <div class="settings-channel-group-header section-title-group">
-                        <div class="session-kicker section-eyebrow" data-i18n="settings_channels_feishu">Feishu</div>
-                      </div>
-                      <div class="control-grid control-grid--single">
-                        <label class="checkbox-row">
-                          <input id="settings-feishu-enabled" type="checkbox" />
-                          <span data-i18n="settings_feishu_enabled">Feishu enabled</span>
-                        </label>
-                        <label>
-                          <span data-i18n="settings_feishu_app_id">Feishu app ID</span>
-                          <input id="settings-feishu-app-id" type="text" />
-                        </label>
-                        <label>
-                          <span data-i18n="settings_feishu_app_secret">Feishu app secret</span>
-                          <input id="settings-feishu-app-secret" type="password" />
-                        </label>
-                        <label>
-                          <span data-i18n="settings_feishu_api_base">Feishu API base</span>
-                          <input id="settings-feishu-api-base" type="text" />
-                        </label>
-                        <label>
-                          <span data-i18n="settings_feishu_ws_base">Feishu WebSocket base</span>
-                          <input id="settings-feishu-ws-base" type="text" />
-                        </label>
-                      </div>
-                    </section>
-                  </div>
-                </section>
               </div>
               <aside class="settings-advanced">
                 <div class="settings-advanced-header section-header">
@@ -413,29 +329,123 @@
           </div>
         </section>
         <section class="channels-pane" hidden>
-          <section id="weixin-account-panel" class="account-panel">
-            <div class="account-panel-header">
-              <div class="session-kicker" data-i18n="weixin">Weixin</div>
-              <div class="account-actions">
-                <button id="weixin-login-button" type="button" data-i18n-title="login_to_weixin" title="Login to Weixin">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-                </button>
-                <button id="weixin-logout-button" type="button" data-i18n-title="logout" title="Logout">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                </button>
-              </div>
+          <form id="channels-settings-form" class="control-form channels-settings-form">
+            <div class="channels-layout">
+              <section class="control-panel channels-config-card section-surface">
+                <div class="control-panel-header section-header">
+                  <div class="section-title-group">
+                    <div class="session-kicker section-eyebrow" data-i18n="settings_channels_kicker">Channels</div>
+                    <h2 class="jobs-title" data-i18n="channels_settings_title">Terminal Configuration</h2>
+                  </div>
+                  <button id="channels-refresh-button" type="button" class="section-action" data-i18n="settings_reload">Reload</button>
+                </div>
+                <p class="channels-copy" data-i18n="channels_settings_copy">Manage provider credentials and endpoints without leaving the terminals tab.</p>
+                <div class="settings-channel-groups">
+                  <section class="settings-channel-group section-surface">
+                    <div class="settings-channel-group-header section-title-group">
+                      <div class="session-kicker section-eyebrow" data-i18n="settings_channels_telegram">Telegram</div>
+                    </div>
+                    <div class="control-grid control-grid--single">
+                      <label>
+                        <span data-i18n="settings_telegram_token">Telegram token</span>
+                        <input id="settings-telegram-token" type="password" />
+                      </label>
+                      <label class="checkbox-row">
+                        <input id="settings-telegram-enabled" type="checkbox" />
+                        <span data-i18n="settings_telegram_enabled">Telegram enabled</span>
+                      </label>
+                    </div>
+                  </section>
+                  <section class="settings-channel-group section-surface">
+                    <div class="settings-channel-group-header section-title-group">
+                      <div class="session-kicker section-eyebrow" data-i18n="settings_channels_wecom">WeCom</div>
+                    </div>
+                    <div class="control-grid control-grid--single">
+                      <label class="checkbox-row">
+                        <input id="settings-wecom-enabled" type="checkbox" />
+                        <span data-i18n="settings_wecom_enabled">WeCom enabled</span>
+                      </label>
+                      <label>
+                        <span data-i18n="settings_wecom_bot_id">WeCom bot ID</span>
+                        <input id="settings-wecom-bot-id" type="text" />
+                      </label>
+                      <label>
+                        <span data-i18n="settings_wecom_secret">WeCom secret</span>
+                        <input id="settings-wecom-secret" type="password" />
+                      </label>
+                    </div>
+                  </section>
+                  <section class="settings-channel-group section-surface">
+                    <div class="settings-channel-group-header section-title-group">
+                      <div class="session-kicker section-eyebrow" data-i18n="settings_channels_feishu">Feishu</div>
+                    </div>
+                    <div class="control-grid control-grid--single">
+                      <label class="checkbox-row">
+                        <input id="settings-feishu-enabled" type="checkbox" />
+                        <span data-i18n="settings_feishu_enabled">Feishu enabled</span>
+                      </label>
+                      <label>
+                        <span data-i18n="settings_feishu_app_id">Feishu app ID</span>
+                        <input id="settings-feishu-app-id" type="text" />
+                      </label>
+                      <label>
+                        <span data-i18n="settings_feishu_app_secret">Feishu app secret</span>
+                        <input id="settings-feishu-app-secret" type="password" />
+                      </label>
+                      <label>
+                        <span data-i18n="settings_feishu_api_base">Feishu API base</span>
+                        <input id="settings-feishu-api-base" type="text" />
+                      </label>
+                      <label>
+                        <span data-i18n="settings_feishu_ws_base">Feishu WebSocket base</span>
+                        <input id="settings-feishu-ws-base" type="text" />
+                      </label>
+                    </div>
+                  </section>
+                </div>
+              </section>
+              <section id="weixin-account-panel" class="account-panel channels-weixin-card">
+                <div class="account-panel-header">
+                  <div class="section-title-group">
+                    <div class="session-kicker section-eyebrow" data-i18n="settings_channels_weixin">Weixin</div>
+                    <h2 class="jobs-title" data-i18n="channels_runtime_title">Weixin Session</h2>
+                  </div>
+                  <div class="account-actions">
+                    <button id="weixin-login-button" type="button" data-i18n-title="login_to_weixin" title="Login to Weixin">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                    </button>
+                    <button id="weixin-logout-button" type="button" data-i18n-title="logout" title="Logout">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <p class="channels-copy channels-copy--compact" data-i18n="channels_weixin_copy">Update Weixin access and check the live session in one place.</p>
+                <div class="account-panel-info">
+                  <div class="channels-weixin-config control-grid control-grid--single">
+                    <label>
+                      <span data-i18n="settings_weixin_api_base">Weixin API base</span>
+                      <input id="settings-weixin-api-base" type="text" />
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="settings-weixin-enabled" type="checkbox" />
+                      <span data-i18n="settings_weixin_enabled">Weixin enabled</span>
+                    </label>
+                  </div>
+                  <div class="account-status">
+                    <strong id="weixin-status-label" data-i18n="checking_account">Checking account…</strong>
+                    <span id="weixin-user-label" data-i18n="login_from_console">Login from the embedded console.</span>
+                  </div>
+                </div>
+                <div id="weixin-qr-panel" hidden>
+                  <img id="weixin-qr-image" data-i18n-alt="weixin_qr_alt" alt="Weixin login QR code" />
+                  <div id="weixin-qr-note" class="account-muted" data-i18n="scan_to_confirm">Scan in Weixin to confirm login.</div>
+                </div>
+                <div class="control-actions channels-actions">
+                  <button id="channels-save-button" type="submit" data-i18n="settings_save">Save Configuration</button>
+                </div>
+              </section>
             </div>
-            <div class="account-panel-info">
-              <div class="account-status">
-                <strong id="weixin-status-label" data-i18n="checking_account">Checking account…</strong>
-                <span id="weixin-user-label" data-i18n="login_from_console">Login from the embedded console.</span>
-              </div>
-            </div>
-            <div id="weixin-qr-panel" hidden>
-              <img id="weixin-qr-image" data-i18n-alt="weixin_qr_alt" alt="Weixin login QR code" />
-              <div id="weixin-qr-note" class="account-muted" data-i18n="scan_to_confirm">Scan in Weixin to confirm login.</div>
-            </div>
-          </section>
+          </form>
         </section>
         <section class="conversation-pane">
           <div class="session-header">

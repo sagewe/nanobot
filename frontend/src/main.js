@@ -119,6 +119,8 @@ const currentUserDisplay = document.getElementById("current-user-display");
 const currentUserRole = document.getElementById("current-user-role");
 const logoutButton = document.getElementById("logout-button");
 const adminUsersTab = document.getElementById("admin-users-tab");
+const channelsRefreshButton = document.getElementById("channels-refresh-button");
+const channelsSettingsForm = document.getElementById("channels-settings-form");
 const settingsRefreshButton = document.getElementById("settings-refresh-button");
 const settingsForm = document.getElementById("settings-form");
 const settingsDefaultProfile = document.getElementById("settings-default-profile");
@@ -316,8 +318,11 @@ function stringifyConfigEditor(config) {
   return TOML.stringify(config || {});
 }
 
-function syncStructuredSettings(config) {
+function syncProfileSettings(config) {
   settingsDefaultProfile.value = config?.agents?.defaults?.defaultProfile || "";
+}
+
+function syncChannelSettings(config) {
   settingsTelegramEnabled.checked = Boolean(config?.channels?.telegram?.enabled);
   settingsTelegramToken.value = config?.channels?.telegram?.token || "";
   settingsWeixinEnabled.checked = Boolean(config?.channels?.weixin?.enabled);
@@ -332,19 +337,30 @@ function syncStructuredSettings(config) {
   settingsFeishuWsBase.value = config?.channels?.feishu?.wsBase || "";
 }
 
-function applyStructuredSettings(config) {
+function syncStructuredSettings(config) {
+  syncProfileSettings(config);
+  syncChannelSettings(config);
+}
+
+function applyProfileSettings(config) {
   const next = structuredClone(config || {});
   next.agents ??= {};
   next.agents.defaults ??= {};
+
+  if (settingsDefaultProfile.value.trim()) {
+    next.agents.defaults.defaultProfile = settingsDefaultProfile.value.trim();
+  }
+  return next;
+}
+
+function applyChannelSettings(config) {
+  const next = structuredClone(config || {});
   next.channels ??= {};
   next.channels.telegram ??= {};
   next.channels.weixin ??= {};
   next.channels.wecom ??= {};
   next.channels.feishu ??= {};
 
-  if (settingsDefaultProfile.value.trim()) {
-    next.agents.defaults.defaultProfile = settingsDefaultProfile.value.trim();
-  }
   next.channels.telegram.enabled = settingsTelegramEnabled.checked;
   next.channels.telegram.token = settingsTelegramToken.value.trim();
   next.channels.weixin.enabled = settingsWeixinEnabled.checked;
@@ -358,6 +374,22 @@ function applyStructuredSettings(config) {
   next.channels.feishu.apiBase = settingsFeishuApiBase.value.trim();
   next.channels.feishu.wsBase = settingsFeishuWsBase.value.trim();
   return next;
+}
+
+async function persistConfig(nextConfig, { refreshProfiles = false, refreshSessions = false, refreshWeixin = false } = {}) {
+  await updateMyConfig(nextConfig);
+  currentConfig = nextConfig;
+  syncStructuredSettings(nextConfig);
+  configEditor.value = stringifyConfigEditor(nextConfig);
+  if (refreshProfiles) {
+    await loadProfiles().then(renderProfiles);
+  }
+  if (refreshSessions) {
+    await refreshSessions();
+  }
+  if (refreshWeixin) {
+    await loadWeixinAccount();
+  }
 }
 
 function tUserRole(role) {
@@ -799,6 +831,10 @@ function switchTab(tab) {
   usersPane.hidden = tab !== "users";
   if (tab === "jobs") refreshJobs();
   if (tab === "mcp") refreshMcp();
+  if (tab === "channels") {
+    Promise.all([loadSettings(), loadWeixinAccount()])
+      .catch((error) => setStatus(error?.message || t("settings_load_failed"), "error"));
+  }
   if (tab === "skills") {
     skillsController.load().catch((error) => setStatus(error?.message || "Failed to load skills", "error"));
   }
@@ -900,17 +936,32 @@ settingsRefreshButton.addEventListener("click", async () => {
   }
 });
 
+channelsRefreshButton.addEventListener("click", async () => {
+  try {
+    await Promise.all([loadSettings(), loadWeixinAccount()]);
+    setStatus(t("settings_reloaded"), "idle");
+  } catch (error) {
+    setStatus(error?.message || t("settings_reload_failed"), "error");
+  }
+});
+
 settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     const parsed = configEditor.value.trim() ? TOML.parse(configEditor.value) : {};
-    const nextConfig = applyStructuredSettings(parsed);
-    await updateMyConfig(nextConfig);
-    currentConfig = nextConfig;
-    syncStructuredSettings(nextConfig);
-    configEditor.value = stringifyConfigEditor(nextConfig);
-    await loadProfiles().then(renderProfiles);
-    await refreshSessions();
+    const nextConfig = applyChannelSettings(applyProfileSettings(parsed));
+    await persistConfig(nextConfig, { refreshProfiles: true, refreshSessions: true });
+    setStatus(t("settings_saved"), "idle");
+  } catch (error) {
+    setStatus(error?.message || t("settings_save_failed"), "error");
+  }
+});
+
+channelsSettingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const nextConfig = applyChannelSettings(currentConfig || {});
+    await persistConfig(nextConfig, { refreshWeixin: true });
     setStatus(t("settings_saved"), "idle");
   } catch (error) {
     setStatus(error?.message || t("settings_save_failed"), "error");

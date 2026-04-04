@@ -551,13 +551,31 @@ describe("tool trace output", () => {
     const apiJs = readApiJs();
     const packageJson = readPackageJson();
     const { TRANSLATIONS } = await import("../src/i18n.js");
+    const settingsPane = html.match(/<section class="settings-pane" hidden>([\s\S]*?)<\/section>\s*<section class="users-pane"/)?.[1] || "";
+    const channelsPane = html.match(/<section class="channels-pane" hidden>([\s\S]*?)<\/section>\s*<section class="conversation-pane"/)?.[1] || "";
+    const channelsConfigCard = channelsPane.match(/<section class="control-panel channels-config-card section-surface">([\s\S]*?)<\/section>\s*<section id="weixin-account-panel"/)?.[1] || "";
+    const weixinCard = channelsPane.match(/<section id="weixin-account-panel" class="account-panel([\s\S]*?)<\/section>/)?.[1] || "";
 
-    expect(html).toContain('class="settings-channel-groups"');
-    expect(html).toContain('class="settings-channel-group section-surface"');
-    expect(html).toContain('data-i18n="settings_channels_telegram"');
-    expect(html).toContain('data-i18n="settings_channels_weixin"');
-    expect(html).toContain('data-i18n="settings_channels_wecom"');
-    expect(html).toContain('data-i18n="settings_channels_feishu"');
+    expect(settingsPane).not.toContain('class="settings-channel-groups"');
+    expect(settingsPane).not.toContain('data-i18n="settings_channels_telegram"');
+    expect(channelsPane).toContain('id="channels-settings-form" class="control-form channels-settings-form"');
+    expect(channelsPane).toContain('class="settings-channel-groups"');
+    expect(channelsPane).toContain('class="settings-channel-group section-surface"');
+    expect(channelsConfigCard).not.toContain('data-i18n="settings_channels_weixin"');
+    expect(channelsPane).toContain('id="channels-refresh-button" type="button" class="section-action"');
+    expect(channelsPane).toContain('id="channels-save-button" type="submit"');
+    expect(channelsPane).toContain('data-i18n="channels_settings_title"');
+    expect(channelsPane).toContain('data-i18n="channels_settings_copy"');
+    expect(channelsPane).toContain('data-i18n="settings_channels_telegram"');
+    expect(channelsPane).toContain('data-i18n="settings_channels_wecom"');
+    expect(channelsPane).toContain('data-i18n="settings_channels_feishu"');
+    expect(channelsPane).toContain('id="weixin-account-panel" class="account-panel channels-weixin-card"');
+    expect(weixinCard).toContain('data-i18n="settings_channels_weixin"');
+    expect(weixinCard).toContain('class="channels-weixin-config control-grid control-grid--single"');
+    expect(weixinCard).toContain('id="settings-weixin-api-base"');
+    expect(weixinCard).toContain('id="settings-weixin-enabled"');
+    expect(weixinCard).toContain('id="weixin-status-label"');
+    expect(weixinCard).toContain('id="weixin-user-label"');
     expect(html).toContain('data-i18n="settings_workspace_title"');
     expect(html).toContain('data-i18n="settings_advanced_title"');
     expect(html).toContain('data-i18n="settings_password_title"');
@@ -573,18 +591,39 @@ describe("tool trace output", () => {
     expect(TRANSLATIONS.zh.settings_advanced_title).toContain("TOML");
     expect(TRANSLATIONS.en.settings_channels_feishu).toBe("Feishu");
     expect(TRANSLATIONS.zh.settings_channels_feishu).toBeTruthy();
+    expect(TRANSLATIONS.en.channels_settings_title).toBe("Terminal Configuration");
+    expect(TRANSLATIONS.zh.channels_settings_title).toBe("终端配置");
+    expect(TRANSLATIONS.en.channels_settings_copy).toContain("credentials");
+    expect(TRANSLATIONS.zh.channels_settings_copy).toContain("凭据");
     expect(TRANSLATIONS.en.users_action_reset_password).toBeTruthy();
     expect(TRANSLATIONS.zh.users_action_reset_password).toBeTruthy();
     expect(js).toContain('t("users_empty")');
     expect(js).toContain('t("users_action_reset_password")');
     expect(js).toContain('t("settings_saved")');
     expect(js).toContain('t("users_updated")');
+    expect(js).toContain('const channelsSettingsForm = document.getElementById("channels-settings-form");');
+    expect(js).toContain('const channelsRefreshButton = document.getElementById("channels-refresh-button");');
+    expect(js).toContain('channelsSettingsForm.addEventListener("submit"');
+    expect(js).toContain('channelsRefreshButton.addEventListener("click"');
     expect(js).toContain('import TOML from "./toml.js"');
     expect(js).toContain("TOML.stringify");
     expect(js).toContain("TOML.parse");
     expect(apiJs).toContain("export async function updateMyConfig(nextConfig)");
     expect(apiJs).toContain("body: JSON.stringify(nextConfig)");
     expect(packageJson).toContain('"smol-toml"');
+  });
+
+  it("integrates weixin settings with the live weixin session card", () => {
+    const html = readHtml();
+    const channelsPane = html.match(/<section class="channels-pane" hidden>([\s\S]*?)<\/section>\s*<section class="conversation-pane"/)?.[1] || "";
+    const weixinCard = channelsPane.match(/<section id="weixin-account-panel" class="account-panel channels-weixin-card">([\s\S]*?)<\/section>/)?.[1] || "";
+
+    expect(weixinCard).toContain('data-i18n="settings_channels_weixin"');
+    expect(weixinCard).toContain('data-i18n="settings_weixin_api_base"');
+    expect(weixinCard).toContain('data-i18n="settings_weixin_enabled"');
+    expect(weixinCard).toContain('id="weixin-login-button"');
+    expect(weixinCard).toContain('id="weixin-logout-button"');
+    expect(weixinCard).toContain('id="weixin-qr-panel"');
   });
 
   it("surfaces Feishu structured settings in the workspace form", () => {
@@ -694,6 +733,42 @@ describe("tool trace output", () => {
     expect(payload.channels.feishu.appSecret).toBe("secret-value");
     expect(payload.channels.feishu.apiBase).toBe("https://open.feishu.cn/open-apis");
     expect(payload.channels.feishu.wsBase).toBe("wss://open.feishu.cn/ws");
+  });
+
+  it("submits terminal settings from the terminals tab", async () => {
+    document.body.innerHTML = readHtmlBody();
+    vi.resetModules();
+    apiMocks.fetchCurrentUser.mockRejectedValueOnce(new Error("login required"));
+    apiMocks.updateMyConfig.mockResolvedValueOnce({ ok: true });
+
+    const { default: TOML } = await import("../src/toml.js");
+    await import("../src/main.js");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const channelsSettingsForm = document.getElementById("channels-settings-form");
+    const settingsTelegramEnabled = document.getElementById("settings-telegram-enabled");
+    const settingsTelegramToken = document.getElementById("settings-telegram-token");
+    const configEditor = document.getElementById("config-editor");
+
+    settingsTelegramEnabled.checked = true;
+    settingsTelegramToken.value = "telegram-secret";
+    configEditor.value = TOML.stringify({
+      channels: {
+        telegram: {
+          enabled: false,
+          token: "",
+        },
+      },
+    });
+
+    channelsSettingsForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(apiMocks.updateMyConfig).toHaveBeenCalledTimes(1);
+    const [payload] = apiMocks.updateMyConfig.mock.calls[0];
+
+    expect(payload.channels.telegram.enabled).toBe(true);
+    expect(payload.channels.telegram.token).toBe("telegram-secret");
   });
 
   it("does not reload skills again when clicking the already-active skills tab", async () => {
