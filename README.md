@@ -188,7 +188,7 @@ to switch the current session.
 
 ### Development Setup
 
-Install the pinned local toolchain:
+Install `mise` first if it is not already available on your machine, then install the pinned local toolchain:
 
 ```bash
 mise install
@@ -207,9 +207,9 @@ mise exec -- just test
 mise exec -- just gateway
 ```
 
-`build.rs` still provides a fallback frontend install/build path during direct Cargo builds, so the lower-level commands below remain useful when you want to drive pieces manually.
+`build.rs` still provides a defensive frontend install/build fallback during direct Cargo builds, so the lower-level commands below remain useful when you want to drive pieces manually.
 
-Useful commands from the repository root:
+Once your toolchain is active on `PATH`, useful lower-level commands from the repository root are:
 
 ```bash
 cargo test
