@@ -29,6 +29,49 @@
         <div id="login-error" class="login-error" role="alert"></div>
       </div>
     </section>
+    <section id="workspace-shell" class="workspace-shell" hidden>
+      <div class="login-card workspace-card">
+        <div class="login-kicker">Sidekick Workspace</div>
+        <h1>Choose your workspace</h1>
+        <p class="login-copy">
+          Select the workspace you want to enter, or create a new one for this account.
+        </p>
+        <div class="workspace-user-summary">
+          <span>Signed in as</span>
+          <strong id="workspace-user-display">Guest</strong>
+        </div>
+        <section id="workspace-select-view" class="workspace-panel">
+          <div class="workspace-panel-header">
+            <h2>Available workspaces</h2>
+            <p>Each workspace keeps its own sessions, config, jobs, and MCP state.</p>
+          </div>
+          <div id="workspace-list" class="workspace-list" role="listbox" aria-label="Workspace list"></div>
+          <div class="workspace-actions">
+            <button id="workspace-enter-button" type="button">Enter Workspace</button>
+            <button id="workspace-create-button" type="button" class="workspace-secondary-button">Create Workspace</button>
+            <button id="workspace-logout-button" type="button" class="workspace-tertiary-button">Sign out</button>
+          </div>
+          <div id="workspace-error" class="login-error" role="alert"></div>
+        </section>
+        <section id="workspace-create-view" class="workspace-panel" hidden>
+          <div class="workspace-panel-header">
+            <h2>Create a workspace</h2>
+            <p>Give it a name. Sidekick will generate the slug automatically.</p>
+          </div>
+          <form id="workspace-create-form" class="login-form">
+            <label>
+              <span>Name</span>
+              <input id="workspace-name-input" type="text" autocomplete="off" required />
+            </label>
+            <div class="workspace-actions">
+              <button id="workspace-create-submit-button" type="submit">Create and Enter</button>
+              <button id="workspace-create-cancel-button" type="button" class="workspace-secondary-button">Cancel</button>
+            </div>
+          </form>
+          <div id="workspace-create-error" class="login-error" role="alert"></div>
+        </section>
+      </div>
+    </section>
     <main id="app" hidden>
       <aside class="session-rail">
           <div class="tab-bar" role="tablist">
@@ -72,14 +115,11 @@
             </button>
           </div>
           <div class="sidebar-footer">
-            <label class="workspace-switcher">
-              <span data-i18n="workspace_label">Workspace</span>
-              <select id="workspace-select" data-i18n-aria-label="workspace_label" aria-label="Workspace"></select>
-            </label>
             <div class="user-chip">
               <strong id="current-user-display">Guest</strong>
               <span id="current-user-role">guest</span>
             </div>
+            <button id="switch-workspace-button" type="button" class="section-action">Switch Workspace</button>
             <button id="theme-toggle" data-i18n-title="toggle_theme" title="Toggle theme">
               <svg id="theme-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
             </button>

@@ -26,6 +26,19 @@ export async function setActiveWorkspace(workspaceId) {
   return payload;
 }
 
+export async function createWorkspace(input) {
+  const response = await fetch("/api/workspaces", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to create workspace");
+  }
+  return payload;
+}
+
 export async function loginUser(username, password) {
   const response = await fetch("/api/auth/login", {
     method: "POST",

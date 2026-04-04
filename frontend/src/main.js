@@ -24,6 +24,7 @@ applyI18n();
 const {
   fetchCurrentUser,
   setActiveWorkspace,
+  createWorkspace,
   loginUser,
   logoutUser,
   changePassword,
@@ -72,13 +73,30 @@ const WIDE_KEY = "sidekick.wideLayout";
 const LEGACY_WIDE_KEY = "pikachu.wideLayout";
 const DRAFT_KEY_PREFIX = "sidekick.draft";
 const LEGACY_DRAFT_KEY_PREFIX = "pikachu.draft";
+const ROOT_ROUTE = "/";
+const WORKSPACE_ROUTE = "/workspace";
+const APP_ROUTE = "/app";
 
 // ── DOM references ────────────────────────────────────────────────────────────
 const loginShell = document.getElementById("login-shell");
+const workspaceShell = document.getElementById("workspace-shell");
+const appShell = document.getElementById("app");
 const loginForm = document.getElementById("login-form");
 const loginUsernameInput = document.getElementById("login-username");
 const loginPasswordInput = document.getElementById("login-password");
 const loginError = document.getElementById("login-error");
+const workspaceUserDisplay = document.getElementById("workspace-user-display");
+const workspaceSelectView = document.getElementById("workspace-select-view");
+const workspaceCreateView = document.getElementById("workspace-create-view");
+const workspaceList = document.getElementById("workspace-list");
+const workspaceEnterButton = document.getElementById("workspace-enter-button");
+const workspaceCreateButton = document.getElementById("workspace-create-button");
+const workspaceLogoutButton = document.getElementById("workspace-logout-button");
+const workspaceError = document.getElementById("workspace-error");
+const workspaceCreateForm = document.getElementById("workspace-create-form");
+const workspaceNameInput = document.getElementById("workspace-name-input");
+const workspaceCreateCancelButton = document.getElementById("workspace-create-cancel-button");
+const workspaceCreateError = document.getElementById("workspace-create-error");
 const composer = document.getElementById("composer");
 const sessionSelect = document.getElementById("session-select");
 const profileSelect = document.getElementById("profile-select");
@@ -119,7 +137,7 @@ const slashMenu = document.getElementById("slash-menu");
 const slashMenuList = document.getElementById("slash-menu-list");
 const currentUserDisplay = document.getElementById("current-user-display");
 const currentUserRole = document.getElementById("current-user-role");
-const workspaceSelect = document.getElementById("workspace-select");
+const switchWorkspaceButton = document.getElementById("switch-workspace-button");
 const logoutButton = document.getElementById("logout-button");
 const adminUsersTab = document.getElementById("admin-users-tab");
 const channelsSettingsForm = document.getElementById("channels-settings-form");
@@ -168,6 +186,9 @@ let currentConfig = null;
 let availableWorkspaces = [];
 let activeWorkspace = null;
 let appBootstrapped = false;
+let currentRoute = ROOT_ROUTE;
+let workspaceView = "select";
+let selectedWorkspaceId = "";
 let pendingSelectionToken = 0;
 let weixinPollTimer = null;
 let busyTimer = null;
@@ -298,23 +319,120 @@ function normalizeWorkspace(workspace) {
   };
 }
 
-function renderWorkspaceSwitcher() {
-  if (!workspaceSelect) return;
-  workspaceSelect.innerHTML = "";
-  for (const workspace of availableWorkspaces) {
-    const option = document.createElement("option");
-    option.value = workspace.id;
-    option.textContent = workspace.name || workspace.slug || workspace.id;
-    workspaceSelect.appendChild(option);
+function syncWorkspaceSelection(preferredId = activeWorkspace?.id || "") {
+  const availableIds = new Set(availableWorkspaces.map((workspace) => workspace.id));
+  if (preferredId && availableIds.has(preferredId)) {
+    selectedWorkspaceId = preferredId;
+    return;
   }
-  workspaceSelect.disabled = !currentUser || availableWorkspaces.length <= 1;
-  workspaceSelect.hidden = !currentUser || availableWorkspaces.length === 0;
-  if (activeWorkspace?.id) {
-    workspaceSelect.value = activeWorkspace.id;
+  if (!availableIds.has(selectedWorkspaceId)) {
+    selectedWorkspaceId = availableWorkspaces[0]?.id || "";
   }
 }
 
+function clearWorkspaceErrors() {
+  workspaceError.textContent = "";
+  workspaceCreateError.textContent = "";
+}
+
+function setWorkspaceView(nextView) {
+  workspaceView = nextView === "create" ? "create" : "select";
+  workspaceSelectView.hidden = workspaceView !== "select";
+  workspaceCreateView.hidden = workspaceView !== "create";
+}
+
+function renderWorkspaceEntry() {
+  if (!workspaceList) return;
+  workspaceUserDisplay.textContent = currentUser?.displayName || currentUser?.username || "Guest";
+  workspaceList.innerHTML = "";
+
+  if (!availableWorkspaces.length) {
+    const empty = document.createElement("div");
+    empty.className = "jobs-empty";
+    empty.textContent = "No workspaces available yet.";
+    workspaceList.appendChild(empty);
+  }
+
+  for (const workspace of availableWorkspaces) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "workspace-option";
+    item.dataset.workspaceId = workspace.id;
+    item.dataset.selected = String(workspace.id === selectedWorkspaceId);
+
+    const name = document.createElement("strong");
+    name.textContent = workspace.name || workspace.slug || workspace.id;
+
+    const meta = document.createElement("span");
+    const metaParts = [workspace.slug || workspace.id];
+    if (workspace.isDefault) metaParts.push("default");
+    meta.textContent = metaParts.join(" · ");
+
+    item.append(name, meta);
+    workspaceList.appendChild(item);
+  }
+
+  workspaceEnterButton.disabled = !selectedWorkspaceId;
+}
+
+function normalizeRoute(pathname) {
+  if (pathname === APP_ROUTE) return APP_ROUTE;
+  if (pathname === WORKSPACE_ROUTE) return WORKSPACE_ROUTE;
+  return ROOT_ROUTE;
+}
+
+function resolvedRoute(pathname = window.location.pathname) {
+  const normalized = normalizeRoute(pathname);
+  if (!currentUser) return ROOT_ROUTE;
+  return normalized === APP_ROUTE ? APP_ROUTE : WORKSPACE_ROUTE;
+}
+
+function renderRoute(route) {
+  currentRoute = route;
+  loginShell.hidden = route !== ROOT_ROUTE;
+  workspaceShell.hidden = route !== WORKSPACE_ROUTE;
+  appShell.hidden = route !== APP_ROUTE;
+  if (route === WORKSPACE_ROUTE) {
+    renderWorkspaceEntry();
+    setWorkspaceView(workspaceView);
+  }
+}
+
+async function ensureAuthenticatedApp() {
+  if (!currentUser || appBootstrapped) return;
+  try {
+    await initializeAuthenticatedApp();
+  } catch (error) {
+    if (isAuthenticationRequiredError(error)) {
+      resetToLoginState(error);
+    } else {
+      clearWeixinPollTimer();
+      setStatus(error?.message || t("failed_load_sessions"), "error");
+    }
+  }
+}
+
+async function syncRoute() {
+  const target = resolvedRoute();
+  if (window.location.pathname !== target) {
+    window.history.replaceState({}, "", target);
+  }
+  renderRoute(target);
+  if (target === APP_ROUTE) {
+    await ensureAuthenticatedApp();
+  }
+}
+
+async function navigateTo(path, { replace = false } = {}) {
+  const target = normalizeRoute(path);
+  if (window.location.pathname !== target) {
+    window.history[replace ? "replaceState" : "pushState"]({}, "", target);
+  }
+  await syncRoute();
+}
+
 function resetWorkspaceState() {
+  appBootstrapped = false;
   setSelectedSession(null, null);
   currentSessionGroups = [];
   currentMessages = [];
@@ -327,11 +445,17 @@ function setAuthState(user) {
   currentUser = user;
   availableWorkspaces = (user?.workspaces || []).map(normalizeWorkspace).filter(Boolean);
   activeWorkspace = normalizeWorkspace(user?.activeWorkspace) || availableWorkspaces[0] || null;
-  loginShell.hidden = Boolean(user);
-  document.getElementById("app").hidden = !user;
+  syncWorkspaceSelection(activeWorkspace?.id);
+  clearWorkspaceErrors();
+  if (!user) {
+    appBootstrapped = false;
+    workspaceNameInput.value = "";
+    setWorkspaceView("select");
+  }
   currentUserDisplay.textContent = user?.displayName || user?.username || "Guest";
   currentUserRole.textContent = user?.role || "guest";
-  renderWorkspaceSwitcher();
+  workspaceUserDisplay.textContent = user?.displayName || user?.username || "Guest";
+  renderWorkspaceEntry();
   adminUsersTab.hidden = !user || user.role !== "admin";
   if ((!user || user.role !== "admin") && usersPane && !usersPane.hidden) {
     switchTab("chat");
@@ -344,9 +468,7 @@ function isAuthenticationRequiredError(error) {
 
 function resetToLoginState(error) {
   clearWeixinPollTimer();
-  setSelectedSession(null, null);
-  currentMessages = [];
-  renderTranscript([]);
+  resetWorkspaceState();
   setCurrentProfile("");
   setComposerAccess(false, false);
   setStatus("", "idle");
@@ -354,6 +476,7 @@ function resetToLoginState(error) {
   loginError.textContent = error?.message || "Authentication required";
   loginPasswordInput.value = "";
   loginUsernameInput.focus();
+  void syncRoute();
 }
 
 function stringifyConfigEditor(config) {
@@ -960,59 +1083,118 @@ langToggleBtn.addEventListener("click", () => {
   }
 });
 
+window.addEventListener("popstate", () => {
+  void syncRoute();
+});
+
+async function performLogout() {
+  try {
+    await logoutUser();
+  } catch (_) {
+    // Ignore logout transport failures and force a local reset.
+  }
+  resetToLoginState(new Error(""));
+  loginError.textContent = "";
+  window.history.replaceState({}, "", ROOT_ROUTE);
+  renderRoute(ROOT_ROUTE);
+}
+
+async function activateWorkspace(workspaceId) {
+  if (!workspaceId) return;
+  const needsSwitch = workspaceId !== activeWorkspace?.id;
+  if (needsSwitch) {
+    setStatus(t("switching_workspace"), "loading");
+  }
+  resetWorkspaceState();
+  const user = needsSwitch ? await setActiveWorkspace(workspaceId) : currentUser;
+  setAuthState(user);
+  setWorkspaceView("select");
+  await navigateTo(APP_ROUTE);
+  if (needsSwitch) {
+    setStatus(t("workspace_switched"), "idle");
+  }
+}
+
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   loginError.textContent = "";
   try {
     const user = await loginUser(loginUsernameInput.value.trim(), loginPasswordInput.value);
     setAuthState(user);
-    try {
-      await initializeAuthenticatedApp();
-    } catch (error) {
-      if (isAuthenticationRequiredError(error)) {
-        resetToLoginState(error);
-      } else {
-        setStatus(error?.message || t("failed_load_sessions"), "error");
-      }
-    }
     loginPasswordInput.value = "";
+    await navigateTo(WORKSPACE_ROUTE, { replace: true });
   } catch (error) {
     loginError.textContent = error?.message || "Failed to sign in";
   }
 });
 
-workspaceSelect?.addEventListener("change", async () => {
-  const workspaceId = workspaceSelect.value;
-  if (!workspaceId || workspaceId === activeWorkspace?.id) return;
+workspaceList?.addEventListener("click", (event) => {
+  const item = event.target.closest("[data-workspace-id]");
+  if (!item) return;
+  selectedWorkspaceId = item.dataset.workspaceId || "";
+  renderWorkspaceEntry();
+});
 
-  const previousWorkspaceId = activeWorkspace?.id || "";
-  workspaceSelect.disabled = true;
-  setStatus(t("switching_workspace"), "loading");
-  resetWorkspaceState();
+workspaceList?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  event.target.closest("[data-workspace-id]")?.click();
+});
 
+workspaceEnterButton?.addEventListener("click", async () => {
+  clearWorkspaceErrors();
   try {
-    const user = await setActiveWorkspace(workspaceId);
-    setAuthState(user);
-    await initializeAuthenticatedApp();
-    setStatus(t("workspace_switched"), "idle");
+    await activateWorkspace(selectedWorkspaceId);
   } catch (error) {
-    renderWorkspaceSwitcher();
-    if (previousWorkspaceId) {
-      workspaceSelect.value = previousWorkspaceId;
-    }
+    workspaceError.textContent = error?.message || t("failed_switch_workspace");
     setStatus(error?.message || t("failed_switch_workspace"), "error");
-  } finally {
-    renderWorkspaceSwitcher();
   }
 });
 
-logoutButton.addEventListener("click", async () => {
+workspaceCreateButton?.addEventListener("click", () => {
+  clearWorkspaceErrors();
+  setWorkspaceView("create");
+  workspaceNameInput.focus();
+});
+
+workspaceCreateCancelButton?.addEventListener("click", () => {
+  clearWorkspaceErrors();
+  workspaceNameInput.value = "";
+  setWorkspaceView("select");
+  renderWorkspaceEntry();
+});
+
+workspaceCreateForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  workspaceCreateError.textContent = "";
+  const name = workspaceNameInput.value.trim();
+  if (!name) return;
   try {
-    await logoutUser();
-  } catch (_) {
-    // Ignore logout transport failures and force a local reset.
+    const workspace = await createWorkspace({ name });
+    const user = await setActiveWorkspace(workspace.id);
+    workspaceNameInput.value = "";
+    setAuthState(user);
+    setWorkspaceView("select");
+    resetWorkspaceState();
+    await navigateTo(APP_ROUTE);
+  } catch (error) {
+    workspaceCreateError.textContent = error?.message || "Failed to create workspace";
+    setStatus(error?.message || "Failed to create workspace", "error");
   }
-  window.location.reload();
+});
+
+switchWorkspaceButton?.addEventListener("click", async () => {
+  clearWorkspaceErrors();
+  setWorkspaceView("select");
+  await navigateTo(WORKSPACE_ROUTE);
+});
+
+workspaceLogoutButton?.addEventListener("click", () => {
+  void performLogout();
+});
+
+logoutButton.addEventListener("click", () => {
+  void performLogout();
 });
 
 settingsRefreshButton.addEventListener("click", async () => {
@@ -1488,25 +1670,17 @@ document.addEventListener("keydown", (e) => {
 renderTranscript([]);
 setComposerAccess(false, false);
 setAuthState(null);
+renderRoute(resolvedRoute());
 
 (async () => {
   try {
     const user = await fetchCurrentUser();
     setAuthState(user);
-    try {
-      await initializeAuthenticatedApp();
-    } catch (error) {
-      if (isAuthenticationRequiredError(error)) {
-        resetToLoginState(error);
-      } else {
-        clearWeixinPollTimer();
-        setStatus(error?.message || t("failed_load_sessions"), "error");
-      }
-    }
-  } catch (_) {
+  } catch (_error) {
     setAuthState(null);
     loginUsernameInput.focus();
   }
+  await syncRoute();
 })();
 
 // ── Jobs tab ──────────────────────────────────────────────────────────────────

@@ -12,6 +12,27 @@ fn page_shell_contains_core_ui_regions() {
 }
 
 #[test]
+fn page_shell_includes_workspace_entry_page_regions() {
+    let html = sidekick::web::page::render_index_html();
+
+    assert!(html.contains("id=\"workspace-shell\""));
+    assert!(html.contains("id=\"workspace-list\""));
+    assert!(html.contains("id=\"workspace-enter-button\""));
+    assert!(html.contains("id=\"workspace-create-button\""));
+    assert!(html.contains("id=\"workspace-create-form\""));
+    assert!(html.contains("id=\"workspace-name-input\""));
+    assert!(html.contains("id=\"workspace-create-cancel-button\""));
+}
+
+#[test]
+fn page_shell_replaces_sidebar_workspace_switcher_with_switch_button() {
+    let html = sidekick::web::page::render_index_html();
+
+    assert!(!html.contains("id=\"workspace-select\""));
+    assert!(html.contains("id=\"switch-workspace-button\""));
+}
+
+#[test]
 fn page_shell_includes_skills_tab_and_static_shell_hooks() {
     let html = sidekick::web::page::render_index_html();
 

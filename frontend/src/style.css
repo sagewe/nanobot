@@ -60,6 +60,17 @@
           linear-gradient(160deg, #faf9f5 0%, #f1eee5 100%);
       }
 
+      .workspace-shell {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        padding: 2rem;
+        background:
+          radial-gradient(circle at top left, rgba(217, 119, 87, 0.08), transparent 34%),
+          radial-gradient(circle at bottom right, rgba(20, 20, 19, 0.05), transparent 30%),
+          linear-gradient(160deg, #faf9f5 0%, #f1eee5 100%);
+      }
+
       .login-card {
         width: min(28rem, 100%);
         padding: 1.75rem;
@@ -68,6 +79,10 @@
         background: rgba(250, 249, 245, 0.92);
         box-shadow: 0 22px 60px rgba(20, 20, 19, 0.1);
         backdrop-filter: blur(16px);
+      }
+
+      .workspace-card {
+        width: min(44rem, 100%);
       }
 
       .login-kicker {
@@ -158,6 +173,134 @@
         color: var(--error);
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.78rem;
+      }
+
+      .workspace-user-summary {
+        display: flex;
+        align-items: baseline;
+        gap: 0.6rem;
+        margin: 0 0 1.1rem;
+        padding: 0.85rem 1rem;
+        border: 1px solid rgba(20, 20, 19, 0.08);
+        border-radius: 0.95rem;
+        background: rgba(255, 255, 255, 0.55);
+      }
+
+      .workspace-user-summary span {
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.72rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .workspace-user-summary strong {
+        font-size: 1rem;
+      }
+
+      .workspace-panel {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .workspace-panel-header {
+        display: grid;
+        gap: 0.35rem;
+      }
+
+      .workspace-panel-header h2 {
+        margin: 0;
+        font-size: 1.2rem;
+      }
+
+      .workspace-panel-header p {
+        margin: 0;
+        color: var(--dim);
+        line-height: 1.5;
+      }
+
+      .workspace-list {
+        display: grid;
+        gap: 0.8rem;
+      }
+
+      .workspace-option {
+        width: 100%;
+        display: grid;
+        gap: 0.3rem;
+        padding: 1rem 1.05rem;
+        border: 1px solid rgba(20, 20, 19, 0.08);
+        border-radius: 1rem;
+        background: rgba(255, 255, 255, 0.6);
+        color: var(--ink);
+        text-align: left;
+        cursor: pointer;
+        transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+      }
+
+      .workspace-option:hover {
+        transform: translateY(-1px);
+        border-color: rgba(217, 119, 87, 0.28);
+        box-shadow: 0 12px 24px rgba(20, 20, 19, 0.08);
+      }
+
+      .workspace-option[data-selected="true"] {
+        border-color: rgba(217, 119, 87, 0.38);
+        background: rgba(217, 119, 87, 0.08);
+        box-shadow: inset 0 0 0 1px rgba(217, 119, 87, 0.16);
+      }
+
+      .workspace-option strong {
+        font-size: 1rem;
+      }
+
+      .workspace-option span {
+        color: var(--dim);
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.74rem;
+      }
+
+      .workspace-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+
+      .workspace-actions button {
+        border: 1px solid transparent;
+        border-radius: 0.85rem;
+        padding: 0.72rem 1rem;
+        cursor: pointer;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.78rem;
+        transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+      }
+
+      #workspace-enter-button,
+      #workspace-create-submit-button {
+        background: var(--accent);
+        color: #faf9f5;
+      }
+
+      #workspace-enter-button:hover,
+      #workspace-create-submit-button:hover {
+        transform: translateY(-1px);
+        background: var(--accent-dark);
+      }
+
+      .workspace-secondary-button,
+      .workspace-tertiary-button {
+        background: transparent;
+        color: var(--ink);
+        border-color: var(--line);
+      }
+
+      .workspace-secondary-button:hover,
+      .workspace-tertiary-button:hover {
+        transform: translateY(-1px);
+        border-color: var(--accent);
+        color: var(--accent);
+        background: rgba(217, 119, 87, 0.08);
       }
 
       #app {
@@ -291,36 +434,6 @@
         flex-shrink: 0;
       }
 
-      .workspace-switcher {
-        display: grid;
-        min-width: 100%;
-        gap: 0.35rem;
-      }
-
-      .workspace-switcher span {
-        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 0.7rem;
-        color: var(--muted);
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-      }
-
-      #workspace-select {
-        width: 100%;
-        padding: 0.55rem 0.65rem;
-        border-radius: 0.8rem;
-        border: 1px solid rgba(193, 95, 60, 0.12);
-        background: rgba(255, 255, 255, 0.72);
-        color: var(--ink);
-        font: inherit;
-      }
-
-      #workspace-select:focus {
-        outline: none;
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(193, 95, 60, 0.12);
-      }
-
       .user-chip {
         display: grid;
         min-width: 100%;
@@ -342,15 +455,20 @@
         letter-spacing: 0.08em;
       }
 
+      #switch-workspace-button {
+        width: 100%;
+        justify-content: center;
+      }
+
       .session-rail[data-collapsed="true"] .sidebar-footer {
         flex-direction: column;
       }
 
-      .session-rail[data-collapsed="true"] .workspace-switcher {
+      .session-rail[data-collapsed="true"] .user-chip {
         display: none;
       }
 
-      .session-rail[data-collapsed="true"] .user-chip {
+      .session-rail[data-collapsed="true"] #switch-workspace-button {
         display: none;
       }
 
@@ -2778,6 +2896,15 @@
         :root:not([data-theme="light"]):not([data-theme="dark"]) .user-chip span {
           color: rgba(224, 120, 80, 0.8);
         }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .workspace-user-summary,
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .workspace-option {
+          background: linear-gradient(180deg, rgba(43, 39, 34, 0.96) 0%, rgba(34, 30, 26, 0.96) 100%);
+          border-color: rgba(224, 120, 80, 0.18);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 24px rgba(0, 0, 0, 0.18);
+        }
+        :root:not([data-theme="light"]):not([data-theme="dark"]) .workspace-option[data-selected="true"] {
+          background: rgba(224, 120, 80, 0.14);
+        }
         :root:not([data-theme="light"]):not([data-theme="dark"]) .sidebar-footer button {
           background: rgba(43, 39, 34, 0.88);
           border-color: rgba(255, 255, 255, 0.08);
@@ -2880,11 +3007,15 @@
       :root[data-theme="dark"] .user-chip span {
         color: rgba(212, 114, 74, 0.82);
       }
-      :root[data-theme="dark"] #workspace-select {
+      :root[data-theme="dark"] .workspace-user-summary,
+      :root[data-theme="dark"] .workspace-option {
         background: linear-gradient(180deg, rgba(40, 36, 31, 0.96) 0%, rgba(31, 27, 24, 0.96) 100%);
         border-color: rgba(212, 114, 74, 0.18);
         color: #f2e8de;
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 24px rgba(0, 0, 0, 0.16);
+      }
+      :root[data-theme="dark"] .workspace-option[data-selected="true"] {
+        background: rgba(212, 114, 74, 0.14);
       }
       :root[data-theme="dark"] .sidebar-footer button {
         background: rgba(40, 36, 31, 0.88);
