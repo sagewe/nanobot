@@ -240,6 +240,83 @@ fn load_user_config_ignores_legacy_workspace_path_when_toml_is_missing() {
 }
 
 #[test]
+fn default_workspace_for_user_recovers_missing_workspace_record_from_legacy_user_workspace() {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let admin = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+
+    let legacy_workspace = store.user_dir(&admin.user_id).join("workspace");
+    std::fs::create_dir_all(legacy_workspace.join("channels").join("weixin"))
+        .expect("legacy channels");
+    std::fs::create_dir_all(legacy_workspace.join("memory")).expect("legacy memory dir");
+    std::fs::write(
+        legacy_workspace
+            .join("channels")
+            .join("weixin")
+            .join("account.json"),
+        "{\"bot\":\"legacy\"}",
+    )
+    .expect("legacy account");
+    std::fs::write(
+        legacy_workspace.join("memory").join("MEMORY.md"),
+        "legacy memory",
+    )
+    .expect("legacy memory");
+
+    let mut legacy = Config::default();
+    legacy.agents.defaults.workspace = legacy_workspace.display().to_string();
+    legacy.channels.weixin.enabled = true;
+    sidekick::config::save_config(&legacy, Some(&store.user_config_path(&admin.user_id)))
+        .expect("write legacy config");
+
+    std::fs::write(
+        store.control_dir().join("workspaces.json"),
+        "{\n  \"version\": 1,\n  \"workspaces\": []\n}\n",
+    )
+    .expect("clear workspaces");
+
+    let recovered = store
+        .default_workspace_for_user(&admin.user_id)
+        .expect("recover workspace")
+        .expect("default workspace");
+
+    assert!(recovered.is_default);
+    assert_eq!(
+        store
+            .list_workspaces_for_user(&admin.user_id)
+            .expect("list workspaces")
+            .len(),
+        1
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            store
+                .workspace_dir(&recovered.workspace_id)
+                .join("channels")
+                .join("weixin")
+                .join("account.json")
+        )
+        .expect("copied account"),
+        "{\"bot\":\"legacy\"}"
+    );
+
+    let config = store
+        .load_user_config(&admin.user_id)
+        .expect("load recovered config");
+    assert_eq!(
+        config.workspace_path(),
+        store.workspace_dir(&recovered.workspace_id)
+    );
+    assert!(config.channels.weixin.enabled);
+}
+
+#[test]
 fn validation_rejects_duplicate_telegram_wecom_and_feishu_connectors() {
     let dir = tempdir().expect("tempdir");
     let store = ControlStore::new(dir.path()).expect("control store");
@@ -384,6 +461,62 @@ fn auth_service_creates_and_resolves_sessions() {
             .expect("authenticate after logout")
             .is_none()
     );
+}
+
+#[test]
+fn auth_service_login_repairs_legacy_web_sessions_missing_active_workspace() {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let user = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+    let expected_workspace = default_workspace(&store, &user.user_id);
+
+    std::fs::write(
+        store.control_dir().join("web_sessions.json"),
+        format!(
+            concat!(
+                "{{\n",
+                "  \"version\": 1,\n",
+                "  \"sessions\": [\n",
+                "    {{\n",
+                "      \"session_id\": \"legacy\",\n",
+                "      \"user_id\": \"{}\",\n",
+                "      \"created_at\": \"2026-04-02T17:20:38.400398Z\",\n",
+                "      \"updated_at\": \"2026-04-02T17:20:38.400398Z\"\n",
+                "    }}\n",
+                "  ]\n",
+                "}}\n"
+            ),
+            user.user_id
+        ),
+    )
+    .expect("write legacy sessions");
+
+    let auth = AuthService::new(store.clone());
+    let session = auth.login("alice", "password123").expect("login");
+    assert_eq!(session.active_workspace_id, expected_workspace.workspace_id);
+
+    let resolved = auth
+        .authenticate_session("legacy")
+        .expect("authenticate legacy")
+        .expect("legacy context");
+    assert_eq!(
+        resolved.active_workspace_id,
+        expected_workspace.workspace_id
+    );
+
+    let persisted =
+        std::fs::read_to_string(store.control_dir().join("web_sessions.json")).expect("sessions");
+    assert!(persisted.contains("\"session_id\": \"legacy\""));
+    assert!(persisted.contains(&format!(
+        "\"active_workspace_id\": \"{}\"",
+        expected_workspace.workspace_id
+    )));
 }
 
 #[tokio::test]

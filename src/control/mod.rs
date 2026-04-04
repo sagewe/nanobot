@@ -54,6 +54,7 @@ pub struct BootstrapAdmin {
 pub struct WebSessionRecord {
     pub session_id: String,
     pub user_id: String,
+    #[serde(default)]
     pub active_workspace_id: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -368,10 +369,16 @@ impl ControlStore {
     }
 
     pub fn default_workspace_for_user(&self, user_id: &str) -> Result<Option<WorkspaceRecord>> {
-        Ok(self
-            .list_workspaces_for_user(user_id)?
-            .into_iter()
-            .find(|workspace| workspace.is_default))
+        let workspaces = self.list_workspaces_for_user(user_id)?;
+        if let Some(workspace) = workspaces.iter().find(|workspace| workspace.is_default) {
+            return Ok(Some(workspace.clone()));
+        }
+        if let Some(workspace) = workspaces.first() {
+            return self
+                .set_default_workspace(user_id, &workspace.workspace_id)
+                .map(Some);
+        }
+        self.recover_default_workspace_for_user(user_id)
     }
 
     pub fn get_workspace_by_id(&self, workspace_id: &str) -> Result<Option<WorkspaceRecord>> {
@@ -801,7 +808,31 @@ impl ControlStore {
 
     fn load_web_session_store(&self) -> Result<WebSessionStore> {
         self.ensure_control_files()?;
-        read_json(&self.control_dir().join("web_sessions.json"))
+        let mut store: WebSessionStore = read_json(&self.control_dir().join("web_sessions.json"))?;
+        let mut changed = false;
+        for session in &mut store.sessions {
+            let workspace_missing = session.active_workspace_id.trim().is_empty();
+            let workspace_invalid = !workspace_missing
+                && self
+                    .get_workspace_by_id(&session.active_workspace_id)?
+                    .map(|workspace| workspace.user_id != session.user_id)
+                    .unwrap_or(true);
+            if !(workspace_missing || workspace_invalid) {
+                continue;
+            }
+            let Some(workspace) = self.default_workspace_for_user(&session.user_id)? else {
+                continue;
+            };
+            if session.active_workspace_id != workspace.workspace_id {
+                session.active_workspace_id = workspace.workspace_id;
+                session.updated_at = Utc::now();
+                changed = true;
+            }
+        }
+        if changed {
+            self.save_web_session_store(&store)?;
+        }
+        Ok(store)
     }
 
     fn load_workspace_store(&self) -> Result<WorkspaceStore> {
@@ -815,6 +846,66 @@ impl ControlStore {
 
     fn save_workspace_store(&self, store: &WorkspaceStore) -> Result<()> {
         write_json(&self.control_dir().join("workspaces.json"), store)
+    }
+
+    fn recover_default_workspace_for_user(&self, user_id: &str) -> Result<Option<WorkspaceRecord>> {
+        let Some(user) = self.get_user_by_id(user_id)? else {
+            return Ok(None);
+        };
+
+        let legacy_source = self
+            .legacy_workspace_candidates(user_id)?
+            .into_iter()
+            .next();
+        let workspace =
+            self.create_workspace_internal(user_id, "Default", Some("default"), true)?;
+        let workspace_path = self.workspace_dir(&workspace.workspace_id);
+
+        if let Some(source) = legacy_source {
+            if source != workspace_path {
+                copy_dir_contents(&source, &workspace_path)?;
+            }
+        }
+
+        let config_path = self.user_config_read_path(user_id);
+        let config = if config_path.exists() {
+            load_config(Some(&config_path)).unwrap_or_else(|_| Config::default())
+        } else {
+            Config::default()
+        };
+        self.write_runtime_config(user_id, &workspace.workspace_id, &config)?;
+        self.append_audit(
+            "recover_default_workspace",
+            Some(user_id),
+            Some(user_id),
+            format!("recovered default workspace for {}", user.username),
+        )?;
+        Ok(Some(workspace))
+    }
+
+    fn legacy_workspace_candidates(&self, user_id: &str) -> Result<Vec<PathBuf>> {
+        let mut candidates = Vec::new();
+        let config_path = self.user_config_read_path(user_id);
+        if config_path.exists() {
+            if let Ok(config) = load_config(Some(&config_path)) {
+                push_unique_path(&mut candidates, config.workspace_path());
+            }
+        }
+        push_unique_path(&mut candidates, self.user_dir(user_id).join("workspace"));
+        push_unique_path(&mut candidates, self.root().join("workspace"));
+        if let Some(state) = self.load_migration_state()? {
+            push_unique_path(&mut candidates, PathBuf::from(state.source_workspace));
+        }
+        candidates.retain(|path| path.is_dir());
+        Ok(candidates)
+    }
+
+    fn load_migration_state(&self) -> Result<Option<MigrationState>> {
+        let path = self.control_dir().join("migration.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        read_json(&path).map(Some)
     }
 
     fn append_audit(
@@ -1608,6 +1699,12 @@ fn unique_workspace_slug(existing: &[WorkspaceRecord], requested: &str) -> Strin
             return candidate;
         }
         index += 1;
+    }
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !paths.iter().any(|existing| existing == &candidate) {
+        paths.push(candidate);
     }
 }
 
