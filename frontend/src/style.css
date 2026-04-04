@@ -577,6 +577,40 @@
         display: flex;
         flex-direction: column;
         gap: 0.25rem;
+        position: relative;
+        padding-left: 1.1rem;
+      }
+
+      .account-status::before {
+        content: "";
+        position: absolute;
+        top: 0.38rem;
+        left: 0;
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 999px;
+        background: var(--muted);
+        box-shadow: 0 0 0 0.18rem rgba(176, 174, 165, 0.2);
+      }
+
+      .account-status[data-state="connected"]::before {
+        background: var(--success);
+        box-shadow: 0 0 0 0.18rem rgba(120, 140, 93, 0.18);
+      }
+
+      .account-status[data-state="active"]::before {
+        background: var(--info);
+        box-shadow: 0 0 0 0.18rem rgba(106, 155, 204, 0.18);
+      }
+
+      .account-status[data-state="warning"]::before {
+        background: var(--warning);
+        box-shadow: 0 0 0 0.18rem rgba(162, 123, 59, 0.18);
+      }
+
+      .account-status[data-state="disabled"]::before {
+        background: var(--dim);
+        box-shadow: 0 0 0 0.18rem rgba(95, 91, 84, 0.16);
       }
 
       .account-status strong {
@@ -704,11 +738,6 @@
           radial-gradient(circle at top left, rgba(120, 140, 93, 0.12), transparent 30%),
           radial-gradient(circle at bottom right, rgba(106, 155, 204, 0.1), transparent 34%),
           #fdfcfb;
-      }
-
-      .channels-copy--compact {
-        margin: -0.2rem 0 0;
-        max-width: 28rem;
       }
 
       .channels-weixin-config {

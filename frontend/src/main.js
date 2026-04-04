@@ -91,6 +91,7 @@ const weixinQrPanel = document.getElementById("weixin-qr-panel");
 const weixinQrImage = document.getElementById("weixin-qr-image");
 const weixinStatusLabel = document.getElementById("weixin-status-label");
 const weixinUserLabel = document.getElementById("weixin-user-label");
+const weixinStatusGroup = weixinStatusLabel?.parentElement;
 const weixinLoginButton = document.getElementById("weixin-login-button");
 const weixinLogoutButton = document.getElementById("weixin-logout-button");
 const themeToggle = document.getElementById("theme-toggle");
@@ -666,6 +667,12 @@ function clearWeixinPollTimer() {
   }
 }
 
+function setWeixinStatusState(state) {
+  if (weixinStatusGroup) {
+    weixinStatusGroup.dataset.state = state;
+  }
+}
+
 function scheduleWeixinPoll() {
   clearWeixinPollTimer();
   weixinPollTimer = setTimeout(() => pollWeixinLoginStatus(), 1500);
@@ -676,6 +683,7 @@ async function pollWeixinLoginStatus() {
     const payload = await fetchWeixinLoginStatus();
 
     if (payload.status === "confirmed") {
+      setWeixinStatusState("connected");
       weixinStatusLabel.textContent = t("connected");
       weixinQrPanel.hidden = true;
       clearWeixinPollTimer();
@@ -685,6 +693,7 @@ async function pollWeixinLoginStatus() {
     }
 
     if (payload.expired === true || payload.status === "expired") {
+      setWeixinStatusState("warning");
       weixinStatusLabel.textContent = t("login_expired");
       weixinUserLabel.textContent = t("refresh_qr");
       clearWeixinPollTimer();
@@ -693,9 +702,11 @@ async function pollWeixinLoginStatus() {
     }
 
     if (payload.status === "scaned") {
+      setWeixinStatusState("active");
       weixinStatusLabel.textContent = t("qr_scanned");
       weixinUserLabel.textContent = t("confirm_login_weixin");
     } else {
+      setWeixinStatusState("active");
       weixinStatusLabel.textContent = t("waiting_for_scan");
     }
 
@@ -1113,6 +1124,7 @@ weixinLoginButton.addEventListener("click", async () => {
     const payload = await startWeixinLogin();
     weixinQrPanel.hidden = false;
     weixinQrImage.src = normalizeWeixinQrSource(payload.qrcodeImgContent || "");
+    setWeixinStatusState("active");
     weixinStatusLabel.textContent = t("waiting_for_scan");
     weixinUserLabel.textContent = t("scan_qr_weixin");
     scheduleWeixinPoll();
