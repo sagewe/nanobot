@@ -119,7 +119,6 @@ const currentUserDisplay = document.getElementById("current-user-display");
 const currentUserRole = document.getElementById("current-user-role");
 const logoutButton = document.getElementById("logout-button");
 const adminUsersTab = document.getElementById("admin-users-tab");
-const channelsRefreshButton = document.getElementById("channels-refresh-button");
 const channelsSettingsForm = document.getElementById("channels-settings-form");
 const settingsRefreshButton = document.getElementById("settings-refresh-button");
 const settingsForm = document.getElementById("settings-form");
@@ -930,15 +929,6 @@ logoutButton.addEventListener("click", async () => {
 settingsRefreshButton.addEventListener("click", async () => {
   try {
     await loadSettings();
-    setStatus(t("settings_reloaded"), "idle");
-  } catch (error) {
-    setStatus(error?.message || t("settings_reload_failed"), "error");
-  }
-});
-
-channelsRefreshButton.addEventListener("click", async () => {
-  try {
-    await Promise.all([loadSettings(), loadWeixinAccount()]);
     setStatus(t("settings_reloaded"), "idle");
   } catch (error) {
     setStatus(error?.message || t("settings_reload_failed"), "error");

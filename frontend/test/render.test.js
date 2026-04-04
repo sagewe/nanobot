@@ -561,10 +561,10 @@ describe("tool trace output", () => {
     expect(channelsPane).toContain('id="channels-settings-form" class="control-form channels-settings-form"');
     expect(channelsPane).toContain('class="settings-channel-groups"');
     expect(channelsPane).toContain('class="settings-channel-group section-surface"');
+    expect(channelsConfigCard).not.toContain('class="control-panel-header section-header"');
     expect(channelsConfigCard).not.toContain('data-i18n="settings_channels_weixin"');
-    expect(channelsPane).toContain('id="channels-refresh-button" type="button" class="section-action"');
+    expect(channelsPane).not.toContain('id="channels-refresh-button"');
     expect(channelsPane).toContain('id="channels-save-button" type="submit"');
-    expect(channelsPane).toContain('data-i18n="channels_settings_title"');
     expect(channelsPane).toContain('data-i18n="channels_settings_copy"');
     expect(channelsPane).toContain('data-i18n="settings_channels_telegram"');
     expect(channelsPane).toContain('data-i18n="settings_channels_wecom"');
@@ -591,8 +591,6 @@ describe("tool trace output", () => {
     expect(TRANSLATIONS.zh.settings_advanced_title).toContain("TOML");
     expect(TRANSLATIONS.en.settings_channels_feishu).toBe("Feishu");
     expect(TRANSLATIONS.zh.settings_channels_feishu).toBeTruthy();
-    expect(TRANSLATIONS.en.channels_settings_title).toBe("Terminal Configuration");
-    expect(TRANSLATIONS.zh.channels_settings_title).toBe("终端配置");
     expect(TRANSLATIONS.en.channels_settings_copy).toContain("credentials");
     expect(TRANSLATIONS.zh.channels_settings_copy).toContain("凭据");
     expect(TRANSLATIONS.en.users_action_reset_password).toBeTruthy();
@@ -602,9 +600,7 @@ describe("tool trace output", () => {
     expect(js).toContain('t("settings_saved")');
     expect(js).toContain('t("users_updated")');
     expect(js).toContain('const channelsSettingsForm = document.getElementById("channels-settings-form");');
-    expect(js).toContain('const channelsRefreshButton = document.getElementById("channels-refresh-button");');
     expect(js).toContain('channelsSettingsForm.addEventListener("submit"');
-    expect(js).toContain('channelsRefreshButton.addEventListener("click"');
     expect(js).toContain('import TOML from "./toml.js"');
     expect(js).toContain("TOML.stringify");
     expect(js).toContain("TOML.parse");
