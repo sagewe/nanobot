@@ -90,15 +90,20 @@
         </aside>
         <section class="shell">
         <section class="sessions-pane" hidden>
+          <div class="pane-header section-header">
+            <div class="section-title-group">
+              <h2 class="pane-title" data-i18n="tab_sessions">Sessions</h2>
+            </div>
+          </div>
           <div class="sessions-search-bar">
             <input type="search" id="sessions-search" data-i18n-placeholder="sessions_search_placeholder" placeholder="Filter sessions…" autocomplete="off" />
           </div>
           <div id="sessions-list" class="sessions-list"></div>
         </section>
         <section class="jobs-pane" hidden>
-          <div class="jobs-header section-header">
+          <div class="pane-header section-header">
             <div class="section-title-group">
-              <h2 class="jobs-title" data-i18n="jobs_title">Scheduled Jobs</h2>
+              <h2 class="pane-title" data-i18n="jobs_title">Scheduled Jobs</h2>
             </div>
             <button id="jobs-refresh-btn" type="button" class="section-action" data-i18n-title="jobs_refresh" title="Refresh">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
@@ -158,9 +163,9 @@
           </details>
         </section>
         <section class="mcp-pane" hidden>
-          <div class="jobs-header section-header">
+          <div class="pane-header section-header">
             <div class="section-title-group">
-              <h2 class="jobs-title" data-i18n="mcp_title">MCP Servers</h2>
+              <h2 class="pane-title" data-i18n="mcp_title">MCP Servers</h2>
             </div>
             <button id="mcp-refresh-btn" type="button" class="section-action" data-i18n-title="mcp_refresh" title="Refresh">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
@@ -169,14 +174,13 @@
           <div id="mcp-list" class="jobs-list"></div>
         </section>
         <section class="skills-pane" hidden>
-          <section class="control-panel control-panel--skills section-surface">
-            <div class="control-panel-header section-header">
-              <div class="section-title-group">
-                <div class="session-kicker section-eyebrow" data-i18n="tab_skills">Skills</div>
-                <h2 class="jobs-title" data-i18n="skills_title">Skills Library</h2>
-              </div>
-              <button id="skills-create-button" type="button" class="section-action" data-i18n="skills_create">Create Skill</button>
+          <div class="pane-header section-header">
+            <div class="section-title-group">
+              <h2 class="pane-title" data-i18n="skills_title">Skills Library</h2>
             </div>
+            <button id="skills-create-button" type="button" class="section-action" data-i18n="skills_create">Create Skill</button>
+          </div>
+          <section class="control-panel control-panel--skills section-surface">
             <div class="control-form skills-layout">
               <aside class="skills-master">
                 <label class="skills-search">
@@ -184,22 +188,15 @@
                   <input id="skills-search" type="search" data-i18n-placeholder="skills_search_placeholder" placeholder="Search skills…" autocomplete="off" />
                 </label>
                 <section class="skills-group section-surface">
-                  <div class="skills-group-header section-title-group">
-                    <div class="session-kicker section-eyebrow" data-i18n="skills_workspace_title">Workspace Skills</div>
-                  </div>
                   <div id="skills-workspace-list" class="skills-list"></div>
                 </section>
                 <section class="skills-group section-surface">
-                  <div class="skills-group-header section-title-group">
-                    <div class="session-kicker section-eyebrow" data-i18n="skills_builtin_title">Built-in Skills</div>
-                  </div>
                   <div id="skills-builtin-list" class="skills-list"></div>
                 </section>
               </aside>
               <section class="skills-detail section-surface">
                 <div class="skills-detail-header section-header">
                   <div class="section-title-group">
-                    <div class="session-kicker section-eyebrow" data-i18n="tab_skills">Skills</div>
                     <h3 class="settings-section-title" data-i18n="skill_editor_title">Skill Editor</h3>
                   </div>
                   <label class="checkbox-row skill-enabled-toggle">
@@ -216,18 +213,16 @@
           </section>
         </section>
         <section class="settings-pane" hidden>
-          <section class="control-panel control-panel--workspace section-surface">
-            <div class="control-panel-header section-header">
-              <div class="section-title-group">
-                <div class="session-kicker section-eyebrow" data-i18n="settings_workspace_kicker">Private Settings</div>
-                <h2 class="jobs-title" data-i18n="settings_workspace_title">Workspace Configuration</h2>
-              </div>
+          <div class="pane-header section-header">
+            <div class="section-title-group">
+              <h2 class="pane-title" data-i18n="settings_workspace_title">Workspace Configuration</h2>
             </div>
+          </div>
+          <section class="control-panel control-panel--workspace section-surface">
             <form id="settings-form" class="control-form settings-layout">
               <div class="settings-main">
                 <section class="settings-section section-surface">
                   <div class="settings-section-header section-header section-title-group">
-                    <div class="session-kicker section-eyebrow" data-i18n="settings_profile_kicker">Profile</div>
                     <h3 class="settings-section-title" data-i18n="settings_profile_title">Base Configuration</h3>
                   </div>
                   <div class="control-grid control-grid--single">
@@ -241,7 +236,6 @@
               <aside class="settings-advanced">
                 <div class="settings-advanced-header section-header">
                   <div class="section-title-group">
-                    <div class="session-kicker section-eyebrow" data-i18n="settings_advanced_kicker">Advanced</div>
                     <h3 class="settings-section-title" data-i18n="settings_advanced_title">Advanced TOML</h3>
                   </div>
                   <button id="settings-refresh-button" type="button" class="section-action" data-i18n="settings_reload">Reload</button>
@@ -259,8 +253,7 @@
           <section class="control-panel section-surface">
             <div class="control-panel-header section-header">
               <div class="section-title-group">
-                <div class="session-kicker section-eyebrow" data-i18n="settings_password_kicker">Security</div>
-                <h2 class="jobs-title" data-i18n="settings_password_title">Change Password</h2>
+                <h2 class="pane-title" data-i18n="settings_password_title">Change Password</h2>
               </div>
             </div>
             <form id="change-password-form" class="control-form compact-form">
@@ -279,15 +272,15 @@
           </section>
         </section>
         <section class="users-pane" hidden>
-          <div class="users-pane-header section-title-group">
-            <div class="session-kicker section-eyebrow" data-i18n="users_kicker">Admin</div>
-            <h2 class="jobs-title" data-i18n="users_title">Users</h2>
+          <div class="pane-header section-header">
+            <div class="section-title-group">
+              <h2 class="pane-title" data-i18n="users_title">Users</h2>
+            </div>
           </div>
           <div class="users-layout">
             <section class="control-panel users-create-card section-surface">
               <div class="control-panel-header users-section-header section-header">
                 <div class="section-title-group">
-                  <div class="session-kicker section-eyebrow" data-i18n="users_create_kicker">Create</div>
                   <h3 class="settings-section-title" data-i18n="users_create_title">Create User</h3>
                 </div>
               </div>
@@ -319,7 +312,6 @@
             <section class="control-panel users-list-card section-surface">
               <div class="control-panel-header users-list-header section-header">
                 <div class="section-title-group">
-                  <div class="session-kicker section-eyebrow" data-i18n="users_list_kicker">Directory</div>
                   <h3 class="settings-section-title" data-i18n="users_list_title">Current Users</h3>
                 </div>
                 <button id="users-refresh-button" type="button" class="section-action" data-i18n="users_refresh">Refresh</button>
@@ -329,90 +321,85 @@
           </div>
         </section>
         <section class="channels-pane" hidden>
+          <div class="pane-header section-header">
+            <div class="section-title-group">
+              <h2 class="pane-title" data-i18n="tab_channels">Channels</h2>
+            </div>
+          </div>
           <form id="channels-settings-form" class="control-form channels-settings-form">
-            <div class="channels-layout">
-              <section class="control-panel channels-config-card section-surface">
-                <p class="channels-copy" data-i18n="channels_settings_copy">Manage provider credentials and endpoints without leaving the terminals tab.</p>
-                <div class="settings-channel-groups">
-                  <section class="settings-channel-group section-surface">
-                    <div class="settings-channel-group-header section-title-group">
-                      <div class="session-kicker section-eyebrow" data-i18n="settings_channels_telegram">Telegram</div>
-                    </div>
-                    <div class="control-grid control-grid--single">
-                      <label>
-                        <span data-i18n="settings_telegram_token">Telegram token</span>
-                        <input id="settings-telegram-token" type="password" />
-                      </label>
-                      <label class="checkbox-row">
-                        <input id="settings-telegram-enabled" type="checkbox" />
-                        <span data-i18n="settings_telegram_enabled">Telegram enabled</span>
-                      </label>
-                    </div>
-                  </section>
-                  <section class="settings-channel-group section-surface">
-                    <div class="settings-channel-group-header section-title-group">
-                      <div class="session-kicker section-eyebrow" data-i18n="settings_channels_wecom">WeCom</div>
-                    </div>
-                    <div class="control-grid control-grid--single">
-                      <label class="checkbox-row">
-                        <input id="settings-wecom-enabled" type="checkbox" />
-                        <span data-i18n="settings_wecom_enabled">WeCom enabled</span>
-                      </label>
-                      <label>
-                        <span data-i18n="settings_wecom_bot_id">WeCom bot ID</span>
-                        <input id="settings-wecom-bot-id" type="text" />
-                      </label>
-                      <label>
-                        <span data-i18n="settings_wecom_secret">WeCom secret</span>
-                        <input id="settings-wecom-secret" type="password" />
-                      </label>
-                    </div>
-                  </section>
-                  <section class="settings-channel-group section-surface">
-                    <div class="settings-channel-group-header section-title-group">
-                      <div class="session-kicker section-eyebrow" data-i18n="settings_channels_feishu">Feishu</div>
-                    </div>
-                    <div class="control-grid control-grid--single">
-                      <label class="checkbox-row">
-                        <input id="settings-feishu-enabled" type="checkbox" />
-                        <span data-i18n="settings_feishu_enabled">Feishu enabled</span>
-                      </label>
-                      <label>
-                        <span data-i18n="settings_feishu_app_id">Feishu app ID</span>
-                        <input id="settings-feishu-app-id" type="text" />
-                      </label>
-                      <label>
-                        <span data-i18n="settings_feishu_app_secret">Feishu app secret</span>
-                        <input id="settings-feishu-app-secret" type="password" />
-                      </label>
-                      <label>
-                        <span data-i18n="settings_feishu_api_base">Feishu API base</span>
-                        <input id="settings-feishu-api-base" type="text" />
-                      </label>
-                      <label>
-                        <span data-i18n="settings_feishu_ws_base">Feishu WebSocket base</span>
-                        <input id="settings-feishu-ws-base" type="text" />
-                      </label>
-                    </div>
-                  </section>
-                </div>
-              </section>
-              <section id="weixin-account-panel" class="account-panel channels-weixin-card">
-                <div class="account-panel-header">
-                  <div class="section-title-group">
-                    <div class="session-kicker section-eyebrow" data-i18n="settings_channels_weixin">Weixin</div>
+            <section class="control-panel channels-config-card">
+              <div class="settings-channel-groups">
+                <section class="settings-channel-group">
+                  <div class="control-grid control-grid--single">
+                    <label>
+                      <span data-i18n="settings_telegram_token">Telegram token</span>
+                      <input id="settings-telegram-token" type="password" />
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="settings-telegram-enabled" type="checkbox" />
+                      <span data-i18n="settings_telegram_enabled">Telegram enabled</span>
+                    </label>
                   </div>
-                  <div class="account-actions">
-                    <button id="weixin-login-button" type="button" data-i18n-title="login_to_weixin" title="Login to Weixin">
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-                    </button>
-                    <button id="weixin-logout-button" type="button" data-i18n-title="logout" title="Logout">
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                    </button>
+                </section>
+                <section class="settings-channel-group">
+                  <div class="control-grid control-grid--single">
+                    <label class="checkbox-row">
+                      <input id="settings-wecom-enabled" type="checkbox" />
+                      <span data-i18n="settings_wecom_enabled">WeCom enabled</span>
+                    </label>
+                    <label>
+                      <span data-i18n="settings_wecom_bot_id">WeCom bot ID</span>
+                      <input id="settings-wecom-bot-id" type="text" />
+                    </label>
+                    <label>
+                      <span data-i18n="settings_wecom_secret">WeCom secret</span>
+                      <input id="settings-wecom-secret" type="password" />
+                    </label>
                   </div>
-                </div>
-                <div class="account-panel-info">
-                  <div class="channels-weixin-config control-grid control-grid--single">
+                </section>
+                <section class="settings-channel-group">
+                  <div class="control-grid control-grid--single">
+                    <label class="checkbox-row">
+                      <input id="settings-feishu-enabled" type="checkbox" />
+                      <span data-i18n="settings_feishu_enabled">Feishu enabled</span>
+                    </label>
+                    <label>
+                      <span data-i18n="settings_feishu_app_id">Feishu app ID</span>
+                      <input id="settings-feishu-app-id" type="text" />
+                    </label>
+                    <label>
+                      <span data-i18n="settings_feishu_app_secret">Feishu app secret</span>
+                      <input id="settings-feishu-app-secret" type="password" />
+                    </label>
+                    <label>
+                      <span data-i18n="settings_feishu_api_base">Feishu API base</span>
+                      <input id="settings-feishu-api-base" type="text" />
+                    </label>
+                    <label>
+                      <span data-i18n="settings_feishu_ws_base">Feishu WebSocket base</span>
+                      <input id="settings-feishu-ws-base" type="text" />
+                    </label>
+                  </div>
+                </section>
+                <section id="weixin-account-panel" class="settings-channel-group">
+                  <div class="settings-channel-group-header">
+                    <div class="weixin-channel-label">
+                      <div class="account-status account-status--icon-only" data-state="checking">
+                        <strong id="weixin-status-label" data-i18n="checking_account">Checking account…</strong>
+                        <span id="weixin-user-label" data-i18n="login_from_console">Login from the embedded console.</span>
+                      </div>
+                      <span class="weixin-label-text" data-i18n="settings_channels_weixin">Weixin</span>
+                    </div>
+                    <div class="account-actions">
+                      <button id="weixin-login-button" type="button" data-i18n-title="login_to_weixin" title="Login to Weixin">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                      </button>
+                      <button id="weixin-logout-button" type="button" data-i18n-title="logout" title="Logout">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="control-grid control-grid--single">
                     <label>
                       <span data-i18n="settings_weixin_api_base">Weixin API base</span>
                       <input id="settings-weixin-api-base" type="text" />
@@ -422,20 +409,16 @@
                       <span data-i18n="settings_weixin_enabled">Weixin enabled</span>
                     </label>
                   </div>
-                  <div class="account-status account-status--icon-only" data-state="checking">
-                    <strong id="weixin-status-label" data-i18n="checking_account">Checking account…</strong>
-                    <span id="weixin-user-label" data-i18n="login_from_console">Login from the embedded console.</span>
+                  <div id="weixin-qr-panel" hidden>
+                    <img id="weixin-qr-image" data-i18n-alt="weixin_qr_alt" alt="Weixin login QR code" />
+                    <div id="weixin-qr-note" class="account-muted" data-i18n="scan_to_confirm">Scan in Weixin to confirm login.</div>
                   </div>
-                </div>
-                <div id="weixin-qr-panel" hidden>
-                  <img id="weixin-qr-image" data-i18n-alt="weixin_qr_alt" alt="Weixin login QR code" />
-                  <div id="weixin-qr-note" class="account-muted" data-i18n="scan_to_confirm">Scan in Weixin to confirm login.</div>
-                </div>
-                <div class="control-actions channels-actions">
-                  <button id="channels-save-button" type="submit" data-i18n="settings_save">Save Configuration</button>
-                </div>
-              </section>
-            </div>
+                </section>
+              </div>
+              <div class="control-actions channels-actions">
+                <button id="channels-save-button" type="submit" data-i18n="settings_save">Save Configuration</button>
+              </div>
+            </section>
           </form>
         </section>
         <section class="conversation-pane">
