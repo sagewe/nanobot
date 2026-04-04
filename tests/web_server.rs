@@ -396,6 +396,378 @@ async fn login_sets_cookie_and_me_returns_authenticated_user() {
     let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(payload["username"], json!("alice"));
     assert_eq!(payload["role"], json!("admin"));
+    assert_eq!(payload["activeWorkspace"]["slug"], json!("default"));
+    assert_eq!(
+        payload["workspaces"].as_array().map(Vec::len),
+        Some(1),
+        "{payload}"
+    );
+}
+
+#[tokio::test]
+async fn workspace_switch_endpoint_updates_the_active_workspace_context() {
+    let (state, dir) = multiuser_state();
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let alice = store
+        .get_user_by_username("alice")
+        .expect("load alice")
+        .expect("alice user");
+    let docs = store
+        .create_workspace(&alice.user_id, "Docs", Some("docs"))
+        .expect("create docs workspace");
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    let switch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/workspace")
+                .header("cookie", cookie.clone())
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "workspaceId": docs.workspace_id }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("switch workspace");
+    assert_eq!(switch.status(), StatusCode::OK);
+
+    let me = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/auth/me")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("me after switch");
+
+    assert_eq!(me.status(), StatusCode::OK);
+    let body = to_bytes(me.into_body(), usize::MAX).await.expect("body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(payload["activeWorkspace"]["id"], json!(docs.workspace_id));
+    assert_eq!(payload["activeWorkspace"]["slug"], json!("docs"));
+    assert_eq!(
+        payload["workspaces"].as_array().map(Vec::len),
+        Some(2),
+        "{payload}"
+    );
+}
+
+#[tokio::test]
+async fn sessions_are_scoped_to_the_active_workspace() {
+    let (state, dir) = multiuser_state();
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let alice = store
+        .get_user_by_username("alice")
+        .expect("load alice")
+        .expect("alice user");
+    let docs = store
+        .create_workspace(&alice.user_id, "Docs", Some("docs"))
+        .expect("create docs workspace");
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    let (default_create_status, default_create_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/sessions")
+            .header("cookie", cookie.clone())
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(default_create_status, StatusCode::OK);
+    let default_session_id = default_create_payload["sessionId"]
+        .as_str()
+        .expect("default session id")
+        .to_string();
+
+    let (switch_status, _) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/auth/workspace")
+            .header("cookie", cookie.clone())
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "workspaceId": docs.workspace_id }).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(switch_status, StatusCode::OK);
+
+    let (docs_create_status, docs_create_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/sessions")
+            .header("cookie", cookie.clone())
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(docs_create_status, StatusCode::OK);
+    let docs_session_id = docs_create_payload["sessionId"]
+        .as_str()
+        .expect("docs session id")
+        .to_string();
+
+    let (docs_list_status, docs_list_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .uri("/api/sessions")
+            .header("cookie", cookie.clone())
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(docs_list_status, StatusCode::OK);
+    let docs_sessions = docs_list_payload["groups"][0]["sessions"]
+        .as_array()
+        .expect("docs sessions");
+    assert!(
+        docs_sessions
+            .iter()
+            .any(|session| session["sessionId"] == json!(docs_session_id))
+    );
+    assert!(
+        !docs_sessions
+            .iter()
+            .any(|session| session["sessionId"] == json!(default_session_id))
+    );
+
+    let (switch_back_status, _) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/auth/workspace")
+            .header("cookie", cookie.clone())
+            .header("content-type", "application/json")
+            .body(Body::from(json!({ "workspaceId": "default" }).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(switch_back_status, StatusCode::OK);
+
+    let (default_list_status, default_list_payload) = json_response(
+        app,
+        Request::builder()
+            .uri("/api/sessions")
+            .header("cookie", cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(default_list_status, StatusCode::OK);
+    let default_sessions = default_list_payload["groups"][0]["sessions"]
+        .as_array()
+        .expect("default sessions");
+    assert!(
+        default_sessions
+            .iter()
+            .any(|session| session["sessionId"] == json!(default_session_id))
+    );
+    assert!(
+        !default_sessions
+            .iter()
+            .any(|session| session["sessionId"] == json!(docs_session_id))
+    );
+}
+
+#[tokio::test]
+async fn resources_endpoint_lists_workspace_scoped_resource_kinds() {
+    let (state, dir) = multiuser_state();
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let alice = store
+        .get_user_by_username("alice")
+        .expect("load alice")
+        .expect("alice user");
+    let workspace = store
+        .default_workspace_for_user(&alice.user_id)
+        .expect("default workspace")
+        .expect("workspace");
+    let workspace_dir = store.workspace_dir(&workspace.workspace_id);
+    write_skill(
+        workspace_dir.join("skills").as_path(),
+        "workspace-resource",
+        "---\nname: workspace resource\ndescription: resource skill\n---\n\nBody\n",
+    );
+    std::fs::write(
+        workspace_dir.join("files").join("notes.md"),
+        "# Notes\n\nworkspace file\n",
+    )
+    .expect("write file asset");
+
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    let (session_status, _) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/sessions")
+            .header("cookie", cookie.clone())
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(session_status, StatusCode::OK);
+
+    let (cron_status, _) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/cron/jobs")
+            .header("cookie", cookie.clone())
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "message": "ping",
+                    "everySeconds": 60,
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(cron_status, StatusCode::OK);
+
+    let (resources_status, resources_payload) = json_response(
+        app,
+        Request::builder()
+            .uri("/api/resources")
+            .header("cookie", cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(resources_status, StatusCode::OK);
+
+    let resources = resources_payload["resources"]
+        .as_array()
+        .expect("resources array");
+    let kinds = resources
+        .iter()
+        .filter_map(|resource| resource["kind"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(kinds.contains("session"), "{resources_payload}");
+    assert!(kinds.contains("skill"), "{resources_payload}");
+    assert!(kinds.contains("cron_job"), "{resources_payload}");
+    assert!(kinds.contains("memory_doc"), "{resources_payload}");
+    assert!(kinds.contains("file_asset"), "{resources_payload}");
+}
+
+#[tokio::test]
+async fn workspace_crud_endpoints_manage_the_authenticated_users_workspaces() {
+    let (state, _dir) = multiuser_state();
+    let app = web::build_router(state);
+    let cookie = login_cookie(&app, "alice", "password123").await;
+
+    let (create_status, create_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("cookie", cookie.clone())
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "Docs",
+                    "slug": "docs",
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::OK);
+    let docs_id = create_payload["id"]
+        .as_str()
+        .expect("workspace id")
+        .to_string();
+
+    let (patch_status, patch_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("PATCH")
+            .uri(format!("/api/workspaces/{docs_id}"))
+            .header("cookie", cookie.clone())
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "Docs V2",
+                    "isDefault": true,
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(patch_status, StatusCode::OK);
+    assert_eq!(patch_payload["name"], json!("Docs V2"));
+    assert_eq!(patch_payload["isDefault"], json!(true));
+
+    let (list_status, list_payload) = json_response(
+        app.clone(),
+        Request::builder()
+            .uri("/api/workspaces")
+            .header("cookie", cookie.clone())
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(list_status, StatusCode::OK);
+    let workspaces = list_payload["workspaces"]
+        .as_array()
+        .expect("workspaces array");
+    assert_eq!(workspaces.len(), 2);
+    assert!(workspaces.iter().any(
+        |workspace| workspace["id"] == json!(docs_id) && workspace["isDefault"] == json!(true)
+    ));
+
+    let default_workspace_id = workspaces
+        .iter()
+        .find(|workspace| workspace["slug"] == json!("default"))
+        .and_then(|workspace| workspace["id"].as_str())
+        .expect("default workspace id")
+        .to_string();
+
+    let (delete_default_status, _) = json_response(
+        app.clone(),
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/workspaces/{default_workspace_id}"))
+            .header("cookie", cookie.clone())
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(delete_default_status, StatusCode::NO_CONTENT);
+
+    let (delete_last_status, delete_last_payload) = json_response(
+        app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/workspaces/{docs_id}"))
+            .header("cookie", cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(delete_last_status, StatusCode::BAD_REQUEST);
+    assert!(
+        delete_last_payload["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("last workspace")
+    );
 }
 
 #[tokio::test]
@@ -503,18 +875,16 @@ async fn me_config_returns_the_authenticated_users_private_config() {
         std::fs::read_to_string(dir.path().join("control").join("users.json")).expect("users");
     let users: serde_json::Value = serde_json::from_str(&users).expect("users json");
     let user_id = users["users"][0]["user_id"].as_str().expect("user id");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let workspace = store
+        .default_workspace_for_user(user_id)
+        .expect("load default workspace")
+        .expect("default workspace");
     assert_eq!(
         payload
             .pointer("/agents/defaults/workspace")
             .and_then(serde_json::Value::as_str),
-        Some(
-            dir.path()
-                .join("users")
-                .join(user_id)
-                .join("workspace")
-                .to_string_lossy()
-                .as_ref()
-        )
+        Some(store.workspace_dir(&workspace.workspace_id).to_string_lossy().as_ref())
     );
 }
 
@@ -3051,7 +3421,10 @@ async fn chat_endpoint_auto_duplicates_non_web_sessions_into_web() {
         .expect("load original")
         .expect("original session");
     assert_eq!(original.messages.len(), 2);
-    assert_eq!(original.messages[0].content.as_str(), Some("hello from telegram"));
+    assert_eq!(
+        original.messages[0].content.as_str(),
+        Some("hello from telegram")
+    );
     assert!(
         store
             .load(&format!(
@@ -3074,10 +3447,22 @@ async fn chat_endpoint_auto_duplicates_non_web_sessions_into_web() {
         Some("telegram:outside")
     );
     assert_eq!(duplicated.messages.len(), 4);
-    assert_eq!(duplicated.messages[0].content.as_str(), Some("hello from telegram"));
-    assert_eq!(duplicated.messages[1].content.as_str(), Some("reply from telegram"));
-    assert_eq!(duplicated.messages[2].content.as_str(), Some("hello from browser"));
-    assert_eq!(duplicated.messages[3].content.as_str(), Some("continued in web"));
+    assert_eq!(
+        duplicated.messages[0].content.as_str(),
+        Some("hello from telegram")
+    );
+    assert_eq!(
+        duplicated.messages[1].content.as_str(),
+        Some("reply from telegram")
+    );
+    assert_eq!(
+        duplicated.messages[2].content.as_str(),
+        Some("hello from browser")
+    );
+    assert_eq!(
+        duplicated.messages[3].content.as_str(),
+        Some("continued in web")
+    );
 }
 
 #[tokio::test]

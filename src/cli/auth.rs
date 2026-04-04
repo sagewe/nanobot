@@ -13,6 +13,8 @@ pub enum ChannelsCommand {
     Status {
         #[arg(long)]
         user: Option<String>,
+        #[arg(long)]
+        workspace: Option<String>,
     },
     Login {
         #[command(subcommand)]
@@ -42,6 +44,8 @@ pub enum ProviderLoginCommand {
 pub struct WeixinLoginArgs {
     #[arg(long)]
     pub user: Option<String>,
+    #[arg(long)]
+    pub workspace: Option<String>,
     #[arg(long, default_value_t = 60)]
     pub max_polls: u32,
     #[arg(long, default_value_t = 1_000)]
@@ -52,13 +56,17 @@ pub struct WeixinLoginArgs {
 pub struct CodexLoginArgs {
     #[arg(long)]
     pub user: Option<String>,
+    #[arg(long)]
+    pub workspace: Option<String>,
 }
 
 pub async fn run_channels(root: PathBuf, action: ChannelsCommand) -> Result<()> {
     let store = ControlStore::new(&root)?;
     super::ensure_bootstrapped(&store)?;
     match action {
-        ChannelsCommand::Status { user } => channels_status(store, user).await,
+        ChannelsCommand::Status { user, workspace } => {
+            channels_status(store, user, workspace).await
+        }
         ChannelsCommand::Login { channel } => match channel {
             ChannelLoginCommand::Weixin(args) => channels_login_weixin(store, args).await,
         },
@@ -81,7 +89,10 @@ pub fn status_lines(root: &Path) -> Result<Vec<String>> {
     let mut lines = Vec::new();
 
     for user in users {
-        let config = store.load_user_config(&user.user_id)?;
+        let workspace = store
+            .default_workspace_for_user(&user.user_id)?
+            .ok_or_else(|| anyhow!("default workspace missing for '{}'", user.username))?;
+        let config = store.load_runtime_config(&user.user_id, &workspace.workspace_id)?;
         let summary = CodexProvider::auth_summary(&config.providers.codex);
         if summary.parse_valid {
             lines.push(format!(
@@ -106,55 +117,33 @@ pub fn status_lines(root: &Path) -> Result<Vec<String>> {
     Ok(lines)
 }
 
-async fn channels_status(store: ControlStore, user: Option<String>) -> Result<()> {
-    let users = resolve_target_users(&store, user.as_deref())?;
+async fn channels_status(
+    store: ControlStore,
+    user: Option<String>,
+    workspace: Option<String>,
+) -> Result<()> {
+    if user.is_some() || workspace.is_some() {
+        let target = super::load_runtime_target(&store, user.as_deref(), workspace.as_deref())?;
+        print_channels_status(
+            &target.user.username,
+            Some((&target.workspace.name, &target.workspace.slug)),
+            &target.config,
+        )?;
+        return Ok(());
+    }
+
+    let users = resolve_target_users(&store, None)?;
     for user in users {
-        let config = store.load_user_config(&user.user_id)?;
-        let weixin_store = WeixinAccountStore::new(&config.workspace_path())?;
-        let weixin = weixin_store.login_status_summary()?;
-        println!("User: {}", user.username);
-        println!("  cli: enabled (built-in)");
-        println!(
-            "  telegram: {}",
-            if config.channels.telegram.enabled {
-                "enabled"
-            } else {
-                "disabled"
-            }
-        );
-        println!(
-            "  wecom: {}",
-            if config.channels.wecom.enabled {
-                "enabled"
-            } else {
-                "disabled"
-            }
-        );
-        println!(
-            "  feishu: {}",
-            if config.channels.feishu.enabled {
-                "enabled"
-            } else {
-                "disabled"
-            }
-        );
-        println!(
-            "  weixin: {} | {} | account status={}",
-            if config.channels.weixin.enabled {
-                "enabled"
-            } else {
-                "disabled"
-            },
-            weixin.login_state,
-            weixin.account_status
-        );
+        let target = super::load_runtime_target(&store, Some(&user.username), None)?;
+        print_channels_status(&user.username, None, &target.config)?;
     }
     Ok(())
 }
 
 async fn channels_login_weixin(store: ControlStore, args: WeixinLoginArgs) -> Result<()> {
-    let user = resolve_single_target_user(&store, args.user.as_deref())?;
-    let config = store.load_user_config(&user.user_id)?;
+    let target =
+        super::load_runtime_target(&store, args.user.as_deref(), args.workspace.as_deref())?;
+    let config = target.config;
     let weixin_store = WeixinAccountStore::new(&config.workspace_path())?;
     let manager = WeixinLoginManager::new(
         config.channels.weixin.api_base.clone(),
@@ -163,7 +152,7 @@ async fn channels_login_weixin(store: ControlStore, args: WeixinLoginArgs) -> Re
     );
 
     let login = manager.start_login().await?;
-    println!("Started Weixin QR login for user {}", user.username);
+    println!("Started Weixin QR login for user {}", target.user.username);
     println!("QR code token: {}", login.qrcode);
     println!("QR code data URL: {}", login.qrcode_img_content);
 
@@ -194,8 +183,9 @@ async fn channels_login_weixin(store: ControlStore, args: WeixinLoginArgs) -> Re
 }
 
 async fn provider_login_codex(store: ControlStore, args: CodexLoginArgs) -> Result<()> {
-    let user = resolve_single_target_user(&store, args.user.as_deref())?;
-    let config = store.load_user_config(&user.user_id)?;
+    let target =
+        super::load_runtime_target(&store, args.user.as_deref(), args.workspace.as_deref())?;
+    let config = target.config;
     let summary = CodexProvider::auth_summary(&config.providers.codex);
 
     println!("Codex auth file: {}", summary.auth_path.display());
@@ -226,15 +216,51 @@ fn resolve_target_users(store: &ControlStore, username: Option<&str>) -> Result<
     Ok(store.list_users()?)
 }
 
-fn resolve_single_target_user(store: &ControlStore, username: Option<&str>) -> Result<UserRecord> {
-    if let Some(username) = username {
-        return store
-            .get_user_by_username(username)?
-            .ok_or_else(|| anyhow!("unknown user '{}'", username));
+fn print_channels_status(
+    username: &str,
+    workspace: Option<(&str, &str)>,
+    config: &crate::config::Config,
+) -> Result<()> {
+    let weixin_store = WeixinAccountStore::new(&config.workspace_path())?;
+    let weixin = weixin_store.login_status_summary()?;
+    println!("User: {}", username);
+    if let Some((name, slug)) = workspace {
+        println!("Workspace: {} ({})", name, slug);
     }
-    let users = store.list_users()?;
-    if users.len() == 1 {
-        return Ok(users[0].clone());
-    }
-    bail!("multiple users found; pass --user <username>")
+    println!("  cli: enabled (built-in)");
+    println!(
+        "  telegram: {}",
+        if config.channels.telegram.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  wecom: {}",
+        if config.channels.wecom.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  feishu: {}",
+        if config.channels.feishu.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  weixin: {} | {} | account status={}",
+        if config.channels.weixin.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        weixin.login_state,
+        weixin.account_status
+    );
+    Ok(())
 }

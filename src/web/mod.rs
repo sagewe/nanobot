@@ -11,7 +11,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use axum::{
     Router,
-    routing::{get, post},
+    routing::{get, patch, post},
 };
 use chrono::{DateTime, Utc};
 use qrcodegen::{QrCode, QrCodeEcc};
@@ -24,7 +24,7 @@ use uuid::Uuid;
 use crate::agent::AgentLoop;
 use crate::channels::weixin::{WeixinAccountState, WeixinAccountStore, WeixinLoginManager};
 use crate::config::WeixinConfig;
-use crate::control::{AuthService, AuthenticatedUser, ControlStore, RuntimeManager};
+use crate::control::{AuthService, AuthenticatedSessionContext, ControlStore, RuntimeManager};
 use crate::cron::CronService;
 use crate::mcp::{McpServerInfo, McpServerToolAction};
 use crate::presentation::render_web_html;
@@ -374,19 +374,21 @@ impl AppState {
 
     pub async fn runtime_for_user(
         &self,
-        user: Option<&AuthenticatedUser>,
+        user: Option<&AuthenticatedSessionContext>,
     ) -> Result<Arc<crate::control::UserRuntime>> {
         let user = user.ok_or_else(|| anyhow::anyhow!("authentication required"))?;
         let runtimes = self
             .runtimes
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("runtime manager is not configured"))?;
-        runtimes.get_or_start(&user.user_id).await
+        runtimes
+            .get_or_start(&user.user.user_id, &user.active_workspace_id)
+            .await
     }
 
     pub async fn cron_for_user(
         &self,
-        user: Option<&AuthenticatedUser>,
+        user: Option<&AuthenticatedSessionContext>,
     ) -> Result<Arc<CronService>> {
         if let Some(user) = user {
             return Ok(self.runtime_for_user(Some(user)).await?.cron());
@@ -398,7 +400,7 @@ impl AppState {
 
     pub async fn chat_for_user(
         &self,
-        user: Option<&AuthenticatedUser>,
+        user: Option<&AuthenticatedSessionContext>,
     ) -> Result<Arc<dyn ChatService>> {
         if let Some(user) = user {
             let runtime = self.runtime_for_user(Some(user)).await?;
@@ -409,10 +411,13 @@ impl AppState {
             .ok_or_else(|| anyhow::anyhow!("chat service is not configured"))
     }
 
-    pub fn workspace_for_user(&self, user: Option<&AuthenticatedUser>) -> Result<PathBuf> {
+    pub fn workspace_for_user(
+        &self,
+        user: Option<&AuthenticatedSessionContext>,
+    ) -> Result<PathBuf> {
         if let Some(user) = user {
             if let Some(control) = &self.control {
-                return Ok(control.user_workspace_path(&user.user_id));
+                return Ok(control.workspace_dir(&user.active_workspace_id));
             }
             return Err(anyhow::anyhow!("control store is not configured"));
         }
@@ -439,7 +444,18 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/login", post(api::login))
         .route("/api/auth/logout", post(api::logout))
         .route("/api/auth/me", get(api::me))
+        .route("/api/auth/workspace", post(api::set_active_workspace))
         .route("/api/auth/change-password", post(api::change_password))
+        .route(
+            "/api/workspaces",
+            get(api::list_workspaces).post(api::create_workspace),
+        )
+        .route(
+            "/api/workspaces/{id}",
+            patch(api::update_workspace).delete(api::delete_workspace),
+        )
+        .route("/api/resources", get(api::list_resources))
+        .route("/api/resources/{kind}/{id}", get(api::get_resource))
         .route(
             "/api/me/config",
             get(api::get_my_config).put(api::put_my_config),

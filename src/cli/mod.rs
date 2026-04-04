@@ -12,7 +12,7 @@ mod status;
 use crate::agent::AgentLoop;
 use crate::bus::{InboundMessage, MessageBus};
 use crate::config::{Config, default_workspace_path};
-use crate::control::{ControlStore, Role};
+use crate::control::{ControlStore, Role, UserRecord, WorkspaceRecord};
 use crate::mcp::connect_mcp_servers;
 use crate::providers::build_provider_from_config;
 use crate::web;
@@ -41,7 +41,12 @@ pub struct GatewayArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    Status,
+    Status {
+        #[arg(long)]
+        user: Option<String>,
+        #[arg(long)]
+        workspace: Option<String>,
+    },
     Onboard {
         #[arg(long, default_value_t = false)]
         wizard: bool,
@@ -59,6 +64,8 @@ pub enum Commands {
         session: String,
         #[arg(long)]
         user: String,
+        #[arg(long)]
+        workspace: Option<String>,
     },
     Gateway(GatewayArgs),
     Web {
@@ -124,17 +131,28 @@ pub enum UsersCommand {
     },
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct RuntimeTarget {
+    pub user: UserRecord,
+    pub workspace: WorkspaceRecord,
+    pub config: Config,
+}
+
 pub async fn run() -> Result<()> {
     let app = App::parse();
     let root = control_root(app.root);
     match app.command {
-        Commands::Status => {
+        Commands::Status { user, workspace } => {
             let auth_lines = auth::status_lines(&root)?;
             if auth_lines.is_empty() {
-                return status::run(root).await;
+                return status::run(root, user, workspace).await;
             }
-            let output =
-                status::render_status(&root, &status::AuthStatusLines { lines: auth_lines })?;
+            let output = status::render_status(
+                &root,
+                &status::AuthStatusLines { lines: auth_lines },
+                user.as_deref(),
+                workspace.as_deref(),
+            )?;
             println!("{output}");
             Ok(())
         }
@@ -159,7 +177,8 @@ pub async fn run() -> Result<()> {
             message,
             session,
             user,
-        } => agent(root, user, message, session).await,
+            workspace,
+        } => agent(root, user, workspace, message, session).await,
         Commands::Gateway(args) => gateway(root, args).await,
         Commands::Web { host, port } => web_command(root, host, port).await,
         Commands::Channels { action } => auth::run_channels(root, action).await,
@@ -171,10 +190,13 @@ pub async fn run() -> Result<()> {
 async fn agent(
     root: PathBuf,
     user: String,
+    workspace: Option<String>,
     message: Option<String>,
     session: String,
 ) -> Result<()> {
-    let config = load_user_runtime_config(&root, &user)?;
+    let store = ControlStore::new(&root)?;
+    let target = load_runtime_target(&store, Some(&user), workspace.as_deref())?;
+    let config = target.config;
     ensure_workspace(&config.workspace_path())?;
     let bus = MessageBus::new(128);
     let provider = build_provider_from_config(&config)?;
@@ -277,7 +299,14 @@ impl GatewayRuntime for MultiUserGatewayRuntime {
             .into_iter()
             .filter(|user| user.enabled)
         {
-            let _ = self.manager.get_or_start(&user.user_id).await?;
+            let workspace = self
+                .store
+                .default_workspace_for_user(&user.user_id)?
+                .ok_or_else(|| anyhow!("default workspace missing for {}", user.username))?;
+            let _ = self
+                .manager
+                .get_or_start(&user.user_id, &workspace.workspace_id)
+                .await?;
         }
         Ok(())
     }
@@ -418,8 +447,8 @@ async fn users(root: PathBuf, action: UsersCommand) -> Result<()> {
         }
         UsersCommand::ShowConfig { username } => {
             ensure_bootstrapped(&store)?;
-            let config = load_user_runtime_config(&root, &username)?;
-            println!("{}", toml::to_string_pretty(&config)?);
+            let target = load_runtime_target(&store, Some(&username), None)?;
+            println!("{}", toml::to_string_pretty(&target.config)?);
             Ok(())
         }
         UsersCommand::ValidateConfig { username } => {
@@ -433,12 +462,45 @@ async fn users(root: PathBuf, action: UsersCommand) -> Result<()> {
     }
 }
 
-fn load_user_runtime_config(root: &PathBuf, username: &str) -> Result<Config> {
-    let store = ControlStore::new(root)?;
-    let user = store
-        .get_user_by_username(username)?
-        .ok_or_else(|| anyhow!("unknown user '{}'", username))?;
-    store.load_user_config(&user.user_id)
+pub(super) fn load_runtime_target(
+    store: &ControlStore,
+    username: Option<&str>,
+    workspace_selector: Option<&str>,
+) -> Result<RuntimeTarget> {
+    let (user, workspace) = resolve_runtime_identity(store, username, workspace_selector)?;
+    let config = store.load_runtime_config(&user.user_id, &workspace.workspace_id)?;
+    Ok(RuntimeTarget {
+        user,
+        workspace,
+        config,
+    })
+}
+
+pub(super) fn resolve_runtime_identity(
+    store: &ControlStore,
+    username: Option<&str>,
+    workspace_selector: Option<&str>,
+) -> Result<(UserRecord, WorkspaceRecord)> {
+    let user = resolve_optional_user(store, username)?;
+    let workspace = match workspace_selector {
+        Some(selector) => store.resolve_workspace_for_user(&user.user_id, Some(selector))?,
+        None => store.resolve_workspace_for_user(&user.user_id, None)?,
+    };
+    Ok((user, workspace))
+}
+
+pub(super) fn resolve_optional_user(
+    store: &ControlStore,
+    username: Option<&str>,
+) -> Result<UserRecord> {
+    if let Some(username) = username {
+        return resolve_user_by_username(store, username);
+    }
+    let users = store.list_users()?;
+    if users.len() == 1 {
+        return Ok(users[0].clone());
+    }
+    bail!("multiple users found; pass --user <username>")
 }
 
 fn control_root(root: Option<PathBuf>) -> PathBuf {

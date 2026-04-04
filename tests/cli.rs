@@ -12,6 +12,7 @@ use chrono::Utc;
 use serde_json::Value;
 use sidekick::channels::weixin::{WeixinAccountState, WeixinAccountStore};
 use sidekick::config::{load_config, save_config};
+use sidekick::control::ControlStore;
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -87,6 +88,19 @@ fn first_user_id(root: &Path) -> String {
         .to_string()
 }
 
+fn default_workspace_info(root: &Path) -> (String, std::path::PathBuf) {
+    let store = ControlStore::new(root).expect("control store");
+    let user_id = first_user_id(root);
+    let workspace = store
+        .default_workspace_for_user(&user_id)
+        .expect("load default workspace")
+        .expect("default workspace");
+    (
+        workspace.workspace_id.clone(),
+        store.workspace_dir(&workspace.workspace_id),
+    )
+}
+
 #[test]
 fn status_reports_core_operator_summary_fields() {
     let dir = tempdir().expect("tempdir");
@@ -148,7 +162,6 @@ fn status_reports_user_summary_when_control_plane_is_bootstrapped() {
 #[test]
 fn onboard_wizard_bootstraps_admin_and_seeds_runtime_config() {
     let dir = tempdir().expect("tempdir");
-    let custom_workspace = dir.path().join("wizard-workspace");
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_sidekick"))
         .arg("--root")
@@ -163,7 +176,7 @@ fn onboard_wizard_bootstraps_admin_and_seeds_runtime_config() {
 
     {
         let stdin = child.stdin.as_mut().expect("stdin");
-        writeln!(stdin, "{}", custom_workspace.display()).expect("workspace input");
+        writeln!(stdin, "Docs").expect("workspace input");
         writeln!(stdin, "wizard-admin").expect("username input");
         writeln!(stdin, "wizard-password").expect("password input");
         writeln!(stdin, "Wizard Admin").expect("display name input");
@@ -188,11 +201,18 @@ fn onboard_wizard_bootstraps_admin_and_seeds_runtime_config() {
     assert_eq!(users[0]["username"].as_str(), Some("wizard-admin"));
 
     let user_id = users[0]["user_id"].as_str().expect("user id");
-    let user_config = dir.path().join("users").join(user_id).join("config.toml");
-    let config = load_config(Some(&user_config)).expect("load user config");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let workspace = store
+        .default_workspace_for_user(user_id)
+        .expect("load default workspace")
+        .expect("default workspace");
+    let config = store
+        .load_runtime_config(user_id, &workspace.workspace_id)
+        .expect("load runtime config");
+    assert_eq!(workspace.name, "Docs");
     assert_eq!(
-        config.workspace_path().to_string_lossy(),
-        custom_workspace.to_string_lossy()
+        config.workspace_path(),
+        store.workspace_dir(&workspace.workspace_id)
     );
     assert_eq!(config.agents.defaults.default_profile, "codex:gpt-5.4");
     assert_eq!(
@@ -242,12 +262,17 @@ fn channels_status_lists_built_in_channels_and_weixin_state() {
     assert!(stdout.contains("not logged in"), "{stdout}");
 
     let user_id = first_user_id(dir.path());
-    let user_config_path = dir.path().join("users").join(&user_id).join("config.toml");
-    let mut config = load_config(Some(&user_config_path)).expect("load user config");
+    let (workspace_id, workspace_path) = default_workspace_info(dir.path());
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let mut config = store
+        .load_runtime_config(&user_id, &workspace_id)
+        .expect("load runtime config");
     config.channels.weixin.enabled = true;
-    save_config(&config, Some(&user_config_path)).expect("save user config");
+    store
+        .write_runtime_config(&user_id, &workspace_id, &config)
+        .expect("save runtime config");
 
-    let weixin_store = WeixinAccountStore::new(&config.workspace_path()).expect("weixin store");
+    let weixin_store = WeixinAccountStore::new(&workspace_path).expect("weixin store");
     weixin_store
         .save_account(&WeixinAccountState {
             bot_token: "bot-token".to_string(),
@@ -322,11 +347,16 @@ async fn channels_login_weixin_persists_confirmed_account() {
     .await;
 
     let user_id = first_user_id(dir.path());
-    let user_config_path = dir.path().join("users").join(&user_id).join("config.toml");
-    let mut config = load_config(Some(&user_config_path)).expect("load user config");
+    let (workspace_id, workspace_path) = default_workspace_info(dir.path());
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let mut config = store
+        .load_runtime_config(&user_id, &workspace_id)
+        .expect("load runtime config");
     config.channels.weixin.enabled = true;
     config.channels.weixin.api_base = server.api_base.clone();
-    save_config(&config, Some(&user_config_path)).expect("save user config");
+    store
+        .write_runtime_config(&user_id, &workspace_id, &config)
+        .expect("save runtime config");
 
     let root = dir.path().to_path_buf();
     let output = tokio::task::spawn_blocking(move || {
@@ -361,7 +391,7 @@ async fn channels_login_weixin_persists_confirmed_account() {
     );
     assert!(stdout.contains("Weixin login confirmed"), "{stdout}");
 
-    let store = WeixinAccountStore::new(&config.workspace_path()).expect("weixin store");
+    let store = WeixinAccountStore::new(&workspace_path).expect("weixin store");
     let account = store
         .load_account()
         .expect("load weixin account")
@@ -404,10 +434,15 @@ fn provider_login_codex_reports_valid_account_id() {
     .expect("write codex auth");
 
     let user_id = first_user_id(dir.path());
-    let user_config_path = dir.path().join("users").join(&user_id).join("config.toml");
-    let mut config = load_config(Some(&user_config_path)).expect("load user config");
+    let (workspace_id, _) = default_workspace_info(dir.path());
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let mut config = store
+        .load_runtime_config(&user_id, &workspace_id)
+        .expect("load runtime config");
     config.providers.codex.auth_file = auth_path.display().to_string();
-    save_config(&config, Some(&user_config_path)).expect("save user config");
+    store
+        .write_runtime_config(&user_id, &workspace_id, &config)
+        .expect("save runtime config");
 
     let output = Command::new(env!("CARGO_BIN_EXE_sidekick"))
         .arg("--root")
@@ -446,10 +481,15 @@ fn provider_login_codex_fails_for_missing_or_malformed_auth_file() {
     assert!(bootstrap.status.success());
 
     let user_id = first_user_id(dir.path());
-    let user_config_path = dir.path().join("users").join(&user_id).join("config.toml");
-    let mut config = load_config(Some(&user_config_path)).expect("load user config");
+    let (workspace_id, _) = default_workspace_info(dir.path());
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let mut config = store
+        .load_runtime_config(&user_id, &workspace_id)
+        .expect("load runtime config");
     config.providers.codex.auth_file = dir.path().join("missing-auth.json").display().to_string();
-    save_config(&config, Some(&user_config_path)).expect("save user config");
+    store
+        .write_runtime_config(&user_id, &workspace_id, &config)
+        .expect("save runtime config");
 
     let missing_output = Command::new(env!("CARGO_BIN_EXE_sidekick"))
         .arg("--root")
@@ -485,7 +525,9 @@ fn provider_login_codex_fails_for_missing_or_malformed_auth_file() {
     )
     .expect("write malformed auth");
     config.providers.codex.auth_file = malformed_auth_path.display().to_string();
-    save_config(&config, Some(&user_config_path)).expect("save user config malformed");
+    store
+        .write_runtime_config(&user_id, &workspace_id, &config)
+        .expect("save runtime config malformed");
 
     let malformed_output = Command::new(env!("CARGO_BIN_EXE_sidekick"))
         .arg("--root")
@@ -541,10 +583,15 @@ fn status_includes_codex_readiness_line_when_auth_is_valid() {
     .expect("write codex auth");
 
     let user_id = first_user_id(dir.path());
-    let user_config_path = dir.path().join("users").join(&user_id).join("config.toml");
-    let mut config = load_config(Some(&user_config_path)).expect("load user config");
+    let (workspace_id, _) = default_workspace_info(dir.path());
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let mut config = store
+        .load_runtime_config(&user_id, &workspace_id)
+        .expect("load runtime config");
     config.providers.codex.auth_file = auth_path.display().to_string();
-    save_config(&config, Some(&user_config_path)).expect("save user config");
+    store
+        .write_runtime_config(&user_id, &workspace_id, &config)
+        .expect("save runtime config");
 
     let output = Command::new(env!("CARGO_BIN_EXE_sidekick"))
         .arg("--root")
@@ -597,25 +644,17 @@ fn onboard_bootstraps_control_plane_and_first_admin() {
     assert_eq!(users[0]["role"].as_str(), Some("admin"));
 
     let user_id = users[0]["user_id"].as_str().expect("user id");
-    let user_config = dir.path().join("users").join(user_id).join("config.toml");
-    let config_raw = std::fs::read_to_string(&user_config).expect("read config");
-    let config_value: toml::Value = config_raw.parse().expect("parse config");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let workspace = store
+        .default_workspace_for_user(user_id)
+        .expect("load default workspace")
+        .expect("default workspace");
+    let config = store
+        .load_runtime_config(user_id, &workspace.workspace_id)
+        .expect("load runtime config");
     assert_eq!(
-        config_value
-            .get("agents")
-            .and_then(toml::Value::as_table)
-            .and_then(|agents| agents.get("defaults"))
-            .and_then(toml::Value::as_table)
-            .and_then(|defaults| defaults.get("workspace"))
-            .and_then(toml::Value::as_str),
-        Some(
-            dir.path()
-                .join("users")
-                .join(user_id)
-                .join("workspace")
-                .to_string_lossy()
-                .as_ref()
-        )
+        config.workspace_path(),
+        store.workspace_dir(&workspace.workspace_id)
     );
 }
 
@@ -734,6 +773,12 @@ fn users_commands_manage_accounts_and_configs() {
     save_config(&bob_config, Some(&bob_config_json)).expect("write legacy bob config");
     std::fs::remove_file(&bob_config_toml).expect("remove bob toml");
 
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let bob_workspace = store
+        .default_workspace_for_user(bob_user_id)
+        .expect("load bob default workspace")
+        .expect("bob default workspace");
+
     let show_config = Command::new(env!("CARGO_BIN_EXE_sidekick"))
         .arg("--root")
         .arg(dir.path())
@@ -755,7 +800,11 @@ fn users_commands_manage_accounts_and_configs() {
             .and_then(toml::Value::as_table)
             .and_then(|defaults| defaults.get("workspace"))
             .and_then(toml::Value::as_str)
-            .map(|value| value == legacy_workspace.display().to_string()),
+            .map(|value| value
+                == store
+                    .workspace_dir(&bob_workspace.workspace_id)
+                    .display()
+                    .to_string()),
         Some(true)
     );
 
@@ -769,6 +818,134 @@ fn users_commands_manage_accounts_and_configs() {
         .expect("bob");
     assert_eq!(bob["role"].as_str(), Some("admin"));
     assert_eq!(bob["enabled"].as_bool(), Some(true));
+}
+
+#[test]
+fn status_can_target_a_named_workspace() {
+    let dir = tempdir().expect("tempdir");
+
+    let bootstrap = Command::new(env!("CARGO_BIN_EXE_sidekick"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("onboard")
+        .arg("--admin-username")
+        .arg("alice")
+        .arg("--admin-password")
+        .arg("password123")
+        .output()
+        .expect("run onboard");
+    assert!(bootstrap.status.success());
+
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let user_id = first_user_id(dir.path());
+    let docs = store
+        .create_workspace(&user_id, "Docs", Some("docs"))
+        .expect("create docs workspace");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sidekick"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("status")
+        .arg("--user")
+        .arg("alice")
+        .arg("--workspace")
+        .arg("docs")
+        .output()
+        .expect("run targeted status");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Selected user: alice"), "{stdout}");
+    assert!(
+        stdout.contains("Selected workspace: Docs (docs)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            store
+                .workspace_dir(&docs.workspace_id)
+                .display()
+                .to_string()
+                .as_str()
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Default profile: openai:gpt-4.1-mini"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn channels_status_can_target_a_named_workspace() {
+    let dir = tempdir().expect("tempdir");
+
+    let bootstrap = Command::new(env!("CARGO_BIN_EXE_sidekick"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("onboard")
+        .arg("--admin-username")
+        .arg("alice")
+        .arg("--admin-password")
+        .arg("password123")
+        .output()
+        .expect("run onboard");
+    assert!(bootstrap.status.success());
+
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let user_id = first_user_id(dir.path());
+    let docs = store
+        .create_workspace(&user_id, "Docs", Some("docs"))
+        .expect("create docs workspace");
+    let mut config = store
+        .load_runtime_config(&user_id, &docs.workspace_id)
+        .expect("load docs runtime config");
+    config.channels.weixin.enabled = true;
+    store
+        .write_runtime_config(&user_id, &docs.workspace_id, &config)
+        .expect("save docs runtime config");
+
+    let weixin_store = WeixinAccountStore::new(&store.workspace_dir(&docs.workspace_id))
+        .expect("docs weixin store");
+    weixin_store
+        .save_account(&WeixinAccountState {
+            bot_token: "bot-token".to_string(),
+            ilink_bot_id: "bot@im.bot".to_string(),
+            baseurl: "https://ilinkai.weixin.qq.com".to_string(),
+            ilink_user_id: Some("alice@im.wechat".to_string()),
+            get_updates_buf: String::new(),
+            longpolling_timeout_ms: 35_000,
+            status: "confirmed".to_string(),
+            updated_at: Utc::now(),
+        })
+        .expect("save weixin account");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sidekick"))
+        .arg("--root")
+        .arg(dir.path())
+        .arg("channels")
+        .arg("status")
+        .arg("--user")
+        .arg("alice")
+        .arg("--workspace")
+        .arg("docs")
+        .output()
+        .expect("run channels status");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Workspace: Docs (docs)"), "{stdout}");
+    assert!(stdout.contains("weixin: enabled | logged in"), "{stdout}");
 }
 
 #[test]

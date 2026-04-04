@@ -16,10 +16,11 @@ use crate::agent::AgentLoop;
 use crate::bus::{MessageBus, OutboundMessage};
 use crate::channels::ChannelManager;
 use crate::config::{Config, load_config, save_config};
-use crate::cron::{CronJob, CronService};
+use crate::cron::{CronJob, CronService, CronStore};
 use crate::heartbeat::HeartbeatService;
 use crate::mcp::connect_mcp_servers;
 use crate::providers::build_provider_from_config;
+use crate::session::SessionStore;
 
 const CONTROL_VERSION: u32 = 1;
 
@@ -53,6 +54,7 @@ pub struct BootstrapAdmin {
 pub struct WebSessionRecord {
     pub session_id: String,
     pub user_id: String,
+    pub active_workspace_id: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -63,6 +65,37 @@ pub struct AuthenticatedUser {
     pub username: String,
     pub display_name: String,
     pub role: Role,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuthenticatedSessionContext {
+    pub user: AuthenticatedUser,
+    pub active_workspace_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceRecord {
+    pub workspace_id: String,
+    pub user_id: String,
+    pub name: String,
+    pub slug: String,
+    pub is_default: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceRecord {
+    pub resource_id: String,
+    pub workspace_id: String,
+    pub kind: String,
+    pub name: String,
+    pub path: String,
+    #[serde(default)]
+    pub metadata: serde_json::Map<String, serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +115,18 @@ struct UserStore {
 struct WebSessionStore {
     version: u32,
     sessions: Vec<WebSessionRecord>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct WorkspaceStore {
+    version: u32,
+    workspaces: Vec<WorkspaceRecord>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ResourceStore {
+    version: u32,
+    resources: Vec<ResourceRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +158,8 @@ impl ControlStore {
             .with_context(|| format!("failed to create {}", root.join("control").display()))?;
         fs::create_dir_all(root.join("users"))
             .with_context(|| format!("failed to create {}", root.join("users").display()))?;
+        fs::create_dir_all(root.join("workspaces"))
+            .with_context(|| format!("failed to create {}", root.join("workspaces").display()))?;
         Ok(Self {
             root: Arc::new(root.to_path_buf()),
         })
@@ -128,6 +175,10 @@ impl ControlStore {
 
     pub fn users_dir(&self) -> PathBuf {
         self.root().join("users")
+    }
+
+    pub fn workspaces_dir(&self) -> PathBuf {
+        self.root().join("workspaces")
     }
 
     pub fn user_dir(&self, user_id: &str) -> PathBuf {
@@ -151,7 +202,23 @@ impl ControlStore {
     }
 
     pub fn user_workspace_path(&self, user_id: &str) -> PathBuf {
-        self.user_dir(user_id).join("workspace")
+        self.default_workspace_for_user(user_id)
+            .ok()
+            .flatten()
+            .map(|workspace| self.workspace_dir(&workspace.workspace_id))
+            .unwrap_or_else(|| self.user_dir(user_id).join("workspace"))
+    }
+
+    pub fn workspace_dir(&self, workspace_id: &str) -> PathBuf {
+        self.workspaces_dir().join(workspace_id)
+    }
+
+    pub fn workspace_config_path(&self, workspace_id: &str) -> PathBuf {
+        self.workspace_dir(workspace_id).join("workspace.toml")
+    }
+
+    pub fn workspace_resources_path(&self, workspace_id: &str) -> PathBuf {
+        self.workspace_dir(workspace_id).join("resources.json")
     }
 
     pub fn bootstrap_first_admin(&self, admin: &BootstrapAdmin) -> Result<UserRecord> {
@@ -188,13 +255,16 @@ impl ControlStore {
                 legacy_config_path.display()
             )
         })?;
-        let new_workspace = self.user_workspace_path(&user.user_id);
+        let workspace = self
+            .default_workspace_for_user(&user.user_id)?
+            .ok_or_else(|| anyhow!("default workspace missing for '{}'", user.username))?;
+        let new_workspace = self.workspace_dir(&workspace.workspace_id);
         ensure_workspace_templates(&new_workspace)?;
         if legacy_workspace_path.exists() {
             copy_dir_contents(legacy_workspace_path, &new_workspace)?;
         }
         config.agents.defaults.workspace = new_workspace.display().to_string();
-        self.write_user_config(&user.user_id, &config)?;
+        self.write_runtime_config(&user.user_id, &workspace.workspace_id, &config)?;
         write_json(
             &self.control_dir().join("migration.json"),
             &MigrationState {
@@ -271,16 +341,233 @@ impl ControlStore {
                 self.user_dir(&user.user_id).display()
             )
         })?;
-        ensure_workspace_templates(&self.user_workspace_path(&user.user_id))?;
-        let mut config = Config::default();
-        config.agents.defaults.workspace = self
-            .user_workspace_path(&user.user_id)
-            .display()
-            .to_string();
-        save_config(&config, Some(&self.user_config_path(&user.user_id)))?;
+        save_config(
+            &Config::default(),
+            Some(&self.user_config_path(&user.user_id)),
+        )?;
         store.users.push(user.clone());
         write_json(&self.control_dir().join("users.json"), &store)?;
+        self.create_workspace_internal(&user.user_id, "Default", Some("default"), true)?;
         Ok(user)
+    }
+
+    pub fn list_workspaces_for_user(&self, user_id: &str) -> Result<Vec<WorkspaceRecord>> {
+        let mut workspaces = self
+            .load_workspace_store()?
+            .workspaces
+            .into_iter()
+            .filter(|workspace| workspace.user_id == user_id)
+            .collect::<Vec<_>>();
+        workspaces.sort_by(|left, right| {
+            right
+                .is_default
+                .cmp(&left.is_default)
+                .then_with(|| left.slug.cmp(&right.slug))
+        });
+        Ok(workspaces)
+    }
+
+    pub fn default_workspace_for_user(&self, user_id: &str) -> Result<Option<WorkspaceRecord>> {
+        Ok(self
+            .list_workspaces_for_user(user_id)?
+            .into_iter()
+            .find(|workspace| workspace.is_default))
+    }
+
+    pub fn get_workspace_by_id(&self, workspace_id: &str) -> Result<Option<WorkspaceRecord>> {
+        Ok(self
+            .load_workspace_store()?
+            .workspaces
+            .into_iter()
+            .find(|workspace| workspace.workspace_id == workspace_id))
+    }
+
+    pub fn resolve_workspace_for_user(
+        &self,
+        user_id: &str,
+        selector: Option<&str>,
+    ) -> Result<WorkspaceRecord> {
+        let selector = selector.map(str::trim).filter(|value| !value.is_empty());
+        let workspaces = self.list_workspaces_for_user(user_id)?;
+        if workspaces.is_empty() {
+            bail!("user '{user_id}' has no workspaces");
+        }
+        if let Some(selector) = selector {
+            return workspaces
+                .into_iter()
+                .find(|workspace| workspace.workspace_id == selector || workspace.slug == selector)
+                .ok_or_else(|| anyhow!("workspace '{selector}' not found"));
+        }
+        self.default_workspace_for_user(user_id)?
+            .ok_or_else(|| anyhow!("default workspace not found for '{user_id}'"))
+    }
+
+    pub fn create_workspace(
+        &self,
+        user_id: &str,
+        name: &str,
+        slug: Option<&str>,
+    ) -> Result<WorkspaceRecord> {
+        self.create_workspace_internal(user_id, name, slug, false)
+    }
+
+    pub fn set_default_workspace(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> Result<WorkspaceRecord> {
+        let mut store = self.load_workspace_store()?;
+        let mut updated = None;
+        let mut found = false;
+        for workspace in &mut store.workspaces {
+            if workspace.user_id != user_id {
+                continue;
+            }
+            if workspace.workspace_id == workspace_id {
+                workspace.is_default = true;
+                workspace.updated_at = Utc::now();
+                updated = Some(workspace.clone());
+                found = true;
+            } else {
+                workspace.is_default = false;
+                workspace.updated_at = Utc::now();
+            }
+        }
+        if !found {
+            bail!("workspace '{workspace_id}' not found");
+        }
+        write_json(&self.control_dir().join("workspaces.json"), &store)?;
+        updated.ok_or_else(|| anyhow!("workspace '{workspace_id}' not found"))
+    }
+
+    pub fn update_workspace(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        name: Option<&str>,
+        slug: Option<&str>,
+        is_default: Option<bool>,
+    ) -> Result<WorkspaceRecord> {
+        let mut store = self.load_workspace_store()?;
+        let existing_for_user = store
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.user_id == user_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        let Some(current_snapshot) = existing_for_user
+            .iter()
+            .find(|workspace| workspace.workspace_id == workspace_id)
+            .cloned()
+        else {
+            bail!("workspace '{workspace_id}' not found");
+        };
+        let now = Utc::now();
+        let next_slug = slug
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                unique_workspace_slug(
+                    &existing_for_user
+                        .iter()
+                        .filter(|workspace| workspace.workspace_id != workspace_id)
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                    value,
+                )
+            });
+        let next_name = name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        for workspace in &mut store.workspaces {
+            if workspace.user_id != user_id {
+                continue;
+            }
+            if workspace.workspace_id == workspace_id {
+                if let Some(next_name) = &next_name {
+                    workspace.name = next_name.clone();
+                }
+                if let Some(next_slug) = &next_slug {
+                    workspace.slug = next_slug.clone();
+                }
+                if is_default == Some(true) {
+                    workspace.is_default = true;
+                }
+                workspace.updated_at = now;
+            } else if is_default == Some(true) {
+                workspace.is_default = false;
+                workspace.updated_at = now;
+            }
+        }
+        write_json(&self.control_dir().join("workspaces.json"), &store)?;
+        self.get_workspace_by_id(workspace_id)?
+            .ok_or_else(|| anyhow!("workspace '{workspace_id}' not found"))
+            .and_then(|workspace| {
+                if is_default == Some(false) && current_snapshot.is_default && workspace.is_default
+                {
+                    bail!("workspace '{workspace_id}' must keep a default workspace assigned");
+                }
+                Ok(workspace)
+            })
+    }
+
+    pub fn delete_workspace(&self, user_id: &str, workspace_id: &str) -> Result<()> {
+        let workspaces = self.list_workspaces_for_user(user_id)?;
+        if workspaces.len() <= 1 {
+            bail!("cannot delete the last workspace");
+        }
+        let target = workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == workspace_id)
+            .ok_or_else(|| anyhow!("workspace '{workspace_id}' not found"))?;
+        if target.is_default {
+            bail!("cannot delete the default workspace");
+        }
+
+        let mut store = self.load_workspace_store()?;
+        store
+            .workspaces
+            .retain(|workspace| workspace.workspace_id != workspace_id);
+        write_json(&self.control_dir().join("workspaces.json"), &store)?;
+        let workspace_dir = self.workspace_dir(workspace_id);
+        if workspace_dir.exists() {
+            fs::remove_dir_all(&workspace_dir)
+                .with_context(|| format!("failed to remove {}", workspace_dir.display()))?;
+        }
+
+        let default_workspace = self
+            .default_workspace_for_user(user_id)?
+            .ok_or_else(|| anyhow!("default workspace not found for '{user_id}'"))?;
+        let mut sessions = self.load_web_session_store()?;
+        let mut changed = false;
+        for session in &mut sessions.sessions {
+            if session.user_id == user_id && session.active_workspace_id == workspace_id {
+                session.active_workspace_id = default_workspace.workspace_id.clone();
+                session.updated_at = Utc::now();
+                changed = true;
+            }
+        }
+        if changed {
+            self.save_web_session_store(&sessions)?;
+        }
+        Ok(())
+    }
+
+    pub fn list_workspace_resources(&self, workspace_id: &str) -> Result<Vec<ResourceRecord>> {
+        self.refresh_workspace_resources(workspace_id)
+    }
+
+    pub fn get_workspace_resource(
+        &self,
+        workspace_id: &str,
+        kind: &str,
+        resource_id: &str,
+    ) -> Result<Option<ResourceRecord>> {
+        Ok(self
+            .list_workspace_resources(workspace_id)?
+            .into_iter()
+            .find(|resource| resource.kind == kind && resource.resource_id == resource_id))
     }
 
     pub fn list_users(&self) -> Result<Vec<UserRecord>> {
@@ -399,13 +686,31 @@ impl ControlStore {
     }
 
     pub fn write_user_config(&self, user_id: &str, config: &Config) -> Result<()> {
+        let workspace = self
+            .default_workspace_for_user(user_id)?
+            .ok_or_else(|| anyhow!("default workspace not found for '{user_id}'"))?;
+        self.write_runtime_config(user_id, &workspace.workspace_id, config)
+    }
+
+    pub fn write_runtime_config(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        config: &Config,
+    ) -> Result<()> {
         self.validate_user_config(user_id, config)?;
-        let mut updated = config.clone();
-        updated.agents.defaults.workspace = self.user_workspace_path(user_id).display().to_string();
-        ensure_workspace_templates(&self.user_workspace_path(user_id))?;
-        save_config(&updated, Some(&self.user_config_path(user_id)))?;
+        let workspace_path = self.workspace_dir(workspace_id);
+        ensure_workspace_templates(&workspace_path)?;
+        ensure_workspace_layout(&workspace_path)?;
+        let user_config = user_config_from_runtime(config);
+        let workspace_config = workspace_config_from_runtime(config, &workspace_path);
+        save_config(&user_config, Some(&self.user_config_path(user_id)))?;
+        save_config(
+            &workspace_config,
+            Some(&self.workspace_config_path(workspace_id)),
+        )?;
         self.append_audit(
-            "write_user_config",
+            "write_runtime_config",
             Some(user_id),
             Some(user_id),
             "updated user config",
@@ -414,7 +719,29 @@ impl ControlStore {
     }
 
     pub fn load_user_config(&self, user_id: &str) -> Result<Config> {
-        load_config(Some(&self.user_config_read_path(user_id)))
+        let workspace = self
+            .default_workspace_for_user(user_id)?
+            .ok_or_else(|| anyhow!("default workspace not found for '{user_id}'"))?;
+        self.load_runtime_config(user_id, &workspace.workspace_id)
+    }
+
+    pub fn load_runtime_config(&self, user_id: &str, workspace_id: &str) -> Result<Config> {
+        let user_config = load_config(Some(&self.user_config_read_path(user_id)))
+            .unwrap_or_else(|_| Config::default());
+        let workspace_path = self.workspace_dir(workspace_id);
+        let workspace_config_path = self.workspace_config_path(workspace_id);
+        let workspace_config = if workspace_config_path.exists() {
+            load_config(Some(&workspace_config_path))?
+        } else {
+            let mut config = Config::default();
+            config.agents.defaults.workspace = workspace_path.display().to_string();
+            config
+        };
+        Ok(merge_runtime_config(
+            &user_config,
+            &workspace_config,
+            &workspace_path,
+        ))
     }
 
     fn ensure_control_files(&self) -> Result<()> {
@@ -449,6 +776,16 @@ impl ControlStore {
                 },
             )?;
         }
+        let workspaces_path = self.control_dir().join("workspaces.json");
+        if !workspaces_path.exists() {
+            write_json(
+                &workspaces_path,
+                &WorkspaceStore {
+                    version: CONTROL_VERSION,
+                    workspaces: Vec::new(),
+                },
+            )?;
+        }
         let audit_path = self.control_dir().join("audit.jsonl");
         if !audit_path.exists() {
             fs::write(&audit_path, "")
@@ -467,8 +804,17 @@ impl ControlStore {
         read_json(&self.control_dir().join("web_sessions.json"))
     }
 
+    fn load_workspace_store(&self) -> Result<WorkspaceStore> {
+        self.ensure_control_files()?;
+        read_json(&self.control_dir().join("workspaces.json"))
+    }
+
     fn save_web_session_store(&self, store: &WebSessionStore) -> Result<()> {
         write_json(&self.control_dir().join("web_sessions.json"), store)
+    }
+
+    fn save_workspace_store(&self, store: &WorkspaceStore) -> Result<()> {
+        write_json(&self.control_dir().join("workspaces.json"), store)
     }
 
     fn append_audit(
@@ -512,10 +858,228 @@ impl ControlStore {
         write_json(&self.control_dir().join("users.json"), &store)?;
         Ok(updated)
     }
+
+    fn create_workspace_internal(
+        &self,
+        user_id: &str,
+        name: &str,
+        slug: Option<&str>,
+        force_default: bool,
+    ) -> Result<WorkspaceRecord> {
+        let Some(_user) = self.get_user_by_id(user_id)? else {
+            bail!("user '{user_id}' not found");
+        };
+        let existing = self.list_workspaces_for_user(user_id)?;
+        let workspace_name = if name.trim().is_empty() {
+            "Workspace".to_string()
+        } else {
+            name.trim().to_string()
+        };
+        let workspace_slug =
+            unique_workspace_slug(&existing, slug.unwrap_or(workspace_name.as_str()));
+        let now = Utc::now();
+        let workspace = WorkspaceRecord {
+            workspace_id: Uuid::new_v4().to_string(),
+            user_id: user_id.to_string(),
+            name: workspace_name,
+            slug: workspace_slug,
+            is_default: force_default || existing.is_empty(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.initialize_workspace_storage(&workspace)?;
+        let mut store = self.load_workspace_store()?;
+        if workspace.is_default {
+            for entry in &mut store.workspaces {
+                if entry.user_id == user_id {
+                    entry.is_default = false;
+                    entry.updated_at = now;
+                }
+            }
+        }
+        store.workspaces.push(workspace.clone());
+        self.save_workspace_store(&store)?;
+        Ok(workspace)
+    }
+
+    fn initialize_workspace_storage(&self, workspace: &WorkspaceRecord) -> Result<()> {
+        let workspace_dir = self.workspace_dir(&workspace.workspace_id);
+        ensure_workspace_templates(&workspace_dir)?;
+        ensure_workspace_layout(&workspace_dir)?;
+        let mut config = Config::default();
+        config.agents.defaults.workspace = workspace_dir.display().to_string();
+        save_config(
+            &config,
+            Some(&self.workspace_config_path(&workspace.workspace_id)),
+        )?;
+        if !self
+            .workspace_resources_path(&workspace.workspace_id)
+            .exists()
+        {
+            write_json(
+                &self.workspace_resources_path(&workspace.workspace_id),
+                &ResourceStore {
+                    version: CONTROL_VERSION,
+                    resources: Vec::new(),
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    fn refresh_workspace_resources(&self, workspace_id: &str) -> Result<Vec<ResourceRecord>> {
+        let workspace_dir = self.workspace_dir(workspace_id);
+        ensure_workspace_templates(&workspace_dir)?;
+        ensure_workspace_layout(&workspace_dir)?;
+        let now = Utc::now();
+        let mut resources = Vec::new();
+
+        for memory_name in ["MEMORY.md", "HISTORY.md"] {
+            let path = workspace_dir.join("memory").join(memory_name);
+            if path.exists() {
+                resources.push(ResourceRecord {
+                    resource_id: memory_name.to_string(),
+                    workspace_id: workspace_id.to_string(),
+                    kind: "memory_doc".to_string(),
+                    name: memory_name.to_string(),
+                    path: format!("memory/{memory_name}"),
+                    metadata: serde_json::Map::new(),
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+        }
+
+        let skills_root = workspace_dir.join("skills");
+        if skills_root.exists() {
+            for entry in fs::read_dir(&skills_root)
+                .with_context(|| format!("failed to read {}", skills_root.display()))?
+                .flatten()
+            {
+                let skill_dir = entry.path();
+                if !skill_dir.is_dir() || !skill_dir.join("SKILL.md").exists() {
+                    continue;
+                }
+                let id = entry.file_name().to_string_lossy().into_owned();
+                resources.push(ResourceRecord {
+                    resource_id: id.clone(),
+                    workspace_id: workspace_id.to_string(),
+                    kind: "skill".to_string(),
+                    name: id.clone(),
+                    path: format!("skills/{id}/SKILL.md"),
+                    metadata: serde_json::Map::new(),
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+        }
+
+        for entry in WalkDir::new(workspace_dir.join("files")) {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(&workspace_dir)
+                .with_context(|| format!("failed to strip prefix {}", workspace_dir.display()))?
+                .to_string_lossy()
+                .into_owned();
+            resources.push(ResourceRecord {
+                resource_id: relative.clone(),
+                workspace_id: workspace_id.to_string(),
+                kind: "file_asset".to_string(),
+                name: relative.clone(),
+                path: relative,
+                metadata: serde_json::Map::new(),
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        let session_store = SessionStore::new(&workspace_dir)?;
+        for summary in session_store.list_sessions_across_namespaces()? {
+            let mut metadata = serde_json::Map::new();
+            metadata.insert(
+                "channel".to_string(),
+                serde_json::Value::String(summary.channel.clone()),
+            );
+            metadata.insert(
+                "sessionId".to_string(),
+                serde_json::Value::String(summary.session_id.clone()),
+            );
+            if let Some(profile) = &summary.active_profile {
+                metadata.insert(
+                    "activeProfile".to_string(),
+                    serde_json::Value::String(profile.clone()),
+                );
+            }
+            let session_path = session_store.path_for(&summary.key);
+            let path = session_path
+                .strip_prefix(&workspace_dir)
+                .unwrap_or(session_path.as_path())
+                .to_string_lossy()
+                .into_owned();
+            resources.push(ResourceRecord {
+                resource_id: summary.key.clone(),
+                workspace_id: workspace_id.to_string(),
+                kind: "session".to_string(),
+                name: summary
+                    .preview
+                    .clone()
+                    .unwrap_or(summary.session_id.clone()),
+                path,
+                metadata,
+                created_at: summary.created_at,
+                updated_at: summary.updated_at,
+            });
+        }
+
+        let cron_path = workspace_dir.join("cron").join("jobs.json");
+        if cron_path.exists() {
+            let cron_store: CronStore = read_json(&cron_path)?;
+            for job in cron_store.jobs {
+                resources.push(ResourceRecord {
+                    resource_id: job.id.clone(),
+                    workspace_id: workspace_id.to_string(),
+                    kind: "cron_job".to_string(),
+                    name: job.name.clone(),
+                    path: "cron/jobs.json".to_string(),
+                    metadata: serde_json::Map::from_iter([
+                        ("enabled".to_string(), serde_json::Value::Bool(job.enabled)),
+                        (
+                            "scheduleKind".to_string(),
+                            serde_json::Value::String(format!("{:?}", job.schedule.kind)),
+                        ),
+                    ]),
+                    created_at: chrono::DateTime::from_timestamp_millis(job.created_at_ms)
+                        .unwrap_or(now),
+                    updated_at: chrono::DateTime::from_timestamp_millis(job.updated_at_ms)
+                        .unwrap_or(now),
+                });
+            }
+        }
+
+        resources.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.resource_id.cmp(&right.resource_id))
+        });
+        write_json(
+            &self.workspace_resources_path(workspace_id),
+            &ResourceStore {
+                version: CONTROL_VERSION,
+                resources: resources.clone(),
+            },
+        )?;
+        Ok(resources)
+    }
 }
 
 pub struct UserRuntime {
     user_id: String,
+    workspace_id: String,
     workspace: PathBuf,
     agent: AgentLoop,
     cron: Arc<CronService>,
@@ -525,9 +1089,15 @@ pub struct UserRuntime {
 }
 
 impl UserRuntime {
-    async fn start(store: &ControlStore, user_id: &str, start_channels: bool) -> Result<Self> {
-        let config = store.load_user_config(user_id)?;
+    async fn start(
+        store: &ControlStore,
+        user_id: &str,
+        workspace_id: &str,
+        start_channels: bool,
+    ) -> Result<Self> {
+        let config = store.load_runtime_config(user_id, workspace_id)?;
         ensure_workspace_templates(&config.workspace_path())?;
+        ensure_workspace_layout(&config.workspace_path())?;
         let bus = MessageBus::new(if start_channels { 256 } else { 128 });
         let provider = build_provider_from_config(&config)?;
         let agent = AgentLoop::from_config(bus.clone(), provider.clone(), config.clone()).await?;
@@ -658,6 +1228,7 @@ impl UserRuntime {
 
         Ok(Self {
             user_id: user_id.to_string(),
+            workspace_id: workspace_id.to_string(),
             workspace: config.workspace_path(),
             agent,
             cron,
@@ -669,6 +1240,10 @@ impl UserRuntime {
 
     pub fn user_id(&self) -> &str {
         &self.user_id
+    }
+
+    pub fn workspace_id(&self) -> &str {
+        &self.workspace_id
     }
 
     pub fn workspace_path(&self) -> &Path {
@@ -715,27 +1290,41 @@ impl RuntimeManager {
         }
     }
 
-    pub async fn get_or_start(&self, user_id: &str) -> Result<Arc<UserRuntime>> {
-        if let Some(runtime) = self.runtimes.lock().await.get(user_id).cloned() {
+    pub async fn get_or_start(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> Result<Arc<UserRuntime>> {
+        if let Some(runtime) = self.runtimes.lock().await.get(workspace_id).cloned() {
             return Ok(runtime);
         }
+        let default_workspace = self
+            .store
+            .default_workspace_for_user(user_id)?
+            .ok_or_else(|| anyhow!("default workspace not found for '{user_id}'"))?;
+        let start_channels = self.start_channels && default_workspace.workspace_id == workspace_id;
         let runtime =
-            Arc::new(UserRuntime::start(&self.store, user_id, self.start_channels).await?);
+            Arc::new(UserRuntime::start(&self.store, user_id, workspace_id, start_channels).await?);
         self.runtimes
             .lock()
             .await
-            .insert(user_id.to_string(), runtime.clone());
+            .insert(workspace_id.to_string(), runtime.clone());
         Ok(runtime)
     }
 
-    pub async fn reload(&self, user_id: &str) -> Result<Arc<UserRuntime>> {
+    pub async fn reload(&self, user_id: &str, workspace_id: &str) -> Result<Arc<UserRuntime>> {
+        let default_workspace = self
+            .store
+            .default_workspace_for_user(user_id)?
+            .ok_or_else(|| anyhow!("default workspace not found for '{user_id}'"))?;
+        let start_channels = self.start_channels && default_workspace.workspace_id == workspace_id;
         let replacement =
-            Arc::new(UserRuntime::start(&self.store, user_id, self.start_channels).await?);
+            Arc::new(UserRuntime::start(&self.store, user_id, workspace_id, start_channels).await?);
         let previous = self
             .runtimes
             .lock()
             .await
-            .insert(user_id.to_string(), replacement.clone());
+            .insert(workspace_id.to_string(), replacement.clone());
         if let Some(previous) = previous {
             previous.stop().await?;
         }
@@ -743,7 +1332,26 @@ impl RuntimeManager {
     }
 
     pub async fn stop_user(&self, user_id: &str) -> Result<()> {
-        let runtime = self.runtimes.lock().await.remove(user_id);
+        let runtimes = self
+            .runtimes
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(workspace_id, runtime)| {
+                (runtime.user_id() == user_id).then_some(workspace_id.clone())
+            })
+            .collect::<Vec<_>>();
+        for workspace_id in runtimes {
+            let runtime = self.runtimes.lock().await.remove(&workspace_id);
+            if let Some(runtime) = runtime {
+                runtime.stop().await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn stop_workspace(&self, workspace_id: &str) -> Result<()> {
+        let runtime = self.runtimes.lock().await.remove(workspace_id);
         if let Some(runtime) = runtime {
             runtime.stop().await?;
         }
@@ -751,7 +1359,11 @@ impl RuntimeManager {
     }
 
     pub async fn is_running(&self, user_id: &str) -> bool {
-        self.runtimes.lock().await.contains_key(user_id)
+        self.runtimes
+            .lock()
+            .await
+            .values()
+            .any(|runtime| runtime.user_id() == user_id)
     }
 
     pub async fn stop_all(&self) -> Result<()> {
@@ -789,10 +1401,15 @@ impl AuthService {
         }
         verify_password(password, &user.password_hash)
             .map_err(|_| anyhow!("invalid username or password"))?;
+        let workspace = self
+            .store
+            .default_workspace_for_user(&user.user_id)?
+            .ok_or_else(|| anyhow!("default workspace not found for '{}'", user.username))?;
         let now = Utc::now();
         let session = WebSessionRecord {
             session_id: Uuid::new_v4().to_string(),
             user_id: user.user_id.clone(),
+            active_workspace_id: workspace.workspace_id,
             created_at: now,
             updated_at: now,
         };
@@ -805,7 +1422,10 @@ impl AuthService {
         Ok(session)
     }
 
-    pub fn authenticate_session(&self, session_id: &str) -> Result<Option<AuthenticatedUser>> {
+    pub fn authenticate_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<AuthenticatedSessionContext>> {
         let sessions = self.store.load_web_session_store()?;
         let Some(session) = sessions
             .sessions
@@ -820,12 +1440,34 @@ impl AuthService {
         if !user.enabled {
             return Ok(None);
         }
-        Ok(Some(AuthenticatedUser {
-            user_id: user.user_id,
-            username: user.username,
-            display_name: user.display_name,
-            role: user.role,
+        Ok(Some(AuthenticatedSessionContext {
+            user: AuthenticatedUser {
+                user_id: user.user_id,
+                username: user.username,
+                display_name: user.display_name,
+                role: user.role,
+            },
+            active_workspace_id: session.active_workspace_id,
         }))
+    }
+
+    pub fn set_active_workspace(&self, session_id: &str, workspace_id: &str) -> Result<()> {
+        let workspace = self
+            .store
+            .get_workspace_by_id(workspace_id)?
+            .ok_or_else(|| anyhow!("workspace '{workspace_id}' not found"))?;
+        let mut store = self.store.load_web_session_store()?;
+        let session = store
+            .sessions
+            .iter_mut()
+            .find(|item| item.session_id == session_id)
+            .ok_or_else(|| anyhow!("session '{session_id}' not found"))?;
+        if session.user_id != workspace.user_id {
+            bail!("workspace '{workspace_id}' does not belong to this session user");
+        }
+        session.active_workspace_id = workspace_id.to_string();
+        session.updated_at = Utc::now();
+        self.store.save_web_session_store(&store)
     }
 
     pub fn logout(&self, session_id: &str) -> Result<()> {
@@ -886,6 +1528,87 @@ fn ensure_workspace_templates(workspace: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn ensure_workspace_layout(workspace: &Path) -> Result<()> {
+    for path in [
+        workspace.join("files"),
+        workspace.join("skills"),
+        workspace.join("sessions"),
+        workspace.join("cron"),
+        workspace.join(".sidekick"),
+    ] {
+        fs::create_dir_all(&path)
+            .with_context(|| format!("failed to create {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn merge_runtime_config(
+    user_config: &Config,
+    workspace_config: &Config,
+    workspace_path: &Path,
+) -> Config {
+    let mut merged = Config::default();
+    merged.agents = workspace_config.agents.clone();
+    merged.providers = user_config.providers.clone();
+    merged.channels = user_config.channels.clone();
+    merged.tools = workspace_config.tools.clone();
+    merged.agents.defaults.workspace = workspace_path.display().to_string();
+    merged
+}
+
+fn user_config_from_runtime(config: &Config) -> Config {
+    let mut user = Config::default();
+    user.providers = config.providers.clone();
+    user.channels = config.channels.clone();
+    user
+}
+
+fn workspace_config_from_runtime(config: &Config, workspace_path: &Path) -> Config {
+    let mut workspace = Config::default();
+    workspace.agents = config.agents.clone();
+    workspace.tools = config.tools.clone();
+    workspace.agents.defaults.workspace = workspace_path.display().to_string();
+    workspace
+}
+
+fn slugify_workspace(value: &str) -> String {
+    let mut slug = String::new();
+    let mut prev_dash = false;
+    for ch in value.trim().chars() {
+        let lower = ch.to_ascii_lowercase();
+        if lower.is_ascii_alphanumeric() {
+            slug.push(lower);
+            prev_dash = false;
+        } else if !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+fn unique_workspace_slug(existing: &[WorkspaceRecord], requested: &str) -> String {
+    let base = {
+        let slug = slugify_workspace(requested);
+        if slug.is_empty() {
+            "workspace".to_string()
+        } else {
+            slug
+        }
+    };
+    if !existing.iter().any(|workspace| workspace.slug == base) {
+        return base;
+    }
+    let mut index = 2usize;
+    loop {
+        let candidate = format!("{base}-{index}");
+        if !existing.iter().any(|workspace| workspace.slug == candidate) {
+            return candidate;
+        }
+        index += 1;
+    }
 }
 
 fn read_json<T>(path: &Path) -> Result<T>

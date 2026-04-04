@@ -3,12 +3,21 @@ use std::path::Path;
 use sidekick::config::Config;
 use tempfile::tempdir;
 
-use sidekick::control::{AuthService, BootstrapAdmin, ControlStore, Role, RuntimeManager};
+use sidekick::control::{
+    AuthService, BootstrapAdmin, ControlStore, Role, RuntimeManager, WorkspaceRecord,
+};
 
 fn legacy_config_with_workspace(workspace: &Path) -> Config {
     let mut config = Config::default();
     config.agents.defaults.workspace = workspace.display().to_string();
     config
+}
+
+fn default_workspace(store: &ControlStore, user_id: &str) -> WorkspaceRecord {
+    store
+        .default_workspace_for_user(user_id)
+        .expect("load default workspace")
+        .expect("default workspace")
 }
 
 #[test]
@@ -28,6 +37,7 @@ fn bootstrap_first_admin_creates_control_files_and_user_paths() {
     assert_eq!(admin.role, Role::Admin);
     assert!(store.control_dir().join("system.json").exists());
     assert!(store.control_dir().join("users.json").exists());
+    assert!(store.control_dir().join("workspaces.json").exists());
     assert!(store.control_dir().join("web_sessions.json").exists());
     assert!(store.control_dir().join("audit.jsonl").exists());
     assert!(store.user_config_path(&admin.user_id).exists());
@@ -36,22 +46,37 @@ fn bootstrap_first_admin_creates_control_files_and_user_paths() {
         store.user_dir(&admin.user_id).join("config.toml")
     );
     assert!(!store.user_dir(&admin.user_id).join("config.json").exists());
+
+    let workspace = default_workspace(&store, &admin.user_id);
+    assert_eq!(workspace.user_id, admin.user_id);
+    assert!(workspace.is_default);
+    assert_eq!(workspace.slug, "default");
     assert!(
         store
-            .user_workspace_path(&admin.user_id)
+            .workspace_config_path(&workspace.workspace_id)
+            .exists()
+    );
+    assert!(
+        store
+            .workspace_resources_path(&workspace.workspace_id)
+            .exists()
+    );
+    assert!(
+        store
+            .workspace_dir(&workspace.workspace_id)
             .join("memory")
             .exists()
     );
     assert!(
         store
-            .user_workspace_path(&admin.user_id)
+            .workspace_dir(&workspace.workspace_id)
             .join("memory")
             .join("MEMORY.md")
             .exists()
     );
     assert!(
         store
-            .user_workspace_path(&admin.user_id)
+            .workspace_dir(&workspace.workspace_id)
             .join("memory")
             .join("HISTORY.md")
             .exists()
@@ -182,7 +207,7 @@ fn bootstrap_migrates_legacy_workspace_preserving_custom_memory_content() {
 }
 
 #[test]
-fn load_user_config_reads_legacy_json_when_toml_is_missing() {
+fn load_user_config_ignores_legacy_workspace_path_when_toml_is_missing() {
     let dir = tempdir().expect("tempdir");
     let store = ControlStore::new(dir.path()).expect("control store");
     let admin = store
@@ -206,7 +231,10 @@ fn load_user_config_reads_legacy_json_when_toml_is_missing() {
 
     assert_eq!(
         loaded.agents.defaults.workspace,
-        legacy_workspace.display().to_string()
+        store
+            .user_workspace_path(&admin.user_id)
+            .display()
+            .to_string()
     );
     assert!(loaded.channels.send_tool_hints);
 }
@@ -335,13 +363,20 @@ fn auth_service_creates_and_resolves_sessions() {
 
     let auth = AuthService::new(store.clone());
     let session = auth.login("alice", "password123").expect("login");
+    let expected_workspace = default_workspace(&store, &user.user_id);
+    assert_eq!(session.active_workspace_id, expected_workspace.workspace_id);
+
     let resolved = auth
         .authenticate_session(&session.session_id)
         .expect("authenticate")
-        .expect("user");
+        .expect("session context");
 
-    assert_eq!(resolved.user_id, user.user_id);
-    assert_eq!(resolved.role, Role::Admin);
+    assert_eq!(resolved.user.user_id, user.user_id);
+    assert_eq!(resolved.user.role, Role::Admin);
+    assert_eq!(
+        resolved.active_workspace_id,
+        expected_workspace.workspace_id
+    );
 
     auth.logout(&session.session_id).expect("logout");
     assert!(
@@ -352,7 +387,7 @@ fn auth_service_creates_and_resolves_sessions() {
 }
 
 #[tokio::test]
-async fn runtime_manager_starts_isolated_runtimes_per_user() {
+async fn runtime_manager_starts_isolated_runtimes_per_workspace() {
     let dir = tempdir().expect("tempdir");
     let store = ControlStore::new(dir.path()).expect("control store");
     let admin = store
@@ -362,28 +397,78 @@ async fn runtime_manager_starts_isolated_runtimes_per_user() {
             display_name: "Alice".to_string(),
         })
         .expect("bootstrap admin");
-    let user = store
-        .create_user("bob", "Bob", Role::User, "password456")
-        .expect("create user");
+    let default_workspace = default_workspace(&store, &admin.user_id);
+    let secondary_workspace = store
+        .create_workspace(&admin.user_id, "Docs", Some("docs"))
+        .expect("create workspace");
 
     let manager = RuntimeManager::new(store.clone(), false);
-    let alice_runtime = manager
-        .get_or_start(&admin.user_id)
+    let default_runtime = manager
+        .get_or_start(&admin.user_id, &default_workspace.workspace_id)
         .await
-        .expect("alice runtime");
-    let bob_runtime = manager
-        .get_or_start(&user.user_id)
+        .expect("default runtime");
+    let secondary_runtime = manager
+        .get_or_start(&admin.user_id, &secondary_workspace.workspace_id)
         .await
-        .expect("bob runtime");
+        .expect("secondary runtime");
 
-    assert_ne!(alice_runtime.user_id(), bob_runtime.user_id());
-    assert_eq!(
-        alice_runtime.workspace_path(),
-        store.user_workspace_path(&admin.user_id).as_path()
+    assert_eq!(default_runtime.user_id(), secondary_runtime.user_id());
+    assert_ne!(
+        default_runtime.workspace_id(),
+        secondary_runtime.workspace_id()
     );
     assert_eq!(
-        bob_runtime.workspace_path(),
-        store.user_workspace_path(&user.user_id).as_path()
+        default_runtime.workspace_path(),
+        store
+            .workspace_dir(&default_workspace.workspace_id)
+            .as_path()
+    );
+    assert_eq!(
+        secondary_runtime.workspace_path(),
+        store
+            .workspace_dir(&secondary_workspace.workspace_id)
+            .as_path()
+    );
+}
+
+#[test]
+fn workspace_management_tracks_default_and_prevents_deleting_last_workspace() {
+    let dir = tempdir().expect("tempdir");
+    let store = ControlStore::new(dir.path()).expect("control store");
+    let admin = store
+        .bootstrap_first_admin(&BootstrapAdmin {
+            username: "alice".to_string(),
+            password: "password123".to_string(),
+            display_name: "Alice".to_string(),
+        })
+        .expect("bootstrap admin");
+
+    let original_default = default_workspace(&store, &admin.user_id);
+    let docs = store
+        .create_workspace(&admin.user_id, "Docs", Some("docs"))
+        .expect("create docs workspace");
+
+    let workspaces = store
+        .list_workspaces_for_user(&admin.user_id)
+        .expect("list workspaces");
+    assert_eq!(workspaces.len(), 2);
+    assert!(workspaces.iter().any(|workspace| workspace.slug == "docs"));
+
+    store
+        .set_default_workspace(&admin.user_id, &docs.workspace_id)
+        .expect("set default workspace");
+    let updated_default = default_workspace(&store, &admin.user_id);
+    assert_eq!(updated_default.workspace_id, docs.workspace_id);
+
+    store
+        .delete_workspace(&admin.user_id, &original_default.workspace_id)
+        .expect("delete non-default workspace");
+    let delete_last_error = store
+        .delete_workspace(&admin.user_id, &docs.workspace_id)
+        .expect_err("reject deleting the last workspace");
+    assert!(
+        delete_last_error.to_string().contains("last workspace"),
+        "{delete_last_error}"
     );
 }
 
@@ -401,14 +486,16 @@ async fn runtime_manager_reload_swaps_only_the_target_user_runtime() {
     let user = store
         .create_user("bob", "Bob", Role::User, "password456")
         .expect("create user");
+    let alice_workspace = default_workspace(&store, &admin.user_id);
+    let bob_workspace = default_workspace(&store, &user.user_id);
 
     let manager = RuntimeManager::new(store.clone(), false);
     let alice_before = manager
-        .get_or_start(&admin.user_id)
+        .get_or_start(&admin.user_id, &alice_workspace.workspace_id)
         .await
         .expect("alice runtime");
     let bob_before = manager
-        .get_or_start(&user.user_id)
+        .get_or_start(&user.user_id, &bob_workspace.workspace_id)
         .await
         .expect("bob runtime");
 
@@ -420,9 +507,12 @@ async fn runtime_manager_reload_swaps_only_the_target_user_runtime() {
         .write_user_config(&user.user_id, &updated)
         .expect("write updated config");
 
-    let bob_after = manager.reload(&user.user_id).await.expect("reload bob");
+    let bob_after = manager
+        .reload(&user.user_id, &bob_workspace.workspace_id)
+        .await
+        .expect("reload bob");
     let alice_after = manager
-        .get_or_start(&admin.user_id)
+        .get_or_start(&admin.user_id, &alice_workspace.workspace_id)
         .await
         .expect("alice runtime");
 

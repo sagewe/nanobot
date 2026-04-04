@@ -1435,7 +1435,9 @@ impl AgentLoop {
             );
             if session.last_consolidated < session.messages.len() {
                 let raw_tail = session.unconsolidated_tail().to_vec();
-                if let Err(raw_error) = self.archive_unconsolidated_tail(session, &raw_tail, "session reset fallback") {
+                if let Err(raw_error) =
+                    self.archive_unconsolidated_tail(session, &raw_tail, "session reset fallback")
+                {
                     warn!(
                         session_key = %session.key,
                         error = %raw_error,

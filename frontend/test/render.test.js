@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const apiMocks = vi.hoisted(() => {
   return {
     fetchCurrentUser: vi.fn(),
+    setActiveWorkspace: vi.fn(),
     loginUser: vi.fn(),
     logoutUser: vi.fn(),
     changePassword: vi.fn(),
@@ -824,6 +825,127 @@ describe("tool trace output", () => {
     expect(document.getElementById("login-shell").hidden).toBe(false);
     expect(document.getElementById("app").hidden).toBe(true);
     expect(document.getElementById("current-user-display").textContent).toBe("Guest");
+  });
+
+  it("hydrates the workspace switcher from the authenticated user payload", async () => {
+    vi.resetModules();
+    document.body.innerHTML = readHtmlBody();
+    apiMocks.fetchCurrentUser.mockResolvedValueOnce({
+      userId: "u_1",
+      username: "sage",
+      displayName: "Sage",
+      role: "admin",
+      activeWorkspace: { id: "ws_docs", name: "Docs", slug: "docs" },
+      workspaces: [
+        { id: "ws_default", name: "Default", slug: "default" },
+        { id: "ws_docs", name: "Docs", slug: "docs" },
+      ],
+    });
+    apiMocks.fetchSessions.mockResolvedValueOnce([
+      {
+        channel: "web",
+        sessions: [{ channel: "web", sessionId: "session-docs", canSend: true }],
+      },
+    ]);
+    apiMocks.fetchSessionDetail.mockResolvedValueOnce({
+      activeProfile: "openai:gpt-4.1-mini",
+      messages: [],
+      readOnly: false,
+      canDuplicate: false,
+    });
+    apiMocks.fetchMcpServers.mockResolvedValue([]);
+    apiMocks.fetchWeixinAccount.mockResolvedValue({});
+    apiMocks.loadProfiles.mockResolvedValue([]);
+    apiMocks.fetchMyConfig.mockResolvedValue({});
+    apiMocks.fetchAdminUsers.mockResolvedValue([]);
+
+    await import("../src/main.js");
+    await flush();
+    await flush();
+    await flush();
+
+    const workspaceSelect = document.getElementById("workspace-select");
+    expect(workspaceSelect).not.toBeNull();
+    expect(workspaceSelect.value).toBe("ws_docs");
+    expect([...workspaceSelect.options].map((option) => option.textContent)).toEqual([
+      "Default",
+      "Docs",
+    ]);
+  });
+
+  it("switching the workspace reboots the authenticated workspace-scoped data", async () => {
+    vi.resetModules();
+    document.body.innerHTML = readHtmlBody();
+    apiMocks.fetchCurrentUser.mockResolvedValueOnce({
+      userId: "u_1",
+      username: "sage",
+      displayName: "Sage",
+      role: "admin",
+      activeWorkspace: { id: "ws_default", name: "Default", slug: "default" },
+      workspaces: [
+        { id: "ws_default", name: "Default", slug: "default" },
+        { id: "ws_docs", name: "Docs", slug: "docs" },
+      ],
+    });
+    apiMocks.fetchSessions
+      .mockResolvedValueOnce([
+        {
+          channel: "web",
+          sessions: [{ channel: "web", sessionId: "session-default", canSend: true }],
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          channel: "web",
+          sessions: [{ channel: "web", sessionId: "session-docs", canSend: true }],
+        },
+      ]);
+    apiMocks.fetchSessionDetail
+      .mockResolvedValueOnce({
+        activeProfile: "openai:gpt-4.1-mini",
+        messages: [],
+        readOnly: false,
+        canDuplicate: false,
+      })
+      .mockResolvedValueOnce({
+        activeProfile: "openai:gpt-4.1-mini",
+        messages: [],
+        readOnly: false,
+        canDuplicate: false,
+      });
+    apiMocks.setActiveWorkspace.mockResolvedValueOnce({
+      userId: "u_1",
+      username: "sage",
+      displayName: "Sage",
+      role: "admin",
+      activeWorkspace: { id: "ws_docs", name: "Docs", slug: "docs" },
+      workspaces: [
+        { id: "ws_default", name: "Default", slug: "default" },
+        { id: "ws_docs", name: "Docs", slug: "docs" },
+      ],
+    });
+    apiMocks.fetchMcpServers.mockResolvedValue([]);
+    apiMocks.fetchWeixinAccount.mockResolvedValue({});
+    apiMocks.loadProfiles.mockResolvedValue([]);
+    apiMocks.fetchMyConfig.mockResolvedValue({});
+    apiMocks.fetchAdminUsers.mockResolvedValue([]);
+
+    await import("../src/main.js");
+    await flush();
+    await flush();
+    await flush();
+
+    const workspaceSelect = document.getElementById("workspace-select");
+    workspaceSelect.value = "ws_docs";
+    workspaceSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    await flush();
+    await flush();
+
+    expect(apiMocks.setActiveWorkspace).toHaveBeenCalledWith("ws_docs");
+    expect(apiMocks.fetchSessions).toHaveBeenCalledTimes(2);
+    expect(apiMocks.fetchSessionDetail).toHaveBeenLastCalledWith("web", "session-docs");
+    expect(workspaceSelect.value).toBe("ws_docs");
   });
 
   it("separates the users page into a create card and a directory card", () => {

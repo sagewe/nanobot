@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::config::Config;
-use crate::control::AuthenticatedUser;
+use crate::control::{
+    AuthenticatedSessionContext, AuthenticatedUser, ControlStore, ResourceRecord, WorkspaceRecord,
+};
 use crate::cron::{CronJob, CronSchedule};
 use crate::mcp::{McpServerInfo, McpServerToolAction};
 use crate::skills::{ManagedSkillEntry, SkillSource, normalize_skill_name};
@@ -103,19 +105,83 @@ pub struct AuthUserResponse {
     pub username: String,
     pub display_name: String,
     pub role: String,
+    pub active_workspace: Option<WorkspaceSummaryResponse>,
+    pub workspaces: Vec<WorkspaceSummaryResponse>,
 }
 
 const SESSION_COOKIE_NAME: &str = "sidekick_session";
 
-fn user_response(user: &AuthenticatedUser) -> AuthUserResponse {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSummaryResponse {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetActiveWorkspaceRequest {
+    pub workspace_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceListResponse {
+    pub workspaces: Vec<WorkspaceSummaryResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResourceListResponse {
+    pub resources: Vec<ResourceRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceRequest {
+    pub name: String,
+    pub slug: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateWorkspaceRequest {
+    pub name: Option<String>,
+    pub slug: Option<String>,
+    pub is_default: Option<bool>,
+}
+
+fn workspace_response(workspace: &WorkspaceRecord) -> WorkspaceSummaryResponse {
+    WorkspaceSummaryResponse {
+        id: workspace.workspace_id.clone(),
+        name: workspace.name.clone(),
+        slug: workspace.slug.clone(),
+        is_default: workspace.is_default,
+    }
+}
+
+fn user_response(
+    control: &ControlStore,
+    context: &AuthenticatedSessionContext,
+) -> AuthUserResponse {
+    let workspaces = control
+        .list_workspaces_for_user(&context.user.user_id)
+        .unwrap_or_default();
+    let active_workspace = workspaces
+        .iter()
+        .find(|workspace| workspace.workspace_id == context.active_workspace_id)
+        .cloned();
     AuthUserResponse {
-        user_id: user.user_id.clone(),
-        username: user.username.clone(),
-        display_name: user.display_name.clone(),
-        role: match user.role {
+        user_id: context.user.user_id.clone(),
+        username: context.user.username.clone(),
+        display_name: context.user.display_name.clone(),
+        role: match context.user.role {
             crate::control::Role::Admin => "admin".to_string(),
             crate::control::Role::User => "user".to_string(),
         },
+        active_workspace: active_workspace.as_ref().map(workspace_response),
+        workspaces: workspaces.iter().map(workspace_response).collect(),
     }
 }
 
@@ -140,7 +206,7 @@ fn session_cookie(headers: &HeaderMap) -> Option<String> {
 async fn authenticated_user(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<Option<AuthenticatedUser>, ApiError> {
+) -> Result<Option<AuthenticatedSessionContext>, ApiError> {
     let Some(auth) = state.auth_service() else {
         return Ok(None);
     };
@@ -175,8 +241,8 @@ async fn resolve_cron_service(
 }
 
 fn require_authenticated_user<'a>(
-    user: &'a Option<AuthenticatedUser>,
-) -> Result<&'a AuthenticatedUser, ApiError> {
+    user: &'a Option<AuthenticatedSessionContext>,
+) -> Result<&'a AuthenticatedSessionContext, ApiError> {
     user.as_ref()
         .ok_or_else(|| ApiError::unauthorized("authentication required"))
 }
@@ -226,6 +292,9 @@ pub async fn login(
     let auth = state
         .auth_service()
         .ok_or_else(|| ApiError::not_found("auth service not configured"))?;
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
     let session = auth
         .login(request.username.trim(), request.password.trim())
         .map_err(auth_error)?;
@@ -233,7 +302,7 @@ pub async fn login(
         .authenticate_session(&session.session_id)
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::unauthorized("authentication required"))?;
-    let mut response = Json(user_response(&user)).into_response();
+    let mut response = Json(user_response(control, &user)).into_response();
     let cookie = format!(
         "{SESSION_COOKIE_NAME}={}; Path=/; HttpOnly; SameSite=Strict",
         session.session_id
@@ -257,13 +326,13 @@ pub async fn change_password(
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
     let valid = control
-        .verify_user_password(&user.user_id, request.current_password.trim())
+        .verify_user_password(&user.user.user_id, request.current_password.trim())
         .map_err(ApiError::internal)?;
     if !valid {
         return Err(ApiError::unauthorized("current password is incorrect"));
     }
     control
-        .set_user_password(&user.user_id, request.new_password.trim())
+        .set_user_password(&user.user.user_id, request.new_password.trim())
         .map_err(ApiError::internal)?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -292,7 +361,148 @@ pub async fn me(
     headers: HeaderMap,
 ) -> Result<Json<AuthUserResponse>, ApiError> {
     let user = authenticated_user(&state, &headers).await?;
-    Ok(Json(user_response(require_authenticated_user(&user)?)))
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    Ok(Json(user_response(
+        control,
+        require_authenticated_user(&user)?,
+    )))
+}
+
+pub async fn set_active_workspace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SetActiveWorkspaceRequest>,
+) -> Result<Json<AuthUserResponse>, ApiError> {
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let auth = state
+        .auth_service()
+        .ok_or_else(|| ApiError::not_found("auth service not configured"))?;
+    let session_id = session_cookie(&headers)
+        .ok_or_else(|| ApiError::unauthorized("authentication required"))?;
+    let context = authenticated_user(&state, &headers).await?;
+    let context = require_authenticated_user(&context)?;
+    let workspace = control
+        .resolve_workspace_for_user(&context.user.user_id, Some(&request.workspace_id))
+        .map_err(ApiError::internal)?;
+    auth.set_active_workspace(&session_id, &workspace.workspace_id)
+        .map_err(ApiError::internal)?;
+    let refreshed = auth
+        .authenticate_session(&session_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::unauthorized("authentication required"))?;
+    Ok(Json(user_response(control, &refreshed)))
+}
+
+pub async fn list_workspaces(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<WorkspaceListResponse>, ApiError> {
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let user = authenticated_user(&state, &headers).await?;
+    let user = require_authenticated_user(&user)?;
+    let workspaces = control
+        .list_workspaces_for_user(&user.user.user_id)
+        .map_err(ApiError::internal)?;
+    Ok(Json(WorkspaceListResponse {
+        workspaces: workspaces.iter().map(workspace_response).collect(),
+    }))
+}
+
+pub async fn create_workspace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateWorkspaceRequest>,
+) -> Result<Json<WorkspaceSummaryResponse>, ApiError> {
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let user = authenticated_user(&state, &headers).await?;
+    let user = require_authenticated_user(&user)?;
+    let workspace = control
+        .create_workspace(
+            &user.user.user_id,
+            request.name.trim(),
+            request.slug.as_deref(),
+        )
+        .map_err(ApiError::internal)?;
+    Ok(Json(workspace_response(&workspace)))
+}
+
+pub async fn update_workspace(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateWorkspaceRequest>,
+) -> Result<Json<WorkspaceSummaryResponse>, ApiError> {
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let user = authenticated_user(&state, &headers).await?;
+    let user = require_authenticated_user(&user)?;
+    let workspace = control
+        .update_workspace(
+            &user.user.user_id,
+            &id,
+            request.name.as_deref(),
+            request.slug.as_deref(),
+            request.is_default,
+        )
+        .map_err(ApiError::internal)?;
+    Ok(Json(workspace_response(&workspace)))
+}
+
+pub async fn delete_workspace(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let user = authenticated_user(&state, &headers).await?;
+    let user = require_authenticated_user(&user)?;
+    control
+        .delete_workspace(&user.user.user_id, &id)
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list_resources(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ResourceListResponse>, ApiError> {
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let user = authenticated_user(&state, &headers).await?;
+    let user = require_authenticated_user(&user)?;
+    let resources = control
+        .list_workspace_resources(&user.active_workspace_id)
+        .map_err(ApiError::internal)?;
+    Ok(Json(ResourceListResponse { resources }))
+}
+
+pub async fn get_resource(
+    Path((kind, id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ResourceRecord>, ApiError> {
+    let control = state
+        .control_store()
+        .ok_or_else(|| ApiError::not_found("control store not configured"))?;
+    let user = authenticated_user(&state, &headers).await?;
+    let user = require_authenticated_user(&user)?;
+    let resource = control
+        .get_workspace_resource(&user.active_workspace_id, &kind, &id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("resource not found"))?;
+    Ok(Json(resource))
 }
 
 pub async fn get_my_config(
@@ -305,7 +515,7 @@ pub async fn get_my_config(
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
     let config = control
-        .load_user_config(&user.user_id)
+        .load_runtime_config(&user.user.user_id, &user.active_workspace_id)
         .map_err(ApiError::internal)?;
     Ok(Json(config))
 }
@@ -315,7 +525,7 @@ pub async fn list_admin_users(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = authenticated_user(&state, &headers).await?;
-    let user = require_admin_user(require_authenticated_user(&user)?)?;
+    let user = require_admin_user(&require_authenticated_user(&user)?.user)?;
     let control = state
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
@@ -346,7 +556,7 @@ pub async fn create_admin_user(
     Json(request): Json<AdminCreateUserRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = authenticated_user(&state, &headers).await?;
-    require_admin_user(require_authenticated_user(&user)?)?;
+    require_admin_user(&require_authenticated_user(&user)?.user)?;
     let control = state
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
@@ -373,7 +583,7 @@ pub async fn enable_admin_user(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = authenticated_user(&state, &headers).await?;
-    require_admin_user(require_authenticated_user(&user)?)?;
+    require_admin_user(&require_authenticated_user(&user)?.user)?;
     let control = state
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
@@ -389,7 +599,7 @@ pub async fn disable_admin_user(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = authenticated_user(&state, &headers).await?;
-    require_admin_user(require_authenticated_user(&user)?)?;
+    require_admin_user(&require_authenticated_user(&user)?.user)?;
     let control = state
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
@@ -409,7 +619,7 @@ pub async fn set_admin_user_password(
     Json(request): Json<AdminPasswordRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = authenticated_user(&state, &headers).await?;
-    require_admin_user(require_authenticated_user(&user)?)?;
+    require_admin_user(&require_authenticated_user(&user)?.user)?;
     let control = state
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
@@ -426,7 +636,7 @@ pub async fn set_admin_user_role(
     Json(request): Json<AdminRoleRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = authenticated_user(&state, &headers).await?;
-    require_admin_user(require_authenticated_user(&user)?)?;
+    require_admin_user(&require_authenticated_user(&user)?.user)?;
     let control = state
         .control_store()
         .ok_or_else(|| ApiError::not_found("control store not configured"))?;
@@ -449,11 +659,11 @@ pub async fn put_my_config(
     let config = serde_json::from_str::<Config>(&body)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     control
-        .write_user_config(&user.user_id, &config)
+        .write_runtime_config(&user.user.user_id, &user.active_workspace_id, &config)
         .map_err(ApiError::internal)?;
     if let Some(runtimes) = &state.runtimes {
         let _ = runtimes
-            .reload(&user.user_id)
+            .reload(&user.user.user_id, &user.active_workspace_id)
             .await
             .map_err(ApiError::internal)?;
     }

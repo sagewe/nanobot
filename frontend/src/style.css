@@ -291,6 +291,36 @@
         flex-shrink: 0;
       }
 
+      .workspace-switcher {
+        display: grid;
+        min-width: 100%;
+        gap: 0.35rem;
+      }
+
+      .workspace-switcher span {
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.7rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      #workspace-select {
+        width: 100%;
+        padding: 0.55rem 0.65rem;
+        border-radius: 0.8rem;
+        border: 1px solid rgba(193, 95, 60, 0.12);
+        background: rgba(255, 255, 255, 0.72);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      #workspace-select:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(193, 95, 60, 0.12);
+      }
+
       .user-chip {
         display: grid;
         min-width: 100%;
@@ -314,6 +344,10 @@
 
       .session-rail[data-collapsed="true"] .sidebar-footer {
         flex-direction: column;
+      }
+
+      .session-rail[data-collapsed="true"] .workspace-switcher {
+        display: none;
       }
 
       .session-rail[data-collapsed="true"] .user-chip {
@@ -2845,6 +2879,12 @@
       }
       :root[data-theme="dark"] .user-chip span {
         color: rgba(212, 114, 74, 0.82);
+      }
+      :root[data-theme="dark"] #workspace-select {
+        background: linear-gradient(180deg, rgba(40, 36, 31, 0.96) 0%, rgba(31, 27, 24, 0.96) 100%);
+        border-color: rgba(212, 114, 74, 0.18);
+        color: #f2e8de;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 24px rgba(0, 0, 0, 0.16);
       }
       :root[data-theme="dark"] .sidebar-footer button {
         background: rgba(40, 36, 31, 0.88);

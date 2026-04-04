@@ -13,6 +13,19 @@ export async function fetchCurrentUser() {
   return payload;
 }
 
+export async function setActiveWorkspace(workspaceId) {
+  const response = await fetch("/api/auth/workspace", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspaceId }),
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "Failed to switch workspace");
+  }
+  return payload;
+}
+
 export async function loginUser(username, password) {
   const response = await fetch("/api/auth/login", {
     method: "POST",

@@ -11,17 +11,40 @@ pub struct AuthStatusLines {
     pub lines: Vec<String>,
 }
 
-pub fn render_status(root: &Path, auth: &AuthStatusLines) -> Result<String> {
+pub fn render_status(
+    root: &Path,
+    auth: &AuthStatusLines,
+    selected_user: Option<&str>,
+    selected_workspace: Option<&str>,
+) -> Result<String> {
     let store = ControlStore::new(root)?;
     let users = store.list_users()?;
     let bootstrapped = !users.is_empty();
 
     let fallback_config_path = root.join("config.toml");
     let fallback_config = load_or_default(&fallback_config_path);
+    let selected_target =
+        if bootstrapped && (selected_user.is_some() || selected_workspace.is_some()) {
+            Some(super::load_runtime_target(
+                &store,
+                selected_user,
+                selected_workspace,
+            )?)
+        } else if let Some(user) = users.first() {
+            Some(super::load_runtime_target(
+                &store,
+                Some(&user.username),
+                None,
+            )?)
+        } else {
+            None
+        };
 
-    let (config_path, config) = if let Some(user) = users.first() {
-        let user_config_path = store.user_config_read_path(&user.user_id);
-        (user_config_path.clone(), load_or_default(&user_config_path))
+    let (config_path, config) = if let Some(target) = &selected_target {
+        (
+            store.workspace_config_path(&target.workspace.workspace_id),
+            target.config.clone(),
+        )
     } else {
         (fallback_config_path.clone(), fallback_config)
     };
@@ -44,6 +67,31 @@ pub fn render_status(root: &Path, auth: &AuthStatusLines) -> Result<String> {
         ),
     ];
 
+    if let Some(target) = &selected_target {
+        lines.push(format!("Selected user: {}", target.user.username));
+        lines.push(format!(
+            "Selected workspace: {} ({})",
+            target.workspace.name, target.workspace.slug
+        ));
+        lines.push(format!(
+            "Workspace path: {}",
+            config.workspace_path().display()
+        ));
+        let resources = store.list_workspace_resources(&target.workspace.workspace_id)?;
+        if !resources.is_empty() {
+            let mut counts = std::collections::BTreeMap::new();
+            for resource in &resources {
+                *counts.entry(resource.kind.as_str()).or_insert(0usize) += 1;
+            }
+            let summary = counts
+                .into_iter()
+                .map(|(kind, count)| format!("{kind}={count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!("Resources: {} ({summary})", resources.len()));
+        }
+    }
+
     if bootstrapped {
         lines.push(format!("Users: {}", users.len()));
         for user in users {
@@ -62,8 +110,17 @@ pub fn render_status(root: &Path, auth: &AuthStatusLines) -> Result<String> {
     Ok(lines.join("\n"))
 }
 
-pub async fn run(root: PathBuf) -> Result<()> {
-    let output = render_status(&root, &AuthStatusLines::default())?;
+pub async fn run(
+    root: PathBuf,
+    selected_user: Option<String>,
+    selected_workspace: Option<String>,
+) -> Result<()> {
+    let output = render_status(
+        &root,
+        &AuthStatusLines::default(),
+        selected_user.as_deref(),
+        selected_workspace.as_deref(),
+    )?;
     println!("{output}");
     Ok(())
 }
@@ -76,11 +133,12 @@ fn load_or_default(path: &Path) -> Config {
 }
 
 fn runtime_summary(store: &ControlStore, user: &UserRecord) -> String {
-    let config_path = store.user_config_read_path(&user.user_id);
-    if !config_path.exists() {
-        return format!("config missing at {}", config_path.display());
-    }
-    match load_config(Some(&config_path)) {
+    let workspace = match store.default_workspace_for_user(&user.user_id) {
+        Ok(Some(workspace)) => workspace,
+        Ok(None) => return "default workspace missing".to_string(),
+        Err(error) => return format!("default workspace error ({error})"),
+    };
+    match store.load_runtime_config(&user.user_id, &workspace.workspace_id) {
         Ok(config) => {
             let mut summary = format!(
                 "workspace={} profile={}",
@@ -99,7 +157,10 @@ fn runtime_summary(store: &ControlStore, user: &UserRecord) -> String {
             }
             summary
         }
-        Err(error) => format!("config invalid at {} ({error})", config_path.display()),
+        Err(error) => format!(
+            "config invalid at {} ({error})",
+            store.workspace_dir(&workspace.workspace_id).display()
+        ),
     }
 }
 

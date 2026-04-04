@@ -1,10 +1,10 @@
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::Map;
 
-use crate::config::{AgentProfileConfig, Config, save_config};
+use crate::config::{AgentProfileConfig, Config};
 use crate::control::{BootstrapAdmin, ControlStore};
 
 #[derive(Debug, Clone)]
@@ -17,7 +17,7 @@ pub struct OnboardOptions {
 
 #[derive(Debug, Clone)]
 struct WizardInputs {
-    workspace_path: PathBuf,
+    workspace_name: String,
     admin_username: String,
     admin_password: String,
     admin_display_name: String,
@@ -71,7 +71,7 @@ async fn run_wizard(root: PathBuf) -> Result<()> {
     stdout.flush()?;
 
     let defaults = Config::default();
-    let inputs = prompt_wizard_inputs(root.as_path(), &defaults, &mut stdin, &mut stdout)?;
+    let inputs = prompt_wizard_inputs(&defaults, &mut stdin, &mut stdout)?;
 
     let store = ControlStore::new(&root)?;
     let display_name = if inputs.admin_display_name.trim().is_empty() {
@@ -85,21 +85,30 @@ async fn run_wizard(root: PathBuf) -> Result<()> {
         display_name,
     })?;
 
-    let mut config = store.load_user_config(&user.user_id)?;
+    let workspace = store
+        .default_workspace_for_user(&user.user_id)?
+        .ok_or_else(|| anyhow!("default workspace missing for '{}'", user.username))?;
+    let workspace = store.update_workspace(
+        &user.user_id,
+        &workspace.workspace_id,
+        Some(&inputs.workspace_name),
+        Some(&inputs.workspace_name),
+        None,
+    )?;
+
+    let mut config = store.load_runtime_config(&user.user_id, &workspace.workspace_id)?;
     apply_profile(&mut config, &inputs.default_profile)?;
-    config.agents.defaults.workspace = inputs.workspace_path.display().to_string();
     if let Some(auth_file) = inputs.codex_auth_file.as_deref() {
         config.providers.codex.auth_file = auth_file.to_string();
     }
     config.channels.weixin.enabled = inputs.enable_weixin;
 
     store.validate_user_config(&user.user_id, &config)?;
-    save_config(&config, Some(&store.user_config_path(&user.user_id)))?;
-    super::ensure_workspace(&config.workspace_path())?;
+    store.write_runtime_config(&user.user_id, &workspace.workspace_id, &config)?;
 
     println!("Initialized multi-user control plane at {}", root.display());
     println!("Created first admin user {}", user.username);
-    println!("Workspace set to {}", config.workspace_path().display());
+    println!("Workspace set to {} ({})", workspace.name, workspace.slug);
     println!(
         "Default profile set to {}",
         config.agents.defaults.default_profile
@@ -109,18 +118,11 @@ async fn run_wizard(root: PathBuf) -> Result<()> {
 }
 
 fn prompt_wizard_inputs(
-    root: &Path,
     defaults: &Config,
     reader: &mut impl BufRead,
     writer: &mut impl Write,
 ) -> Result<WizardInputs> {
-    let workspace_default = root.join("workspace");
-    let workspace = prompt(
-        reader,
-        writer,
-        "Workspace path",
-        Some(&workspace_default.display().to_string()),
-    )?;
+    let workspace_name = prompt(reader, writer, "Default workspace name", Some("Default"))?;
     let admin_username = prompt(reader, writer, "First admin username", None)?;
     let admin_password = prompt(reader, writer, "First admin password", None)?;
     let admin_display_name = prompt(reader, writer, "Admin display name (optional)", Some(""))?;
@@ -163,7 +165,7 @@ fn prompt_wizard_inputs(
     )?);
 
     Ok(WizardInputs {
-        workspace_path: PathBuf::from(workspace),
+        workspace_name,
         admin_username,
         admin_password,
         admin_display_name,

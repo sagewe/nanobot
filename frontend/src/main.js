@@ -23,6 +23,7 @@ applyI18n();
 
 const {
   fetchCurrentUser,
+  setActiveWorkspace,
   loginUser,
   logoutUser,
   changePassword,
@@ -118,6 +119,7 @@ const slashMenu = document.getElementById("slash-menu");
 const slashMenuList = document.getElementById("slash-menu-list");
 const currentUserDisplay = document.getElementById("current-user-display");
 const currentUserRole = document.getElementById("current-user-role");
+const workspaceSelect = document.getElementById("workspace-select");
 const logoutButton = document.getElementById("logout-button");
 const adminUsersTab = document.getElementById("admin-users-tab");
 const channelsSettingsForm = document.getElementById("channels-settings-form");
@@ -163,6 +165,8 @@ let currentSessionGroups = [];
 let currentMessages = [];
 let currentUser = null;
 let currentConfig = null;
+let availableWorkspaces = [];
+let activeWorkspace = null;
 let appBootstrapped = false;
 let pendingSelectionToken = 0;
 let weixinPollTimer = null;
@@ -284,12 +288,50 @@ function clearDraft() {
   if (legacyKey) localStorage.removeItem(legacyKey);
 }
 
+function normalizeWorkspace(workspace) {
+  if (!workspace) return null;
+  return {
+    id: workspace.id || workspace.workspaceId || "",
+    name: workspace.name || workspace.slug || "",
+    slug: workspace.slug || "",
+    isDefault: workspace.isDefault === true,
+  };
+}
+
+function renderWorkspaceSwitcher() {
+  if (!workspaceSelect) return;
+  workspaceSelect.innerHTML = "";
+  for (const workspace of availableWorkspaces) {
+    const option = document.createElement("option");
+    option.value = workspace.id;
+    option.textContent = workspace.name || workspace.slug || workspace.id;
+    workspaceSelect.appendChild(option);
+  }
+  workspaceSelect.disabled = !currentUser || availableWorkspaces.length <= 1;
+  workspaceSelect.hidden = !currentUser || availableWorkspaces.length === 0;
+  if (activeWorkspace?.id) {
+    workspaceSelect.value = activeWorkspace.id;
+  }
+}
+
+function resetWorkspaceState() {
+  setSelectedSession(null, null);
+  currentSessionGroups = [];
+  currentMessages = [];
+  renderTranscript([]);
+  renderSessionSelect(currentSessionGroups, currentChannel, currentSessionId);
+  syncSessionsList();
+}
+
 function setAuthState(user) {
   currentUser = user;
+  availableWorkspaces = (user?.workspaces || []).map(normalizeWorkspace).filter(Boolean);
+  activeWorkspace = normalizeWorkspace(user?.activeWorkspace) || availableWorkspaces[0] || null;
   loginShell.hidden = Boolean(user);
   document.getElementById("app").hidden = !user;
   currentUserDisplay.textContent = user?.displayName || user?.username || "Guest";
   currentUserRole.textContent = user?.role || "guest";
+  renderWorkspaceSwitcher();
   adminUsersTab.hidden = !user || user.role !== "admin";
   if ((!user || user.role !== "admin") && usersPane && !usersPane.hidden) {
     switchTab("chat");
@@ -936,6 +978,31 @@ loginForm.addEventListener("submit", async (event) => {
     loginPasswordInput.value = "";
   } catch (error) {
     loginError.textContent = error?.message || "Failed to sign in";
+  }
+});
+
+workspaceSelect?.addEventListener("change", async () => {
+  const workspaceId = workspaceSelect.value;
+  if (!workspaceId || workspaceId === activeWorkspace?.id) return;
+
+  const previousWorkspaceId = activeWorkspace?.id || "";
+  workspaceSelect.disabled = true;
+  setStatus(t("switching_workspace"), "loading");
+  resetWorkspaceState();
+
+  try {
+    const user = await setActiveWorkspace(workspaceId);
+    setAuthState(user);
+    await initializeAuthenticatedApp();
+    setStatus(t("workspace_switched"), "idle");
+  } catch (error) {
+    renderWorkspaceSwitcher();
+    if (previousWorkspaceId) {
+      workspaceSelect.value = previousWorkspaceId;
+    }
+    setStatus(error?.message || t("failed_switch_workspace"), "error");
+  } finally {
+    renderWorkspaceSwitcher();
   }
 });
 

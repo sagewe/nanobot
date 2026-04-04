@@ -259,7 +259,9 @@ fn page_shell_allows_submit_for_duplicable_read_only_sessions() {
         "const duplicateButton = document.getElementById(\"duplicate-session-button\");"
     ));
     assert!(html.contains("messageInput.disabled = readOnly && !canDuplicate;"));
-    assert!(html.contains("sendButton.disabled = isBusy || (currentSessionReadOnly && !currentSessionCanDuplicate);"));
+    assert!(html.contains(
+        "sendButton.disabled = isBusy || (currentSessionReadOnly && !currentSessionCanDuplicate);"
+    ));
     assert!(html.contains("if (currentSessionReadOnly && !currentSessionCanDuplicate) {"));
     assert!(html.contains("duplicateButton.hidden = !canDuplicate;"));
     assert!(html.contains("Duplicate to Web"));

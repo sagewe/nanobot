@@ -39,6 +39,20 @@ fn agent_help_requires_user_instead_of_legacy_config_overrides() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("--user"), "{stdout}");
+    assert!(stdout.contains("--workspace"), "{stdout}");
     assert!(!stdout.contains("--config"), "{stdout}");
-    assert!(!stdout.contains("--workspace"), "{stdout}");
+}
+
+#[test]
+fn status_help_lists_workspace_selection_flags() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_sidekick"))
+        .arg("status")
+        .arg("--help")
+        .output()
+        .expect("run status --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--user"), "{stdout}");
+    assert!(stdout.contains("--workspace"), "{stdout}");
 }
