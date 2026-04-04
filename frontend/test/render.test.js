@@ -326,8 +326,8 @@ describe("tool trace output", () => {
   it("reuses shared header actions and token-driven active tab states", () => {
     const css = readCss();
     const sectionActionCss = readCssBlock("\\.section-action");
-    const jobsHeaderButtonCss = readCssBlock("\\.jobs-header \\.section-action");
-    const jobsTitleCss = readCssBlock("\\.jobs-title");
+    const paneHeaderButtonCss = readCssBlock("\\.pane-header \\.section-action");
+    const paneTitleCss = readCssBlock("\\.pane-title");
     const skillsGroupCss = readCssBlock("\\.skills-group");
     const settingsSectionCssBlocks = readCssBlocks("\\.settings-section");
     const activeTabCss = readCssBlock("\\.tab-btn\\[data-active=\"true\"\\]");
@@ -338,10 +338,10 @@ describe("tool trace output", () => {
     expect(sectionActionCss).toContain("font-family: \"IBM Plex Mono\", \"SFMono-Regular\", Consolas, monospace;");
     expect(sectionActionCss).toContain("font-size: 0.78rem;");
     expect(sectionActionCss).toContain("cursor: pointer;");
-    expect(jobsHeaderButtonCss).toContain("padding: 0;");
-    expect(jobsHeaderButtonCss).toContain("width: 2rem;");
-    expect(jobsHeaderButtonCss).toContain("height: 2rem;");
-    expect(jobsTitleCss).toContain('font-family: "Poppins", Arial, sans-serif;');
+    expect(paneHeaderButtonCss).toContain("padding: 0;");
+    expect(paneHeaderButtonCss).toContain("width: 2rem;");
+    expect(paneHeaderButtonCss).toContain("height: 2rem;");
+    expect(paneTitleCss).toContain('font-family: "Poppins", Arial, sans-serif;');
     expect(skillsGroupCss).toContain("background: var(--section-surface-bg);");
     expect(settingsSectionCssBlocks).toHaveLength(1);
     expect(settingsSectionCssBlocks[0]).toContain("background: var(--section-surface-bg);");
@@ -492,17 +492,19 @@ describe("tool trace output", () => {
 
   it("marks tab-adjacent panes with shared section semantics", () => {
     const html = readHtml();
+    const jobsPane = html.match(/<section class="jobs-pane" hidden>([\s\S]*?)<\/section>\s*<section class="mcp-pane"/)?.[1] || "";
+    const mcpPane = html.match(/<section class="mcp-pane" hidden>([\s\S]*?)<\/section>\s*<section class="skills-pane"/)?.[1] || "";
+    const usersPane = html.match(/<section class="users-pane" hidden>([\s\S]*?)<\/section>\s*<section class="channels-pane"/)?.[1] || "";
 
-    expect(html).toContain('class="jobs-header section-header"');
-    expect(html).toContain('id="jobs-refresh-btn" type="button" class="section-action"');
-    expect(html).toContain('id="mcp-refresh-btn" type="button" class="section-action"');
+    expect(jobsPane).toContain('class="pane-header section-header"');
+    expect(jobsPane).toContain('id="jobs-refresh-btn" type="button" class="section-action"');
+    expect(mcpPane).toContain('id="mcp-refresh-btn" type="button" class="section-action"');
     expect(html).toContain('class="control-panel control-panel--skills section-surface"');
     expect(html).toContain('class="skills-group section-surface"');
     expect(html).toContain('class="skills-detail section-surface"');
-    expect(html).toContain('class="users-pane-header section-title-group"');
-    expect(html).toMatch(/<div class="jobs-header section-header">[\s\S]*?<div class="section-title-group">[\s\S]*?<h2 class="jobs-title" data-i18n="jobs_title">Scheduled Jobs<\/h2>[\s\S]*?<button id="jobs-refresh-btn" type="button" class="section-action"/);
-    expect(html).toMatch(/<div class="jobs-header section-header">[\s\S]*?<div class="section-title-group">[\s\S]*?<h2 class="jobs-title" data-i18n="mcp_title">MCP Servers<\/h2>[\s\S]*?<button id="mcp-refresh-btn" type="button" class="section-action"/);
-    expect(html).toContain('class="session-kicker section-eyebrow"');
+    expect(usersPane).toContain('class="pane-header section-header"');
+    expect(jobsPane).toMatch(/<div class="pane-header section-header">[\s\S]*?<div class="section-title-group">[\s\S]*?<h2 class="pane-title" data-i18n="jobs_title">Scheduled Jobs<\/h2>[\s\S]*?<button id="jobs-refresh-btn" type="button" class="section-action"/);
+    expect(mcpPane).toMatch(/<div class="pane-header section-header">[\s\S]*?<div class="section-title-group">[\s\S]*?<h2 class="pane-title" data-i18n="mcp_title">MCP Servers<\/h2>[\s\S]*?<button id="mcp-refresh-btn" type="button" class="section-action"/);
   });
 
   it("adds a static skills shell with responsive master-detail scaffolding", async () => {
@@ -520,12 +522,11 @@ describe("tool trace output", () => {
     expect(html).toContain('id="skills-builtin-list"');
     expect(html).toContain('id="skill-editor"');
     expect(html).toContain('id="skill-enabled-toggle"');
+    expect((html.match(/class="skills-group section-surface"/g) || [])).toHaveLength(2);
     expect(html).toContain('data-i18n="tab_skills"');
     expect(html).toContain('data-i18n-placeholder="skills_search_placeholder"');
     expect(html).toContain('data-i18n="skills_create"');
     expect(html).toContain('data-i18n="skill_enabled"');
-    expect(html).toContain('data-i18n="skills_builtin_title"');
-    expect(html).toContain('data-i18n="skills_workspace_title"');
     expect(html).toContain('data-i18n="skill_editor_title"');
 
     expect(skillsLayoutCss).toContain("display: grid;");
@@ -555,25 +556,22 @@ describe("tool trace output", () => {
     const { TRANSLATIONS } = await import("../src/i18n.js");
     const settingsPane = html.match(/<section class="settings-pane" hidden>([\s\S]*?)<\/section>\s*<section class="users-pane"/)?.[1] || "";
     const channelsPane = html.match(/<section class="channels-pane" hidden>([\s\S]*?)<\/section>\s*<section class="conversation-pane"/)?.[1] || "";
-    const channelsConfigCard = channelsPane.match(/<section class="control-panel channels-config-card section-surface">([\s\S]*?)<\/section>\s*<section id="weixin-account-panel"/)?.[1] || "";
-    const weixinCard = channelsPane.match(/<section id="weixin-account-panel" class="account-panel([\s\S]*?)<\/section>/)?.[1] || "";
+    const channelsConfigCard = channelsPane.match(/<section class="control-panel channels-config-card">([\s\S]*?)<section id="weixin-account-panel"/)?.[1] || "";
+    const weixinCard = channelsPane.match(/<section id="weixin-account-panel" class="settings-channel-group">([\s\S]*?)<\/section>/)?.[1] || "";
+    const providerGroups = channelsPane.match(/class="settings-channel-group"/g) || [];
 
     expect(settingsPane).not.toContain('class="settings-channel-groups"');
     expect(settingsPane).not.toContain('data-i18n="settings_channels_telegram"');
     expect(channelsPane).toContain('id="channels-settings-form" class="control-form channels-settings-form"');
     expect(channelsPane).toContain('class="settings-channel-groups"');
-    expect(channelsPane).toContain('class="settings-channel-group section-surface"');
+    expect(providerGroups).toHaveLength(4);
     expect(channelsConfigCard).not.toContain('class="control-panel-header section-header"');
     expect(channelsConfigCard).not.toContain('data-i18n="settings_channels_weixin"');
     expect(channelsPane).not.toContain('id="channels-refresh-button"');
     expect(channelsPane).toContain('id="channels-save-button" type="submit"');
-    expect(channelsPane).toContain('data-i18n="channels_settings_copy"');
-    expect(channelsPane).toContain('data-i18n="settings_channels_telegram"');
-    expect(channelsPane).toContain('data-i18n="settings_channels_wecom"');
-    expect(channelsPane).toContain('data-i18n="settings_channels_feishu"');
-    expect(channelsPane).toContain('id="weixin-account-panel" class="account-panel channels-weixin-card"');
+    expect(channelsPane).toContain('id="weixin-account-panel" class="settings-channel-group"');
     expect(weixinCard).toContain('data-i18n="settings_channels_weixin"');
-    expect(weixinCard).toContain('class="channels-weixin-config control-grid control-grid--single"');
+    expect(weixinCard).toContain('class="control-grid control-grid--single"');
     expect(weixinCard).toContain('id="settings-weixin-api-base"');
     expect(weixinCard).toContain('id="settings-weixin-enabled"');
     expect(weixinCard).toContain('id="weixin-status-label"');
@@ -615,13 +613,14 @@ describe("tool trace output", () => {
     const html = readHtml();
     const css = readCss();
     const channelsPane = html.match(/<section class="channels-pane" hidden>([\s\S]*?)<\/section>\s*<section class="conversation-pane"/)?.[1] || "";
-    const weixinCard = channelsPane.match(/<section id="weixin-account-panel" class="account-panel channels-weixin-card">([\s\S]*?)<\/section>/)?.[1] || "";
+    const weixinCard = channelsPane.match(/<section id="weixin-account-panel" class="settings-channel-group">([\s\S]*?)<\/section>/)?.[1] || "";
 
     expect(weixinCard).toContain('data-i18n="settings_channels_weixin"');
     expect(weixinCard).toContain('data-i18n="settings_weixin_api_base"');
     expect(weixinCard).toContain('data-i18n="settings_weixin_enabled"');
     expect(weixinCard).not.toContain('data-i18n="channels_runtime_title"');
     expect(weixinCard).not.toContain('data-i18n="channels_weixin_copy"');
+    expect(weixinCard).toContain('class="control-grid control-grid--single"');
     expect(weixinCard).toContain('class="account-status account-status--icon-only"');
     expect(weixinCard).toContain('id="weixin-login-button"');
     expect(weixinCard).toContain('id="weixin-logout-button"');
@@ -1046,12 +1045,13 @@ describe("tool trace output", () => {
     const css = readCss();
     const usersLayoutCss = readCssBlock("\\.users-layout");
     const usersCreateFormCss = readCssBlock("\\.users-create-form");
+    const usersPane = html.match(/<section class="users-pane" hidden>([\s\S]*?)<\/section>\s*<section class="channels-pane"/)?.[1] || "";
 
-    expect(html).toContain('class="users-pane-header section-title-group"');
-    expect(html).toContain('class="users-layout"');
-    expect(html).toContain('class="control-panel users-create-card section-surface"');
-    expect(html).toContain('class="control-panel users-list-card section-surface"');
-    expect(html).toContain('id="create-user-form" class="control-form compact-form users-create-form"');
+    expect(usersPane).toContain('class="pane-header section-header"');
+    expect(usersPane).toContain('class="users-layout"');
+    expect(usersPane).toContain('class="control-panel users-create-card section-surface"');
+    expect(usersPane).toContain('class="control-panel users-list-card section-surface"');
+    expect(usersPane).toContain('id="create-user-form" class="control-form compact-form users-create-form"');
     expect(usersLayoutCss).toContain("display: grid;");
     expect(usersCreateFormCss).toContain("max-width:");
     expect(css).toContain(".users-list-card");
