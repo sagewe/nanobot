@@ -186,7 +186,30 @@ to switch the current session.
 
 ## Development
 
-Useful commands from the repository root:
+### Development Setup
+
+Install `mise` first if it is not already available on your machine, then install the pinned local toolchain:
+
+```bash
+mise install
+```
+
+Prepare dependencies:
+
+```bash
+mise exec -- just bootstrap
+```
+
+Common development commands:
+
+```bash
+mise exec -- just test
+mise exec -- just gateway
+```
+
+`build.rs` still provides a defensive frontend install/build fallback during direct Cargo builds, so the lower-level commands below remain useful when you want to drive pieces manually.
+
+Once your toolchain is active on `PATH`, useful lower-level commands from the repository root are:
 
 ```bash
 cargo test
