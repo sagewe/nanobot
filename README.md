@@ -186,6 +186,29 @@ to switch the current session.
 
 ## Development
 
+### Development Setup
+
+Install the pinned local toolchain:
+
+```bash
+mise install
+```
+
+Prepare dependencies:
+
+```bash
+just bootstrap
+```
+
+Common development commands:
+
+```bash
+just test
+just gateway
+```
+
+`build.rs` still provides a fallback frontend install/build path during direct Cargo builds, so the lower-level commands below remain useful when you want to drive pieces manually.
+
 Useful commands from the repository root:
 
 ```bash
