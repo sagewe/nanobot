@@ -611,6 +611,7 @@ describe("tool trace output", () => {
 
   it("integrates weixin settings with the live weixin session card", () => {
     const html = readHtml();
+    const css = readCss();
     const channelsPane = html.match(/<section class="channels-pane" hidden>([\s\S]*?)<\/section>\s*<section class="conversation-pane"/)?.[1] || "";
     const weixinCard = channelsPane.match(/<section id="weixin-account-panel" class="account-panel channels-weixin-card">([\s\S]*?)<\/section>/)?.[1] || "";
 
@@ -619,9 +620,13 @@ describe("tool trace output", () => {
     expect(weixinCard).toContain('data-i18n="settings_weixin_enabled"');
     expect(weixinCard).not.toContain('data-i18n="channels_runtime_title"');
     expect(weixinCard).not.toContain('data-i18n="channels_weixin_copy"');
+    expect(weixinCard).toContain('class="account-status account-status--icon-only"');
     expect(weixinCard).toContain('id="weixin-login-button"');
     expect(weixinCard).toContain('id="weixin-logout-button"');
     expect(weixinCard).toContain('id="weixin-qr-panel"');
+    expect(css).toContain(".account-status--icon-only");
+    expect(css).toContain(".account-status--icon-only strong");
+    expect(css).toContain(".account-status--icon-only span");
   });
 
   it("surfaces Feishu structured settings in the workspace form", () => {

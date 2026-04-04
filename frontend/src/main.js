@@ -673,6 +673,13 @@ function setWeixinStatusState(state) {
   }
 }
 
+function setWeixinStatusSummary(summary) {
+  if (weixinStatusGroup) {
+    weixinStatusGroup.title = summary;
+    weixinStatusGroup.setAttribute("aria-label", summary);
+  }
+}
+
 function scheduleWeixinPoll() {
   clearWeixinPollTimer();
   weixinPollTimer = setTimeout(() => pollWeixinLoginStatus(), 1500);
@@ -685,6 +692,7 @@ async function pollWeixinLoginStatus() {
     if (payload.status === "confirmed") {
       setWeixinStatusState("connected");
       weixinStatusLabel.textContent = t("connected");
+      setWeixinStatusSummary(t("connected"));
       weixinQrPanel.hidden = true;
       clearWeixinPollTimer();
       await loadWeixinAccount();
@@ -696,6 +704,7 @@ async function pollWeixinLoginStatus() {
       setWeixinStatusState("warning");
       weixinStatusLabel.textContent = t("login_expired");
       weixinUserLabel.textContent = t("refresh_qr");
+      setWeixinStatusSummary(t("login_expired"));
       clearWeixinPollTimer();
       await loadWeixinAccount();
       return;
@@ -705,9 +714,11 @@ async function pollWeixinLoginStatus() {
       setWeixinStatusState("active");
       weixinStatusLabel.textContent = t("qr_scanned");
       weixinUserLabel.textContent = t("confirm_login_weixin");
+      setWeixinStatusSummary(t("qr_scanned"));
     } else {
       setWeixinStatusState("active");
       weixinStatusLabel.textContent = t("waiting_for_scan");
+      setWeixinStatusSummary(t("waiting_for_scan"));
     }
 
     scheduleWeixinPoll();
@@ -1127,6 +1138,7 @@ weixinLoginButton.addEventListener("click", async () => {
     setWeixinStatusState("active");
     weixinStatusLabel.textContent = t("waiting_for_scan");
     weixinUserLabel.textContent = t("scan_qr_weixin");
+    setWeixinStatusSummary(t("waiting_for_scan"));
     scheduleWeixinPoll();
     setStatus(t("scan_weixin_qr_continue"), "idle");
   } catch (error) {

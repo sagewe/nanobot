@@ -801,6 +801,10 @@ export function renderWeixinAccount(account) {
     if (weixinStatusGroup) weixinStatusGroup.dataset.state = "disabled";
     weixinStatusLabel.textContent = t("weixin_disabled");
     weixinUserLabel.textContent = t("enable_weixin");
+    if (weixinStatusGroup) {
+      weixinStatusGroup.title = t("weixin_disabled");
+      weixinStatusGroup.setAttribute("aria-label", t("weixin_disabled"));
+    }
     weixinQrPanel.hidden = true;
     weixinQrImage.src = "";
     return;
@@ -810,6 +814,10 @@ export function renderWeixinAccount(account) {
     if (weixinStatusGroup) weixinStatusGroup.dataset.state = "connected";
     weixinStatusLabel.textContent = t("connected");
     weixinUserLabel.textContent = userId;
+    if (weixinStatusGroup) {
+      weixinStatusGroup.title = t("connected");
+      weixinStatusGroup.setAttribute("aria-label", t("connected"));
+    }
     weixinQrPanel.hidden = true;
     weixinQrImage.src = "";
     return;
@@ -819,6 +827,10 @@ export function renderWeixinAccount(account) {
     if (weixinStatusGroup) weixinStatusGroup.dataset.state = "warning";
     weixinStatusLabel.textContent = t("login_expired");
     weixinUserLabel.textContent = userId;
+    if (weixinStatusGroup) {
+      weixinStatusGroup.title = t("login_expired");
+      weixinStatusGroup.setAttribute("aria-label", t("login_expired"));
+    }
     weixinQrPanel.hidden = true;
     weixinQrImage.src = "";
     return;
@@ -829,6 +841,10 @@ export function renderWeixinAccount(account) {
   weixinQrImage.src = "";
   weixinStatusLabel.textContent = t("not_connected");
   weixinUserLabel.textContent = userId;
+  if (weixinStatusGroup) {
+    weixinStatusGroup.title = t("not_connected");
+    weixinStatusGroup.setAttribute("aria-label", t("not_connected"));
+  }
 }
 
 function relativeTime(dateStr) {
