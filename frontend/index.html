@@ -37,8 +37,11 @@
           Select the workspace you want to enter, or create a new one for this account.
         </p>
         <div class="workspace-user-summary">
-          <span>Signed in as</span>
-          <strong id="workspace-user-display">Guest</strong>
+          <div class="workspace-user-meta">
+            <span>Signed in as</span>
+            <strong id="workspace-user-display">Guest</strong>
+          </div>
+          <button id="workspace-logout-button" type="button" class="workspace-tertiary-button">Sign out</button>
         </div>
         <section id="workspace-select-view" class="workspace-panel">
           <div class="workspace-panel-header">
@@ -46,11 +49,6 @@
             <p>Each workspace keeps its own sessions, config, jobs, and MCP state.</p>
           </div>
           <div id="workspace-list" class="workspace-list" role="listbox" aria-label="Workspace list"></div>
-          <div class="workspace-actions">
-            <button id="workspace-enter-button" type="button">Enter Workspace</button>
-            <button id="workspace-create-button" type="button" class="workspace-secondary-button">Create Workspace</button>
-            <button id="workspace-logout-button" type="button" class="workspace-tertiary-button">Sign out</button>
-          </div>
           <div id="workspace-error" class="login-error" role="alert"></div>
         </section>
         <section id="workspace-create-view" class="workspace-panel" hidden>

@@ -89,8 +89,6 @@ const workspaceUserDisplay = document.getElementById("workspace-user-display");
 const workspaceSelectView = document.getElementById("workspace-select-view");
 const workspaceCreateView = document.getElementById("workspace-create-view");
 const workspaceList = document.getElementById("workspace-list");
-const workspaceEnterButton = document.getElementById("workspace-enter-button");
-const workspaceCreateButton = document.getElementById("workspace-create-button");
 const workspaceLogoutButton = document.getElementById("workspace-logout-button");
 const workspaceError = document.getElementById("workspace-error");
 const workspaceCreateForm = document.getElementById("workspace-create-form");
@@ -341,6 +339,12 @@ function setWorkspaceView(nextView) {
   workspaceCreateView.hidden = workspaceView !== "create";
 }
 
+function openWorkspaceCreateView() {
+  clearWorkspaceErrors();
+  setWorkspaceView("create");
+  workspaceNameInput.focus();
+}
+
 function renderWorkspaceEntry() {
   if (!workspaceList) return;
   workspaceUserDisplay.textContent = currentUser?.displayName || currentUser?.username || "Guest";
@@ -372,7 +376,20 @@ function renderWorkspaceEntry() {
     workspaceList.appendChild(item);
   }
 
-  workspaceEnterButton.disabled = !selectedWorkspaceId;
+  const createItem = document.createElement("button");
+  createItem.type = "button";
+  createItem.className = "workspace-option";
+  createItem.dataset.workspaceAction = "create";
+  createItem.dataset.selected = "false";
+
+  const createName = document.createElement("strong");
+  createName.textContent = "Create Workspace";
+
+  const createMeta = document.createElement("span");
+  createMeta.textContent = "Open the new workspace form";
+
+  createItem.append(createName, createMeta);
+  workspaceList.appendChild(createItem);
 }
 
 function normalizeRoute(pathname) {
@@ -1128,33 +1145,30 @@ loginForm.addEventListener("submit", async (event) => {
   }
 });
 
-workspaceList?.addEventListener("click", (event) => {
+workspaceList?.addEventListener("click", async (event) => {
+  const createAction = event.target.closest('[data-workspace-action="create"]');
+  if (createAction) {
+    openWorkspaceCreateView();
+    return;
+  }
+
   const item = event.target.closest("[data-workspace-id]");
   if (!item) return;
-  selectedWorkspaceId = item.dataset.workspaceId || "";
-  renderWorkspaceEntry();
-});
-
-workspaceList?.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter" && event.key !== " ") return;
-  event.preventDefault();
-  event.target.closest("[data-workspace-id]")?.click();
-});
-
-workspaceEnterButton?.addEventListener("click", async () => {
   clearWorkspaceErrors();
   try {
-    await activateWorkspace(selectedWorkspaceId);
+    await activateWorkspace(item.dataset.workspaceId || "");
   } catch (error) {
     workspaceError.textContent = error?.message || t("failed_switch_workspace");
     setStatus(error?.message || t("failed_switch_workspace"), "error");
   }
 });
 
-workspaceCreateButton?.addEventListener("click", () => {
-  clearWorkspaceErrors();
-  setWorkspaceView("create");
-  workspaceNameInput.focus();
+workspaceList?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const action = event.target.closest('[data-workspace-action="create"], [data-workspace-id]');
+  if (!action) return;
+  event.preventDefault();
+  action.click();
 });
 
 workspaceCreateCancelButton?.addEventListener("click", () => {

@@ -862,9 +862,12 @@ describe("tool trace output", () => {
     expect(document.getElementById("app").hidden).toBe(true);
     expect(apiMocks.fetchSessions).not.toHaveBeenCalled();
     expect(document.querySelector('[data-workspace-id="ws_docs"]')?.dataset.selected).toBe("true");
+    const userSummary = document.querySelector(".workspace-user-summary");
+    expect(userSummary?.querySelector("#workspace-logout-button")).not.toBeNull();
+    expect(document.querySelector("#workspace-select-view .workspace-actions")).toBeNull();
   });
 
-  it("enters the selected workspace and boots the app", async () => {
+  it("enters the workspace directly from its card and boots the app", async () => {
     vi.resetModules();
     document.body.innerHTML = readHtmlBody();
     window.history.replaceState({}, "", "/workspace");
@@ -913,8 +916,8 @@ describe("tool trace output", () => {
     await flush();
     await flush();
 
+    expect(document.getElementById("workspace-enter-button")).toBeNull();
     document.querySelector('[data-workspace-id="ws_docs"]').click();
-    document.getElementById("workspace-enter-button").click();
     await flush();
     await flush();
     await flush();
@@ -925,6 +928,67 @@ describe("tool trace output", () => {
     expect(document.getElementById("app").hidden).toBe(false);
     expect(apiMocks.fetchSessions).toHaveBeenCalledTimes(1);
     expect(apiMocks.fetchSessionDetail).toHaveBeenLastCalledWith("web", "session-docs");
+  });
+
+  it("enters the workspace card with keyboard input", async () => {
+    vi.resetModules();
+    document.body.innerHTML = readHtmlBody();
+    window.history.replaceState({}, "", "/workspace");
+    apiMocks.fetchCurrentUser.mockResolvedValueOnce({
+      userId: "u_1",
+      username: "sage",
+      displayName: "Sage",
+      role: "admin",
+      activeWorkspace: { id: "ws_default", name: "Default", slug: "default" },
+      workspaces: [
+        { id: "ws_default", name: "Default", slug: "default" },
+        { id: "ws_docs", name: "Docs", slug: "docs" },
+      ],
+    });
+    apiMocks.fetchSessions.mockResolvedValueOnce([
+      {
+        channel: "web",
+        sessions: [{ channel: "web", sessionId: "session-docs", canSend: true }],
+      },
+    ]);
+    apiMocks.fetchSessionDetail.mockResolvedValueOnce({
+      activeProfile: "openai:gpt-4.1-mini",
+      messages: [],
+      readOnly: false,
+      canDuplicate: false,
+    });
+    apiMocks.setActiveWorkspace.mockResolvedValueOnce({
+      userId: "u_1",
+      username: "sage",
+      displayName: "Sage",
+      role: "admin",
+      activeWorkspace: { id: "ws_docs", name: "Docs", slug: "docs" },
+      workspaces: [
+        { id: "ws_default", name: "Default", slug: "default" },
+        { id: "ws_docs", name: "Docs", slug: "docs" },
+      ],
+    });
+    apiMocks.fetchMcpServers.mockResolvedValue([]);
+    apiMocks.fetchWeixinAccount.mockResolvedValue({});
+    apiMocks.loadProfiles.mockResolvedValue([]);
+    apiMocks.fetchMyConfig.mockResolvedValue({});
+    apiMocks.fetchAdminUsers.mockResolvedValue([]);
+
+    await import("../src/main.js");
+    await flush();
+    await flush();
+    await flush();
+
+    const workspaceCard = document.querySelector('[data-workspace-id="ws_docs"]');
+    expect(workspaceCard).not.toBeNull();
+
+    workspaceCard.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await flush();
+    await flush();
+    await flush();
+
+    expect(apiMocks.setActiveWorkspace).toHaveBeenCalledWith("ws_docs");
+    expect(window.location.pathname).toBe("/app");
   });
 
   it("creates a workspace from the workspace page and enters it immediately", async () => {
@@ -979,8 +1043,14 @@ describe("tool trace output", () => {
     await flush();
     await flush();
 
-    document.getElementById("workspace-create-button").click();
+    expect(document.getElementById("workspace-create-button")).toBeNull();
+    const createCard = document.querySelector('[data-workspace-action="create"]');
+    expect(createCard).not.toBeNull();
+
+    createCard.click();
     await flush();
+    expect(document.getElementById("workspace-select-view").hidden).toBe(true);
+    expect(document.getElementById("workspace-create-view").hidden).toBe(false);
     document.getElementById("workspace-name-input").value = "Docs";
     document
       .getElementById("workspace-create-form")
@@ -992,6 +1062,39 @@ describe("tool trace output", () => {
     expect(apiMocks.createWorkspace).toHaveBeenCalledWith({ name: "Docs" });
     expect(apiMocks.setActiveWorkspace).toHaveBeenCalledWith("ws_docs");
     expect(window.location.pathname).toBe("/app");
+  });
+
+  it("opens the create workspace form from the create card with keyboard input", async () => {
+    vi.resetModules();
+    document.body.innerHTML = readHtmlBody();
+    window.history.replaceState({}, "", "/workspace");
+    apiMocks.fetchCurrentUser.mockResolvedValueOnce({
+      userId: "u_1",
+      username: "sage",
+      displayName: "Sage",
+      role: "admin",
+      activeWorkspace: { id: "ws_default", name: "Default", slug: "default" },
+      workspaces: [{ id: "ws_default", name: "Default", slug: "default" }],
+    });
+    apiMocks.fetchMcpServers.mockResolvedValue([]);
+    apiMocks.fetchWeixinAccount.mockResolvedValue({});
+    apiMocks.loadProfiles.mockResolvedValue([]);
+    apiMocks.fetchMyConfig.mockResolvedValue({});
+    apiMocks.fetchAdminUsers.mockResolvedValue([]);
+
+    await import("../src/main.js");
+    await flush();
+    await flush();
+    await flush();
+
+    const createCard = document.querySelector('[data-workspace-action="create"]');
+    expect(createCard).not.toBeNull();
+
+    createCard.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await flush();
+
+    expect(document.getElementById("workspace-select-view").hidden).toBe(true);
+    expect(document.getElementById("workspace-create-view").hidden).toBe(false);
   });
 
   it("returns from the app to the workspace page through the switch workspace entry", async () => {

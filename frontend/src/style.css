@@ -177,7 +177,9 @@
 
       .workspace-user-summary {
         display: flex;
-        align-items: baseline;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
         gap: 0.6rem;
         margin: 0 0 1.1rem;
         padding: 0.85rem 1rem;
@@ -186,7 +188,13 @@
         background: rgba(255, 255, 255, 0.55);
       }
 
-      .workspace-user-summary span {
+      .workspace-user-meta {
+        display: grid;
+        gap: 0.22rem;
+        min-width: 0;
+      }
+
+      .workspace-user-meta span {
         font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
         font-size: 0.72rem;
         color: var(--muted);
@@ -194,8 +202,24 @@
         letter-spacing: 0.08em;
       }
 
-      .workspace-user-summary strong {
+      .workspace-user-meta strong {
         font-size: 1rem;
+      }
+
+      .workspace-user-summary button,
+      .workspace-actions button {
+        border: 1px solid transparent;
+        border-radius: 0.85rem;
+        padding: 0.72rem 1rem;
+        cursor: pointer;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.78rem;
+        transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+      }
+
+      .workspace-user-summary button {
+        padding: 0.52rem 0.82rem;
+        white-space: nowrap;
       }
 
       .workspace-panel {
@@ -264,16 +288,6 @@
         display: flex;
         flex-wrap: wrap;
         gap: 0.75rem;
-      }
-
-      .workspace-actions button {
-        border: 1px solid transparent;
-        border-radius: 0.85rem;
-        padding: 0.72rem 1rem;
-        cursor: pointer;
-        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 0.78rem;
-        transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
       }
 
       #workspace-enter-button,
